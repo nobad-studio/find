@@ -16,6 +16,7 @@ One engine per index:
 import ctypes
 import hashlib
 import os
+import queue
 import threading
 
 from . import embed, jobs, winapi
@@ -493,6 +494,17 @@ def run(stop=None, open_ui=None, lock=None):
             tray_box["icon"].stop()
             tray_box["icon"] = None
     api._on_tray = on_tray
+    later = queue.Queue()
+
+    def settings_worker():                                 # Settings' index work, after the answer, in order
+        while True:
+            fn = later.get()
+            try:
+                fn()
+            except Exception as e:
+                log(f"settings work failed: {type(e).__name__}", "warn")
+    threading.Thread(target=settings_worker, daemon=True, name="settings-work").start()
+    api._settings_worker = later.put
     wiring.tray_ok = lambda: tray_box["icon"] is not None
     wiring.balloon = lambda title, text: bool(tray_box["icon"] and tray_box["icon"].balloon(title, text))
     log(f"engine ready (pid {os.getpid()})")

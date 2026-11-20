@@ -276,6 +276,28 @@ class Store:
     # Folders a search just asked about (a photo search "in downloads"): first of all, for a while (asked_until).
     asked_roots = ()
 
+    # Files that just appeared or changed (0.9.3, the live watcher): before everything else, for FRESH_S.
+    FRESH_S = 900
+    FRESH_MAX = 400
+    fresh = None                     # {path: when it changed}; None until the first change
+
+    def mark_fresh(self, paths, now=None):
+        now = time.time() if now is None else now
+        if self.fresh is None:
+            self.fresh = {}
+        for p in paths:
+            self.fresh[p] = now
+        if len(self.fresh) > self.FRESH_MAX:            # the newest stay
+            keep = sorted(self.fresh.items(), key=lambda x: -x[1])[:self.FRESH_MAX]
+            self.fresh = dict(keep)
+
+    def _fresh_paths(self, now=None):
+        if not self.fresh:
+            return []
+        now = time.time() if now is None else now
+        self.fresh = {p: t for p, t in self.fresh.items() if now - t <= self.FRESH_S}
+        return sorted(self.fresh, key=lambda p: -self.fresh[p])[:200]
+
     def _roots_first(self):
         seen, out = set(), []
         for r in (*self.asked_roots, *self.prefer_roots):
@@ -286,8 +308,16 @@ class Store:
         return out
 
     def _first(self, build, args, limit, key=0):
-        """build(extra) -> SQL with {extra} conditions on f.path; rows from the preferred roots first, then the rest."""
+        """build(extra) -> SQL with {extra} conditions on f.path; rows from the preferred roots first, then the rest.
+        Files that just appeared or changed (mark_fresh) come before all of them."""
         out, seen = [], set()
+        fresh = self._fresh_paths()
+        if fresh:
+            marks = ",".join("?" * len(fresh))
+            for r in self.q(build(f" AND f.path IN ({marks})"), (*args, *fresh, limit)):
+                if r[key] not in seen:
+                    seen.add(r[key])
+                    out.append(r)
         for root in self._roots_first():
             if len(out) >= limit:
                 break
@@ -333,7 +363,7 @@ class Store:
     # next=True: the tables a model switch fills (vecs_next, nvecs_next) while the current vectors stay in use
     def chunks_without_vectors(self, limit=256, next=False):
         t = "vecs_next" if next else "vecs"
-        if not self._roots_first():
+        if not self._roots_first() and not self._fresh_paths():
             return self.q(f"SELECT c.id, c.body FROM chunks c LEFT JOIN {t} v ON v.chunk_id=c.id "
                           "WHERE v.chunk_id IS NULL LIMIT ?", (limit,))
         return self._first(lambda extra: (

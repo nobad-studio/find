@@ -532,17 +532,19 @@ class Api:
         changed = self._settings.update(changes)
         if "autostart" in changed:
             set_autostart(self._settings.get("autostart"))
+        # 0.9.3: work on the index waits for its write lock (an indexing batch can hold it for seconds), so it
+        # runs after the answer: the switch takes at once and the work follows in order (self._later).
         if "search_history" in changed and not self._settings.get("search_history"):
-            self.history_clear()                     # off: what was kept goes now, not later
+            self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):
-            self._remove_secrets()                   # off: their names leave the index now, not at the next walk
+            self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
         if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets"}:
             self._indexer.rescan()
         for key, kind in (("index_removable", "removable"), ("index_network", "network")):
             if key in changed:
                 if not self._settings.get(key):          # turned off: those drives leave the index
-                    self._store.remove_paths([d["root"].rstrip("\\") for d in self._indexer.drive_list
-                                              if d.get("type") == kind])
+                    roots = [d["root"].rstrip("\\") for d in self._indexer.drive_list if d.get("type") == kind]
+                    self._later(lambda r=roots: self._store.remove_paths(r))
                 self._indexer.wake.set()
         if "photo_model" in changed and self._settings.get("photo_meaning") and "photo_meaning" not in changed:
             threading.Thread(target=self._indexer._load_photo, daemon=True).start()
@@ -573,7 +575,7 @@ class Api:
             self._indexer.wake.set()
         if "ocr" in changed:
             if not self._settings.get("ocr"):
-                self._store.set_meta("ocr_pass", "0")    # turned on again later: re-read the scans then
+                self._later(lambda: self._store.set_meta("ocr_pass", "0"))   # on again later: re-read the scans
             self._indexer.wake.set()
         if "semantic" in changed and self._settings.get("semantic"):
             threading.Thread(target=self._indexer._load_embedder, daemon=True).start()
@@ -582,6 +584,13 @@ class Api:
         if hotkeys is not None:
             out["hotkeys"] = hotkeys
         return out
+
+    def _later(self, fn):
+        """Settings work on the index, after the answer, one at a time in order (tests: at once)."""
+        run = getattr(self, "_settings_worker", None)
+        if run is None:
+            return fn()
+        run(fn)
 
     def hotkey_state(self):
         """{hotkey, bar_hotkey: {spec, state}}: state ok | taken | reserved | invalid | off."""

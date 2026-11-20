@@ -405,6 +405,27 @@ class Indexer:
 
     _round_checks = 0
 
+    FRESH_HURRY_EVERY = 30.0
+
+    def _fresh_files(self, paths, now=None):
+        """New or changed files (0.9.3): read, looked at and understood first. In your own folders (a download, a
+        photo you saved) the step working now also ends its turn after the batch in hand, at most every
+        FRESH_HURRY_EVERY seconds, so the new file's text, photo and meaning come within moments, not after the
+        queue. Changes elsewhere (app caches change all the time) only go to the front of the queues."""
+        if not paths:
+            return
+        self.store.mark_fresh(paths)
+        now = self._clock() if now is None else now
+        mine = [os.path.normcase(r.rstrip("\\")) + "\\" for r in (self.store.prefer_roots or ())]
+        if not mine or not any(os.path.normcase(p).startswith(tuple(mine)) for p in paths):
+            return                                  # not in your own folders: front of the queues only
+        if now - getattr(self, "_fresh_hurried", -1e9) < self.FRESH_HURRY_EVERY:
+            return
+        self._fresh_hurried = now
+        if self._round_end is not None:
+            self._round_end = 0.0
+        self.wake.set()
+
     def hurry_photos(self, roots):
         """A photo search asked about these folders (0.9.1): their photos go first, and the step working now ends
         its turn after the batch in hand, so the photo step comes next instead of in a few minutes."""
@@ -1101,6 +1122,7 @@ class Indexer:
         self.store.upsert_files(rows)
         if gone:
             self.store.remove_paths(gone)
+        self._fresh_files([r[0] for r in rows if r[4] != "folder"])
         for d in dirs[:50]:                         # a new or moved folder: pick up what's inside it
             Walker([d], exclude=self.settings.get("exclude"), threads=4, gen=gen,
                    on_batch=self.store.upsert_files, stop=self.stop_ev, rules=self.rules()).run()

@@ -14,6 +14,11 @@
   restarts its workers first and lets go of the models only if memory stays high (it used to drop them at once,
   so they seemed to unload even with the setting on). The log says why a model was released.
 
+### New files first
+- A file you just downloaded, saved or changed is read, looked at (photos) and understood before everything
+  else. In your own folders NOBAD Find also moves on to it within moments instead of after the queue; changes
+  elsewhere (app caches change all the time) go to the front of the queue only.
+
 ### Index page
 - A new look, like the Models page: each step is a card with a coloured tile, its state, a meter and its numbers
   as chips; the numbers have icons and shorter labels.
@@ -23,6 +28,8 @@
 ### Settings
 - What to index opens at once: its counts (up to 4 seconds on a whole-PC index) are kept and refreshed in the
   background.
+- Every switch answers at once: work it causes on the index (clearing search history, removing secret names or a
+  drive's files) runs right after, instead of waiting for an indexing batch first.
 
 ### Fixed
 - Slow answers from the engine are written to the log by name, so a slow page can be traced.
