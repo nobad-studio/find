@@ -505,6 +505,8 @@ def run(stop=None, open_ui=None, lock=None):
                 updater.check_in_background()
             if n % 120 == 20:                                 # the Start list: at start, then every few hours
                 launcher.refresh_in_background()
+            if n % 600 == 30:                                 # What to index's counts, ready before it opens
+                api.warm_scope_info()
             icon = tray_box["icon"]
             if icon is not None and n % 10 == 0:          # the tooltip follows the level and the count (5 s)
                 now = icon.tip()

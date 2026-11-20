@@ -3,6 +3,7 @@
 The UI never hands the engine a path to open: it sends a result id, and the path comes from the index.
 """
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -622,9 +623,49 @@ class Api:
             self._store.remove_paths(gone)
         return len(gone)
 
+    SCOPE_FRESH_S = 300
+
+    def _scope_key(self, drives):
+        s = self._settings
+        return json.dumps([[s.get(k) for k in ("scope", "roots", "exclude", "include_system", "include_caches",
+                                               "include_secrets", "index_removable", "index_network")],
+                           [(d.get("root"), d.get("type")) for d in drives]], default=str)
+
     def scope_info(self):
-        """What is indexed: the scope, its folders and every category with what's in it (scope.info)."""
-        return scope.info(self._settings, winapi.drives(), self._store)
+        """What is indexed: the scope, its folders and every category with what's in it (scope.info).
+        0.9.3: the counts (a range count over the index, about 0.6 s on a whole-PC index) are kept for a few
+        minutes and refreshed in the background, so Settings > What to index opens at once. A changed setting or
+        drive counts again."""
+        drives = winapi.drives()
+        key = self._scope_key(drives)
+        got = getattr(self, "_scope_cache", None)
+        if got is not None and got[0] == key:
+            if time.time() - got[1] > self.SCOPE_FRESH_S:
+                self.warm_scope_info()                 # this answer now, fresh counts for the next one
+            return got[2]
+        return self._count_scope(drives, key)
+
+    def _count_scope(self, drives, key):
+        r = scope.info(self._settings, drives, self._store)
+        self._scope_cache = (key, time.time(), r)
+        return r
+
+    def warm_scope_info(self):
+        """Count in the background (after a scan, and every few minutes while the engine runs)."""
+        if getattr(self, "_scope_busy", False):
+            return False
+        self._scope_busy = True
+
+        def work():
+            try:
+                drives = winapi.drives()
+                self._count_scope(drives, self._scope_key(drives))
+            except Exception as e:
+                log(f"scope counts failed: {type(e).__name__}", "warn")
+            finally:
+                self._scope_busy = False
+        threading.Thread(target=work, daemon=True, name="scope-counts").start()
+        return True
 
     # ---------- turbo index ----------
     def turbo_state(self):

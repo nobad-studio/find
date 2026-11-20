@@ -117,3 +117,20 @@ def test_keep_models_loaded_restarts_the_workers_first():
     t[0] += RELEASE_EVERY + 1
     w.check()                                                                 # still too much: now the models too
     assert log == {"release": 1, "recycle": 2}
+
+
+def test_what_to_index_counts_are_kept_until_something_changes(tmp_path, monkeypatch):
+    from nobadfind import api as api_mod, scope
+    from nobadfind.store import Store
+    calls = []
+    monkeypatch.setattr(scope, "info", lambda s, drives, store=None: calls.append(1) or {"n": len(calls)})
+    monkeypatch.setattr(api_mod.winapi, "drives", lambda: [{"root": "C:\\", "type": "fixed"}])
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    st = settings_mod.Settings(str(tmp_path / "s.json"))
+    ix = type("Ix", (), {"embedder": None, "photo_text": None, "pindex": None, "drive_list": [],
+                         "roots": lambda self, d: [], "rescan": lambda self: None})()
+    a = api_mod.Api(s, st, ix, None)
+    assert a.scope_info() == {"n": 1} and a.scope_info() == {"n": 1} and len(calls) == 1   # counted once
+    st.update({"include_caches": False})
+    assert a.scope_info() == {"n": 2}                                                     # a change: again
+    s.close()

@@ -1,5 +1,32 @@
 # NOBAD Find changelog
 
+## 0.9.3 · 2026-11-20
+
+### Speed
+- Settings > Performance > Speed: Balanced (as before) or Boost. Boost uses every processor thread for reading
+  files, photos and meaning, even while you use the PC.
+- Safety net (on by default): even at Boost, NOBAD Find works gently when other apps need the processor, uses one
+  worker when free memory drops under 3 GB, and pauses as before for an app that stops responding, a busy PC or
+  low memory. Off: only a frozen app and very low memory pause it.
+- Text reading workers, Boost and the Safety net take effect the moment you change them; the worker count used to
+  wait for a restart.
+- Keep models loaded: turning it on loads the models at once. When NOBAD Find uses a lot of memory it now
+  restarts its workers first and lets go of the models only if memory stays high (it used to drop them at once,
+  so they seemed to unload even with the setting on). The log says why a model was released.
+
+### Index page
+- A new look, like the Models page: each step is a card with a coloured tile, its state, a meter and its numbers
+  as chips; the numbers have icons and shorter labels.
+- Scan speed shows the last scan's speed instead of a dash (scans by the turbo index count too).
+- If the first numbers don't come within 3 seconds, the page asks again instead of waiting.
+
+### Settings
+- What to index opens at once: its counts (up to 4 seconds on a whole-PC index) are kept and refreshed in the
+  background.
+
+### Fixed
+- Slow answers from the engine are written to the log by name, so a slow page can be traced.
+
 ## 0.9.2 · 2026-11-20
 
 ### Fixed
