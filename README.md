@@ -62,7 +62,12 @@ they're about, and tells you why each result matched.
 - **Files are untrusted.** Office files are checked for zip bombs, XML is parsed without external entities,
   files are size-limited and read in separate low-priority processes, images are decoded only by Windows' own
   decoders, and nothing is ever run.
-- **Its only connections:** optional one-time model downloads from Hugging Face, each only when you say Download
+- **Updates (0.9.0):** once a day (Settings > About, switchable off) NOBAD Find asks GitHub for the newest
+  release of nobad-studio/find. Only when you choose Install does it download that installer, check its exact
+  size and its SHA-256 against the release's .sha256 file and GitHub's own digest, and run it; it installs over
+  the old version and starts NOBAD Find again. Nothing about your PC or files is sent. The installer isn't
+  code-signed yet, so that checksum (and HTTPS) is the check.
+- **Its only other connections:** optional one-time model downloads from Hugging Face, each only when you say Download
   in Settings → Models, pinned to one revision and checked against its SHA-256 before use. The meaning-search
   models are all-MiniLM-L6-v2 (23 MB), GTE small (33 MB), BGE base (106 MB) and multilingual-e5 small and base
   (129 / 282 MB); all MIT or Apache-2.0. The photo models are SigLIP base (211 MB) and SigLIP 2 base (393 MB), by

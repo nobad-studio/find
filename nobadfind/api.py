@@ -785,6 +785,39 @@ class Api:
         self._mdl_thread.start()
         return {"ok": True, "error": ""}
 
+    # ---------- updates (0.9.0, update.py) ----------
+    def update_state(self):
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"state": "idle", "current": APP_VER, "latest": "", "size": 0, "got": 0, "notes_url": "",
+                    "error": "", "auto": bool(self._settings.get("update_check")), "checked_at": 0}
+        return u.snapshot()
+
+    def update_check(self):
+        """Check now (the Settings button): in the background; the update event (or update_state) says how it went."""
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"ok": False, "error": "Updates aren't available in this copy of NOBAD Find."}
+        u.check_in_background()
+        return {"ok": True}
+
+    def update_install(self, consent):
+        """Download the newer version's installer, check it and run it: only with consent "INSTALL" (the button)."""
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"ok": False, "error": "Updates aren't available in this copy of NOBAD Find."}
+        if consent != "INSTALL":
+            return {"ok": False, "error": "Nothing is installed without your OK."}
+        if u.release is None or u.state not in ("available", "ready", "error"):
+            return {"ok": False, "error": "Check for updates first."}
+
+        def go():
+            if u.state != "ready" and not u.download():
+                return
+            u.install()
+        threading.Thread(target=go, daemon=True, name="update-install").start()
+        return {"ok": True}
+
     def model_folder(self, mid):
         """Open the folder a model is (or will be) downloaded to in File Explorer: a catalog id only, never a path
         from the UI. The models folder itself when that model's folder isn't there yet."""

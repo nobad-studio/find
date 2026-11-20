@@ -249,6 +249,20 @@ class FakeApi:
         self.dl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()), "error": ""}
         return {"ok": True}
 
+    def update_state(self):
+        """Like Api.update_state with an update found: this is 0.0.0-contract, the newest release 0.9.0."""
+        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0,
+                "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "",
+                "auto": bool(self.settings["update_check"]), "checked_at": 1763600000}
+
+    def update_check(self):
+        return {"ok": True}
+
+    def update_install(self, consent):
+        if consent != "INSTALL":
+            return {"ok": False, "error": "Nothing is installed without your OK."}
+        return {"ok": True}
+
     def model_folder(self, mid):
         """Like Api.model_folder: an id only; a built-in model has no folder (no Explorer here)."""
         from nobadfind import models as cat

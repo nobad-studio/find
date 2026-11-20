@@ -465,6 +465,10 @@ def run(stop=None, open_ui=None, lock=None):
     api._turbo = turbo
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
     turbo._push = rpc.events.turbo
+    from .update import Updater
+    updater = Updater(settings)
+    updater.on_change = rpc.events.update
+    api._updater = updater
     wiring = Wiring(api, settings, indexer, rpc.events, stop, rpc.ui_pids)
     if first_ui is not None:
         wiring.ui.started(first_ui)             # a hotkey right now doesn't start a second one
@@ -491,6 +495,8 @@ def run(stop=None, open_ui=None, lock=None):
     try:
         while not stop.wait(0.5):
             n += 1
+            if n % 120 == 60 and updater.due():               # a minute after start, then every minute's look
+                updater.check_in_background()
             icon = tray_box["icon"]
             if icon is not None and n % 10 == 0:          # the tooltip follows the level and the count (5 s)
                 now = icon.tip()

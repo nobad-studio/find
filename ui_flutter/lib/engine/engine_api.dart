@@ -18,6 +18,7 @@ import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
+import 'models/update.dart';
 
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
 
@@ -140,6 +141,15 @@ abstract class EngineApi {
 
   /// Open the folder model [id] is downloaded to in File Explorer (`model_folder`).
   Future<ActionResult> modelFolder(String id);
+
+  // ---- in-app updates (0.9.0) ----
+  Future<UpdateState> updateState();
+
+  /// Look for a newer version now; the `update` event says how it went.
+  Future<ActionResult> updateCheck();
+
+  /// Download, check and install the newer version (the consent word goes with the call).
+  Future<ActionResult> updateInstall();
   Future<AutoConfig> autoConfigure();
 
   /// "English first", "Many languages" or "Hindi + English": changes the recommendation only.

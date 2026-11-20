@@ -44,6 +44,7 @@ class Settings {
     'welcome_seen': false,
     'search_history': true,
     'models_stay_loaded': false,
+    'update_check': true,
   };
 
   static const initial = Settings(defaults);

@@ -92,6 +92,7 @@ DEFAULTS = {
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)
     "bg_notice_seen": False,        # the one-time "closing keeps NOBAD Find ready" notice was dismissed
     "welcome_seen": False,          # the Flutter UI's first-run welcome was dismissed (Start searching)
+    "update_check": True,           # look for a newer NOBAD Find once a day (GitHub, nobad-studio/find; update.py)
     "models_stay_loaded": False,    # on: models stay in memory (instant searches, more memory); off: freed when idle
     "tray": True,                   # NOBAD Find's icon in the notification area (the engine's, works with the UI closed)
     "text_model": "minilm-l6-v2",   # meaning model (models.CATALOG, feature "text"); used once it is downloaded

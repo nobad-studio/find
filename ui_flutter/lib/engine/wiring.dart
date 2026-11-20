@@ -17,6 +17,7 @@ import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
+import 'models/update.dart';
 import 'rpc.dart';
 
 class PipeEngine implements EngineApi {
@@ -155,6 +156,12 @@ class PipeEngine implements EngineApi {
   Future<ActionResult> modelRemove(String id) => _pipe.modelRemove(id);
   @override
   Future<ActionResult> modelFolder(String id) => _pipe.modelFolder(id);
+  @override
+  Future<UpdateState> updateState() => _pipe.updateState();
+  @override
+  Future<ActionResult> updateCheck() => _pipe.updateCheck();
+  @override
+  Future<ActionResult> updateInstall() => _pipe.updateInstall();
   @override
   Future<AutoConfig> autoConfigure() => _pipe.autoConfigure();
   @override

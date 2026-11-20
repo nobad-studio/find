@@ -18,6 +18,7 @@ import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
+import 'models/update.dart';
 
 class FakeEngine implements EngineApi {
   FakeEngine({
@@ -629,6 +630,27 @@ class FakeEngine implements EngineApi {
         emit(DownloadEvent(id: id, state: 'ready', gotMb: m.sizeMb, sizeMb: m.sizeMb));
       });
     }
+    return _ok;
+  });
+
+  /// The update the fake 'finds' (tests and the demo set it).
+  UpdateState updates = const UpdateState(state: 'uptodate', current: '0.9.0', latest: '0.9.0');
+
+  @override
+  Future<UpdateState> updateState() => _new('update_state', () => updates);
+
+  @override
+  Future<ActionResult> updateCheck() => _new('update_check', () {
+    emit(UpdateEvent(updates));
+    return _ok;
+  });
+
+  @override
+  Future<ActionResult> updateInstall() => _new('update_install', () {
+    if (!updates.canInstall) return const ActionResult(false, 'Check for updates first.');
+    updates = UpdateState(state: 'installing', current: updates.current, latest: updates.latest, size: updates.size,
+        got: updates.size, auto: updates.auto);
+    emit(UpdateEvent(updates));
     return _ok;
   });
 

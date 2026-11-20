@@ -76,7 +76,10 @@ Specific to this app:
 - Call detection (`winapi.in_call`) reads the user's own CapabilityAccessManager records; stale records from
   crashed apps must not pause indexing forever (age limit + process check).
 - `--uninstall` (run by the installer's uninstaller) only undoes what the app changed outside its data folder.
-- The index is SQLCipher with a DPAPI-protected key. The only outbound connections are the optional model
+- The index is SQLCipher with a DPAPI-protected key. The only outbound connections are the in-app update check
+  and download (`update.py`, maintainer decision 2026-11-20: HTTPS to GitHub for nobad-studio/find only, the
+  check once a day while `update_check` is on, the installer only after the user's Install, run only when its
+  size and SHA-256 match the release's .sha256 file and GitHub's digest) and the optional model
   downloads, all through `embed._fetch_verified` (HTTPS, exact size, SHA-256) from the pinned entries in
   `models.CATALOG`, each only after the user's consent (`model_download` with `consent: "DOWNLOAD"`, stored as
   `allow_model_download` / `allow_photo_model_download`). A new model needs a catalog entry with its revision, file

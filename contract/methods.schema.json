@@ -892,6 +892,50 @@
       "result": {
         "$ref": "#/$defs/ok"
       }
+    },
+    "update_state": {
+      "description": "The update state (installed version, the newest release, a download in progress).",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/update_state"
+      }
+    },
+    "update_check": {
+      "description": "Look for a newer NOBAD Find now (GitHub, nobad-studio/find), in the background; the update event says how it went.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
+    "update_install": {
+      "description": "Download the newer version's installer, check its size and SHA-256, and run it (it closes NOBAD Find, installs over it and starts it again). Only with consent \"INSTALL\".",
+      "params": {
+        "type": "object",
+        "properties": {
+          "consent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "consent": "INSTALL"
+          },
+          {
+            "consent": "no"
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
     }
   },
   "$defs": {
@@ -2469,6 +2513,9 @@
         },
         "models_stay_loaded": {
           "type": "boolean"
+        },
+        "update_check": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2512,7 +2559,8 @@
         "language_focus",
         "search_history",
         "settings_rev",
-        "models_stay_loaded"
+        "models_stay_loaded",
+        "update_check"
       ],
       "additionalProperties": false
     },
@@ -2654,6 +2702,9 @@
           "type": "boolean"
         },
         "models_stay_loaded": {
+          "type": "boolean"
+        },
+        "update_check": {
           "type": "boolean"
         }
       },
@@ -3014,6 +3065,69 @@
         "done",
         "total",
         "text"
+      ],
+      "additionalProperties": false
+    },
+    "update_state": {
+      "type": "object",
+      "description": "In-app updates (update.py): what is installed, the newest release, and where an update is.",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "checking",
+            "uptodate",
+            "available",
+            "downloading",
+            "ready",
+            "installing",
+            "error"
+          ]
+        },
+        "current": {
+          "type": "string"
+        },
+        "latest": {
+          "type": "string",
+          "description": "\"\" until a check found one."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The installer's size in bytes."
+        },
+        "got": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes downloaded so far."
+        },
+        "notes_url": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "update_check: look once a day."
+        },
+        "checked_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix seconds of the last check, 0 never."
+        }
+      },
+      "required": [
+        "state",
+        "current",
+        "latest",
+        "size",
+        "got",
+        "notes_url",
+        "error",
+        "auto",
+        "checked_at"
       ],
       "additionalProperties": false
     }

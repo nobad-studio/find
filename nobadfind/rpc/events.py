@@ -16,7 +16,7 @@ from ..api import DownloadRate
 from ..log import log
 
 EVENTS = {"status", "status_full", "level", "activity", "download", "notice", "show", "here", "quitting",
-          "turbo", "models"}
+          "turbo", "models", "update"}
 MODELS_EVERY = 1.0                 # seconds between looks for a changed models answer (it reads the model folders)
 STATUS_EVERY = 2.0                 # seconds between status events
 TICK = 0.5                         # seconds between looks for level and download changes
@@ -98,6 +98,10 @@ class Events:
         from .. import splash
         splash.close()                       # quitting before the window came: the start-up card goes too
         return self.push("quitting", {})
+
+    def update(self, state):
+        """An update was found, is downloading, ready or failed (update.Updater); same shape as update_state."""
+        return self.push("update", state)
 
     def turbo(self, state):
         """The turbo index changed (turbo.Turbo pushes its state; turbo_set too)."""

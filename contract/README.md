@@ -178,6 +178,9 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`model_download`** `{id, consent}` → `Ok`: download a model, only with `consent: "DOWNLOAD"` (the consent dialog's
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
+- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, ready, installing or error.
+- **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
+- **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
 - **`model_folder`** `{id}` → `{ok, error}`: opens the folder that model is downloaded to in File Explorer (the models folder when it isn't there yet). Only a catalog id, never a path; each model in `models` also sends its `dir` ("" when built into Windows).
 - **`model_remove`** `{id}` → `Ok`: delete a downloaded model's files; not for built-in models or the one in use.
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
@@ -252,6 +255,7 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`download`** → `{id: meaning|photo|<model id>, state: missing|downloading|ready, got_mb, size_mb, mb_s, error}`: a model
   download moved on: progress up to twice a second while `downloading`, then `ready`, or `missing` with `error` saying
   why it failed.
+- **`update`** → `UpdateState`: an update was found, is downloading, ready, installing or failed.
 - **`notice`** → `{text}`: a sentence to show as a toast (for example a hotkey another app took). A notice nobody was
   subscribed to waits (the last 5) and goes to the first connection that subscribes to `notice`.
 - **`models`** → the `models` result: something in it changed (a download changed state, a model was chosen,

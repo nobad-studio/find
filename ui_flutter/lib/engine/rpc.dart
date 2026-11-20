@@ -17,6 +17,7 @@ import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
+import 'models/update.dart';
 
 export 'engine_api.dart' show EngineOffline, Link, RpcException;
 
@@ -398,6 +399,9 @@ class EngineClient {
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});
   Future<ActionResult> modelRemove(String id) => _ok('model_remove', {'id': id});
   Future<ActionResult> modelFolder(String id) => _ok('model_folder', {'id': id});
+  Future<UpdateState> updateState() async => UpdateState.fromJson(await call('update_state'));
+  Future<ActionResult> updateCheck() => _ok('update_check');
+  Future<ActionResult> updateInstall() => _ok('update_install', {'consent': 'INSTALL'});
   Future<AutoConfig> autoConfigure() async => AutoConfig.fromJson(await call('auto_configure'));
   Future<ActionResult> modelLanguage(String focus) => _ok('model_language', {'focus': focus});
   Future<ActionResult> openWith(int id) => _ok('open_with', {'id': id}, false);

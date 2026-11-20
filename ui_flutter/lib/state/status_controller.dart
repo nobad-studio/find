@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 
 import '../engine/engine_api.dart';
 import '../engine/events.dart';
+import '../engine/models/update.dart';
 import '../engine/models/format.dart';
 import '../engine/models/scope_info.dart';
 import '../engine/models/status.dart';
@@ -27,11 +28,28 @@ class StatusController extends ChangeNotifier {
   List<ActivityEntry> _activity = const [];
   final _downloads = <String, ModelState>{};
   TurboState? _turbo;
+  UpdateState _update = UpdateState.unknown;
   var _watchers = 0;
   var _disposed = false;
 
   /// The turbo index (null: an engine without it, or not asked yet; the Index page asks).
   TurboState? get turbo => _turbo;
+
+  /// In-app updates as the engine last said (0.9.0).
+  UpdateState get update => _update;
+
+  /// Called once per newer version found (the app shows a toast); null in tests.
+  void Function(UpdateState)? onUpdateFound;
+
+  /// Ask the engine (Settings > About opens): an older engine has none, the state stays unknown.
+  Future<void> loadUpdate() async {
+    try {
+      _update = await engine.updateState();
+    } on Object {
+      return;
+    }
+    _changed();
+  }
 
   /// The short status (level, reason, phase, files, paused).
   EngineStatus? get status => _status;
@@ -121,6 +139,12 @@ class StatusController extends ChangeNotifier {
         _downloads[e.id] = e.asState;
       case TurboEvent(:final state):
         _turbo = state;
+      case UpdateEvent(:final state):
+        final was = _update;
+        _update = state;
+        if (state.state == 'available' && (was.state != 'available' || was.latest != state.latest)) {
+          onUpdateFound?.call(state);
+        }
       case ShowEvent() || NoticeEvent() || HereEvent() || QuittingEvent() || ModelsEvent():
         return;
     }

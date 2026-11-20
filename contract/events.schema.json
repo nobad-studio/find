@@ -143,6 +143,10 @@
     "models": {
       "description": "The models result changed (a download moved to another state, a model was chosen, removed or became active). Same object as the models method.",
       "$ref": "methods.schema.json#/$defs/models"
+    },
+    "update": {
+      "description": "An update was found, is downloading (got of size), ready, installing, or failed. Same shape as update_state.",
+      "$ref": "methods.schema.json#/$defs/update_state"
     }
   },
   "$defs": {
