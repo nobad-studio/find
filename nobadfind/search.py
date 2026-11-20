@@ -296,7 +296,8 @@ def _photo_hits(store, q, photo_text, pindex, limit):
     if q.kinds and "image" not in q.kinds:
         return [], {}                                 # "pdf ..." isn't asking about photos
     # the description in the user's own order ("2 boys", "dog on the beach"), not the bag of keywords
-    qvec = photo_text.encode(q.meaning or q.text)
+    ask = getattr(photo_text, "encode_question", None) or photo_text.encode
+    qvec = ask(q.meaning or q.text)
     where, args = _filters(q)
     among = getattr(pindex, "search_among", None)
     if where and among is not None:

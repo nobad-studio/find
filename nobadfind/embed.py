@@ -227,6 +227,12 @@ class Lazy:
     def encode(self, *args, **kwargs):
         return self._get().encode(*args, **kwargs)
 
+    def encode_question(self, text):
+        """The model's own question encoder (photo.TextEncoder.encode_question), else plain encode."""
+        m = self._get()
+        fn = getattr(m, "encode_question", None)
+        return fn(text) if fn is not None else m.encode(text)
+
     @property
     def loaded(self):
         return self._model is not None
