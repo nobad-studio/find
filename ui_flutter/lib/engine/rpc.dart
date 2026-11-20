@@ -399,6 +399,7 @@ class EngineClient {
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});
   Future<ActionResult> modelRemove(String id) => _ok('model_remove', {'id': id});
   Future<ActionResult> modelFolder(String id) => _ok('model_folder', {'id': id});
+  Future<ActionResult> runAction(String id) => _ok('run_action', {'id': id});
   Future<UpdateState> updateState() async => UpdateState.fromJson(await call('update_state'));
   Future<ActionResult> updateCheck() => _ok('update_check');
   Future<ActionResult> updateInstall() => _ok('update_install', {'consent': 'INSTALL'});

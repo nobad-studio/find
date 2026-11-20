@@ -166,8 +166,21 @@ class FakeEngine implements EngineApi {
               if (w.isNotEmpty && !_stop.contains(w)) w,
           ],
           needs: searchNeeds,
+          actions: searchActions,
         );
       });
+
+  /// What every search offers to open (0.9.1 `actions`); tests set it.
+  List<SearchAction> searchActions = const [];
+
+  /// The action ids run_action was asked for.
+  final actionsRun = <String>[];
+
+  @override
+  Future<ActionResult> runAction(String id) => _new('run_action', () {
+    actionsRun.add(id);
+    return searchActions.any((a) => a.id == id) ? _ok : const ActionResult(false, "That isn't something NOBAD Find can open.");
+  });
 
   /// What every search says it needs (0.9.0 `needs`); tests and the demo set it.
   List<SearchNeed> searchNeeds = const [];
@@ -472,7 +485,7 @@ class FakeEngine implements EngineApi {
   HotkeyState _hotkeyState() {
     HotkeyOne one(String which) {
       final spec = '${_settings[which] ?? Settings.defaults[which]}';
-      if (which == 'bar_hotkey' && _settings['bar'] == false) return HotkeyOne(spec, 'off');
+      if (spec.isEmpty || (which == 'bar_hotkey' && _settings['bar'] == false)) return HotkeyOne(spec, 'off');
       if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(spec)) return HotkeyOne(spec, 'reserved');
       return HotkeyOne(spec, takenHotkeys.contains(spec) ? 'taken' : 'ok');
     }
@@ -837,7 +850,7 @@ class FakeEngine implements EngineApi {
       files: _brief.files,
       paused: _brief.paused,
       details: IndexDetails(
-        version: '0.9.0',
+        version: '0.9.1',
         withText: 31877,
         memoryMb: 186,
         rate: 2140,

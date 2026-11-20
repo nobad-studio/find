@@ -32,6 +32,7 @@ from .walker import Walker
 CONNECT_TIMEOUT = 60             # seconds from the permission prompt being answered to the helper connecting
 SAVE_USN_EVERY = 30              # seconds between saves of the journal place while following
 HELLO_WAIT = 10                  # seconds a scan waits for the helper to list its drives
+QUIET_S = 120                   # a drive whose helper sends nothing this long is walked instead (0.9.1)
 FULL_EVERY = 24 * 3600           # a catch-up can't see folders deleted while the engine was off: read it all daily
 
 DECLINED = ("Windows didn't get permission (the prompt was closed or answered No). NOBAD Find keeps using its "
@@ -227,6 +228,8 @@ class Turbo:
         full, caught = set(), set()
         link = self._link
         if not self.running():
+            if self.settings.get("turbo"):
+                log("turbo: on, but its helper isn't running; the normal folder walk reads the drives")
             return full, caught
         cfg = self._config(roots)
         key = self._key(cfg)
@@ -235,11 +238,16 @@ class Turbo:
         except OSError:
             self.link_closed()
             return full, caught
-        self._hello.wait(HELLO_WAIT)
+        if not self._hello.wait(HELLO_WAIT):
+            log(f"turbo: the helper didn't answer in {HELLO_WAIT:g} s; the normal folder walk reads the drives", "warn")
+            return full, caught
         rules = self.indexer.rules()
         check = _Checker(Walker(roots, exclude=cfg["exclude"], rules=rules), rules)
         saved = self._saved()
-        want = sorted({drive_of(r) for r in roots} & self._helper_volumes)
+        asked = {drive_of(r) for r in roots}
+        want = sorted(asked & self._helper_volumes)
+        if not want:
+            log(f"turbo: nothing to read (drives {sorted(asked)}, the helper's NTFS volumes {sorted(self._helper_volumes)})")
         for d in want:
             prev = saved.get(d) if isinstance(saved.get(d), dict) else None
             fresh = prev and self._clock() - float(prev.get("full_at") or 0) < FULL_EVERY
@@ -248,17 +256,28 @@ class Turbo:
             w = {"ev": threading.Event(), "on_rows": on_rows, "gen": gen, "check": check, "result": None, "files": 0}
             with self._mlock:
                 self._waiting[d] = w
+            log(f"turbo: reading {d} ({'changes since the last read' if since else 'all of it'})")
             try:
                 link.send({"t": "scan", "drive": d, "since": since})
             except OSError:
                 self.link_closed()
+            # 0.9.1: never wait forever. Each batch of rows restarts the clock; a helper that goes quiet for
+            # QUIET_S leaves that drive to the normal folder walk (it used to freeze the whole indexer).
+            w["heard"] = self._clock()
             while not w["ev"].wait(0.5):
                 if stop.is_set() or not self.running():
+                    break
+                if self._clock() - w["heard"] > QUIET_S:
+                    log(f"turbo: {d} sent nothing for {QUIET_S} s ({w['files']} entries so far); "
+                        "the normal folder walk reads it", "warn")
+                    self.error = f"Turbo stopped answering for {d}; that drive uses the normal folder walk."
                     break
             with self._mlock:
                 self._waiting.pop(d, None)
             r = w["result"]
             if r is None:
+                if not stop.is_set():
+                    log(f"turbo: {d} not read; the normal folder walk reads it")
                 continue
             (full if r["full"] else caught).add(d)
             full_at = self._clock() if r["full"] else float((prev or {}).get("full_at") or 0)
@@ -303,6 +322,9 @@ class Turbo:
                 return
             out = [r for r in (w["check"].row(x, d, w["gen"]) for x in rows) if r is not None]
             w["files"] += len(out)
+            w["heard"] = self._clock()
+            with self._mlock:
+                self._vols.setdefault(d, {})["files"] = w["files"]     # progress shows while it reads
             if out:
                 w["on_rows"](out)
         elif t == "scanned":

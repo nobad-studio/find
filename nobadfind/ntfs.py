@@ -518,8 +518,11 @@ def _k32():
                 ("Process32FirstW", B, [H, P]),
                 ("Process32NextW", B, [H, P]),
                 ("WaitForSingleObject", D, [H, D]),
-                ("ReadFile", B, [H, P, D, ctypes.POINTER(D), P]),
-                ("WriteFile", B, [H, P, D, ctypes.POINTER(D), P]),
+                ("ReadFile", B, [H, P, D, P, P]),
+                ("WriteFile", B, [H, P, D, P, P]),
+                ("CreateEventW", H, [P, B, B, w.LPCWSTR]),
+                ("ResetEvent", B, [H]),
+                ("GetOverlappedResult", B, [H, P, ctypes.POINTER(D), B]),
                 ("GetNamedPipeServerProcessId", B, [H, ctypes.POINTER(D)]),
                 ("GetNamedPipeServerSessionId", B, [H, ctypes.POINTER(D)]),
                 ("LocalFree", P, [P])):
@@ -765,31 +768,65 @@ def pipe_name(sid, pid):
     return f"\\\\.\\pipe\\NOBADFind-turbo-{sid}-{int(pid)}"
 
 
+class _OVERLAPPED(ctypes.Structure):
+    _fields_ = [("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t), ("Offset", wintypes.DWORD),
+                ("OffsetHigh", wintypes.DWORD), ("hEvent", wintypes.HANDLE)]
+
+
+ERROR_IO_PENDING, ERROR_MORE_DATA = 997, 234
+FILE_FLAG_OVERLAPPED = 0x40000000
+
+
 class _Pipe:
-    """The helper's end of the engine's pipe (blocking I/O; one reader, writes under a lock)."""
+    """The helper's end of the engine's pipe: overlapped I/O, one reader thread, writes under a lock.
+
+    0.9.1: it was a synchronous handle, and Windows runs I/O on a synchronous handle one call at a time: the main
+    loop's ReadFile (waiting for the engine) held back the scan's first WriteFile until the engine said something,
+    which it never did while waiting for that scan. The helper read nothing and the engine's indexer waited forever.
+    Overlapped, a read and a write can be in flight together."""
 
     def __init__(self, h):
         self.h = h
         self._lock = threading.Lock()
+        k = _k32()
+        self._wov, self._rov = _OVERLAPPED(), _OVERLAPPED()
+        self._wov.hEvent = k.CreateEventW(None, True, False, None)
+        self._rov.hEvent = k.CreateEventW(None, True, False, None)
+
+    def _io(self, fn, ov, buf, size):
+        """One overlapped ReadFile / WriteFile, waited for. Returns the bytes done, or raises OSError."""
+        k = _k32()
+        k.ResetEvent(ov.hEvent)
+        n = wintypes.DWORD()
+        if not fn(self.h, buf, size, None, ctypes.byref(ov)):
+            err = ctypes.get_last_error()
+            if err not in (ERROR_IO_PENDING, ERROR_MORE_DATA):
+                raise OSError(err, "pipe I/O")
+        if not k.GetOverlappedResult(self.h, ctypes.byref(ov), ctypes.byref(n), True):
+            err = ctypes.get_last_error()
+            if err != ERROR_MORE_DATA:
+                raise OSError(err, "pipe I/O")
+        return n.value
 
     def send(self, obj):
         data = encode(obj)
-        n = wintypes.DWORD()
         with self._lock:
             off = 0
             while off < len(data):
                 chunk = data[off:off + (1 << 20)]
                 buf = ctypes.create_string_buffer(chunk, len(chunk))
-                if not _k32().WriteFile(self.h, buf, len(chunk), ctypes.byref(n), None) or not n.value:
-                    raise OSError(ctypes.get_last_error(), "pipe write")
-                off += n.value
+                n = self._io(_k32().WriteFile, self._wov, buf, len(chunk))
+                if not n:
+                    raise OSError(0, "pipe write")
+                off += n
 
     def read(self):
         buf = ctypes.create_string_buffer(65536)
-        n = wintypes.DWORD()
-        if not _k32().ReadFile(self.h, buf, 65536, ctypes.byref(n), None) or not n.value:
+        try:
+            n = self._io(_k32().ReadFile, self._rov, buf, 65536)
+        except OSError:
             return b""
-        return buf.raw[:n.value]
+        return buf.raw[:n] if n else b""
 
 
 def server_ok(h, ppid, session):
@@ -827,7 +864,7 @@ def _connect_to_parent():
     k.CloseHandle(tok)
     name = pipe_name(sid, ppid)
     h = k.CreateFileW(name, GENERIC_READ | 0x40000000, 0, None, OPEN_EXISTING,
-                      0x00100000 | 0x00010000, None)          # SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION
+                      FILE_FLAG_OVERLAPPED | 0x00100000 | 0x00010000, None)   # overlapped; SQOS: identification only
     if not h or h == INVALID_HANDLE:
         raise PermissionError(f"pipe not there ({ctypes.get_last_error()})")
     if not server_ok(h, ppid, session_of(me)):

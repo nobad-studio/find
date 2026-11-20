@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/widgets.dart';
 
+import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/controls.dart';
@@ -36,9 +37,16 @@ class ShortcutsPage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SettingsGroup(
-          'Anywhere in Windows',
-          rows: [HotkeySetting('hotkey', 'Open NOBAD Find'), HotkeySetting('bar_hotkey', 'Quick find bar')],
+        ListenableBuilder(
+          listenable: AppScope.of(context).settings,
+          builder: (context, _) => SettingsGroup(
+            'Anywhere in Windows',
+            rows: [
+              const HotkeySetting('hotkey', 'Open NOBAD Find'),
+              // 0.9.1: one window with everything; the quick find bar's shortcut only while the bar is on
+              if (AppScope.of(context).settings.settings.flag('bar')) const HotkeySetting('bar_hotkey', 'Quick find bar'),
+            ],
+          ),
         ),
         SettingsGroup(
           'In this window',

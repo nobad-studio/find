@@ -203,6 +203,89 @@ def _wordy(term):
     return any(ch.isalnum() for ch in term) and all(ch.isalnum() or ch in "._-" for ch in term)
 
 
+# ---------- exact text: keys, tokens, ids, hashes (0.9.1) ----------
+# "sk-proj-a83kd92", "AKIAIOSFODNN7", "3f9c2e1b", "INV-2025-00417": the word index finds whole tokens, but not
+# a piece of a longer one. For a question that looks like a token, the stored text of files is scanned for it
+# (your own folders first), within TOKEN_BUDGET_S; the answer says when it covered only part of the index.
+TOKEN_BUDGET_S = 3.0
+TOKEN_SNIP = 48
+
+
+def looks_like_token(text):
+    """One word of 6+ characters that mixes letters and digits, or 10+ characters with - _ . : / = + in it."""
+    t = (text or "").strip()
+    if not t or any(ch.isspace() for ch in t) or len(t) > 200:
+        return False
+    from .kinds import KINDS
+    if "." in t and t[t.rindex("."):].lower() in set().union(*KINDS.values()):
+        return False                                 # a file name ("report_v2.docx"): the name search has it
+    letters, digits = any(ch.isalpha() for ch in t), any(ch.isdigit() for ch in t)
+    if len(t) >= 6 and letters and digits:
+        return True
+    return len(t) >= 10 and any(ch in "-_.:/=+" for ch in t) and (letters or digits)
+
+
+def _token_hits(store, token, q, limit, clock=None):
+    """(file ids, snippets, complete): chunks whose text contains token exactly (case-sensitive first, then not),
+    your folders first. complete is False when the budget ran out before the whole index was looked at."""
+    import time as _t
+    clock = clock or _t.monotonic
+    deadline = clock() + TOKEN_BUDGET_S
+    where, args = _filters(q)
+    out, snips, seen = [], {}, set()
+    db = getattr(store, "db", None)
+    stopped = {"cut": False}
+
+    cancel = getattr(store, "_cancel", None)        # a newer search on the same channel (search() sets it)
+
+    def guard():
+        if cancel is not None and cancel():
+            return 1
+        if clock() > deadline:
+            stopped["cut"] = True
+            return 1
+        return 0
+    if db is not None:
+        db.set_progress_handler(guard, 20000)
+    try:
+        firsts = [r.rstrip("\\") + "\\" for r in getattr(store, "_roots_first", lambda: [])()]
+        ranges = [(" AND f.path >= ? AND f.path < ?", (lo, lo + "\uffff")) for lo in firsts] + [("", ())]
+        for extra, rargs in ranges:
+            if len(out) >= limit or stopped["cut"]:
+                break
+            if clock() > deadline:
+                stopped["cut"] = True
+                break
+            try:
+                rows = store.q(
+                    "SELECT c.file_id, c.body FROM chunks c JOIN files f ON f.id = c.file_id "
+                    f"WHERE instr(c.body, ?) > 0{extra}{where} LIMIT ?", (token, *rargs, *args, limit * 3))
+            except OperationalError as e:
+                if "interrupt" not in str(e).lower():
+                    raise
+                break
+            for fid, body in rows:
+                if fid in seen:
+                    continue
+                seen.add(fid)
+                i = body.find(token)
+                a, b = max(0, i - TOKEN_SNIP), min(len(body), i + len(token) + TOKEN_SNIP)
+                snips[fid] = (("…" if a else "") + body[a:i] + "\x02" + token + "\x03" + body[i + len(token):b]
+                              + ("…" if b < len(body) else ""))
+                out.append(fid)
+                if len(out) >= limit:
+                    break
+    finally:
+        if db is not None:                           # back to search()'s own handler (newer search -> stop)
+            if cancel is not None:
+                db.set_progress_handler(lambda: 1 if cancel() else 0, 5000)
+            else:
+                db.set_progress_handler(None, 0)
+    if cancel is not None and cancel():
+        raise Cancelled()
+    return out, snips, not stopped["cut"]
+
+
 def _text_hits(store, q, limit):
     words = [t for t in q.terms if len(t) >= 2] + q.phrases
     if not words:
@@ -423,7 +506,17 @@ def _asks(q):
     described = bool(words)
     # a description, not a file name: "lease.pdf" or "budget" alone are looked up, not described
     sentence = len(words) >= 2 and not any("." in w or "\\" in w or "/" in w for w in words)
-    return {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+    out = {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+    if out["photo"]:
+        roots = []
+        if q.folder:
+            from .winapi import known_folder
+            roots.append(known_folder(q.folder))
+        if q.path:
+            roots.append(q.path)
+        out["roots"] = [r for r in roots if r]
+        out["where"] = _filters(q)                # the photos that fit, for "x of y done" in that folder
+    return out
 
 
 def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=None, here="", filters=None,
@@ -440,6 +533,8 @@ def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=N
     if cancelled is not None:
         db = store.db                                   # this thread's connection: SQLite stops when told to
         db.set_progress_handler(lambda: 1 if cancelled() else 0, 5000)
+    store._cancel = cancelled
+    store._token_memo = {}
     try:
         if cancelled is not None and cancelled():
             raise Cancelled()
@@ -465,6 +560,8 @@ def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=N
     finally:
         if db is not None:
             db.set_progress_handler(None, 0)
+        store._cancel = None
+        store._token_memo = None
     r.pop("_time_from_text", None)
     r.pop("_soft", None)
     got = r.pop("_asks", None)
@@ -511,6 +608,22 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
     names = _name_hits(store, q, 300)
     lists.append((w_name, names))
     texts, snippets = _text_hits(store, q, 300)
+    token = q.raw.strip() if looks_like_token(q.raw) else ""
+    exact = []
+    if token:
+        memo = getattr(store, "_token_memo", None)      # one scan per search, even when search() asks again
+        if memo is not None and token in memo:
+            exact, tsnips, complete = memo[token]
+        else:
+            exact, tsnips, complete = _token_hits(store, token, q, 100)
+            if memo is not None:
+                memo[token] = (exact, tsnips, complete)
+        for fid, sn in tsnips.items():
+            snippets.setdefault(fid, sn)
+        texts = exact + [f for f in texts if f not in set(exact)]
+        if not complete:
+            q.notes.append(f"Looked for “{token}” inside files for {TOKEN_BUDGET_S:g} s; part of the index wasn't "
+                           "looked at yet. Add a folder to narrow it.")
     lists.append((w_text, texts))
     meaning, best = _meaning_hits(store, q, embedder, vindex, 150)
     lists.append((w_meaning, meaning))

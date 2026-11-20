@@ -936,6 +936,33 @@
       "result": {
         "$ref": "#/$defs/ok"
       }
+    },
+    "run_action": {
+      "description": "Open a Windows Settings page, a Windows tool or an app by the id a search answer gave. Never a path or a command.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "id": "set:bluetooth"
+          },
+          {
+            "id": "C:\\\\Windows\\\\evil.exe"
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
     }
   },
   "$defs": {
@@ -1296,6 +1323,13 @@
             "$ref": "#/$defs/search_need"
           },
           "description": "Only when something isn't ready: what to download, switch on, or wait for."
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/search_action"
+          },
+          "description": "Only when the question fits a setting or an app: best first."
         }
       },
       "required": [
@@ -2338,7 +2372,8 @@
     },
     "hotkey": {
       "type": "string",
-      "pattern": "^(?:(?:ctrl|alt|shift|win)\\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$"
+      "pattern": "^(?:(?:(?:ctrl|alt|shift|win)\\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2])))?$",
+      "description": "A key combination (ctrl, alt, shift, win + a letter, digit, space or F1-F12), or \"\" for none (0.9.1)."
     },
     "folders": {
       "type": "array",
@@ -3128,6 +3163,38 @@
         "error",
         "auto",
         "checked_at"
+      ],
+      "additionalProperties": false
+    },
+    "search_action": {
+      "type": "object",
+      "description": "Something to open instead of a file (0.9.1): a Windows Settings page, a Windows tool or an app.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "For run_action."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "setting",
+            "tool",
+            "app"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "subtitle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "subtitle"
       ],
       "additionalProperties": false
     }

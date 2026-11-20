@@ -162,6 +162,13 @@ class _HotkeySettingState extends State<HotkeySetting> {
     });
   }
 
+  /// No shortcut at all (0.9.1): the Start menu and the notification-area icon still open NOBAD Find.
+  Future<void> _clear() async {
+    setState(() => _busy = true);
+    await AppScope.of(context).settings.setHotkey(widget.which, '');
+    if (mounted) setState(() => _busy = false);
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent e) {
     if (e is! KeyDownEvent) return KeyEventResult.handled;
     if (e.logicalKey == LogicalKeyboardKey.escape) {
@@ -205,13 +212,18 @@ class _HotkeySettingState extends State<HotkeySetting> {
               const SizedBox(width: 4),
             ],
             const SizedBox(width: 6),
-            if (_mode == _Mode.show)
+            if (_mode == _Mode.show) ...[
               NbButton(
-                'Change',
+                spec.isEmpty ? 'Set' : 'Change',
                 small: true,
                 kind: NbButtonKind.ghost,
                 onPressed: () => _start(_Mode.record),
               ),
+              if (spec.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                NbButton('Clear', small: true, kind: NbButtonKind.quiet, onPressed: _clear),
+              ],
+            ],
           ],
         ),
         below: _mode == _Mode.show ? null : _editor(context),
@@ -347,10 +359,11 @@ class _StateLine extends StatelessWidget {
         'Not working: not a combination NOBAD Find can use. Change it.',
         c.warn,
       ),
-      _ when bar && spec.isNotEmpty => (
-        'Works while the quick find bar is on.',
+      _ when spec.isEmpty => (
+        'No shortcut. Open NOBAD Find from the Start menu or its icon in the notification area.',
         c.muted,
       ),
+      _ when bar => ('Works while the quick find bar is on.', c.muted),
       _ => ('Changes take effect at once.', c.muted),
     };
     return Text(text, style: NbType.text(12, color, height: 1.3));

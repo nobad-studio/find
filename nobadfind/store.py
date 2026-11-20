@@ -268,12 +268,49 @@ class Store:
                 self.db.execute("DELETE FROM files WHERE path = ? OR path LIKE ? ESCAPE '\\'", (p, like))
             self.db.commit()
 
+    # ---------- the user's own folders first (0.9.1) ----------
+    # Downloads, Desktop, Documents, Pictures, ... (the indexer sets them from Windows' known folders). Every work
+    # queue takes their files first, then the rest of the PC, so on a whole-PC index your own files are read, looked
+    # at and understood before Program Files and app caches. A path range uses the path index: no sort of the PC.
+    prefer_roots = ()
+    # Folders a search just asked about (a photo search "in downloads"): first of all, for a while (asked_until).
+    asked_roots = ()
+
+    def _roots_first(self):
+        seen, out = set(), []
+        for r in (*self.asked_roots, *self.prefer_roots):
+            k = (r or "").rstrip("\\").lower()
+            if k and k not in seen:
+                seen.add(k)
+                out.append(r.rstrip("\\"))
+        return out
+
+    def _first(self, build, args, limit, key=0):
+        """build(extra) -> SQL with {extra} conditions on f.path; rows from the preferred roots first, then the rest."""
+        out, seen = [], set()
+        for root in self._roots_first():
+            if len(out) >= limit:
+                break
+            lo = root + "\\"
+            for r in self.q(build(" AND f.path >= ? AND f.path < ?"), (*args, lo, lo + "\uffff", limit - len(out))):
+                if r[key] not in seen:
+                    seen.add(r[key])
+                    out.append(r)
+        if len(out) < limit:
+            for r in self.q(build(""), (*args, limit)):
+                if r[key] not in seen:
+                    seen.add(r[key])
+                    out.append(r)
+                    if len(out) >= limit:
+                        break
+        return out
+
     def needs_text(self, kinds_ext, max_bytes, limit=500, min_bytes=0):
         marks = ",".join("?" * len(kinds_ext))
-        return self.q(
-            f"SELECT id, path, ext, size, mtime FROM files WHERE ext IN ({marks}) AND size <= ? AND size >= ? "
-            "AND (text_mtime IS NULL OR text_mtime <> mtime) ORDER BY mtime DESC LIMIT ?",
-            (*sorted(kinds_ext), max_bytes, min_bytes, limit))
+        return self._first(lambda extra: (
+            f"SELECT f.id, f.path, f.ext, f.size, f.mtime FROM files f WHERE f.ext IN ({marks}) AND f.size <= ? "
+            f"AND f.size >= ? AND (f.text_mtime IS NULL OR f.text_mtime <> f.mtime){extra} ORDER BY f.mtime DESC LIMIT ?"),
+            (*sorted(kinds_ext), max_bytes, min_bytes), limit)
 
     def set_text(self, file_id, mtime, chunks, err=None):
         with self.wlock:
@@ -296,14 +333,19 @@ class Store:
     # next=True: the tables a model switch fills (vecs_next, nvecs_next) while the current vectors stay in use
     def chunks_without_vectors(self, limit=256, next=False):
         t = "vecs_next" if next else "vecs"
-        return self.q(f"SELECT c.id, c.body FROM chunks c LEFT JOIN {t} v ON v.chunk_id=c.id "
-                      "WHERE v.chunk_id IS NULL LIMIT ?", (limit,))
+        if not self._roots_first():
+            return self.q(f"SELECT c.id, c.body FROM chunks c LEFT JOIN {t} v ON v.chunk_id=c.id "
+                          "WHERE v.chunk_id IS NULL LIMIT ?", (limit,))
+        return self._first(lambda extra: (
+            f"SELECT c.id, c.body FROM chunks c JOIN files f ON f.id = c.file_id LEFT JOIN {t} v ON v.chunk_id=c.id "
+            f"WHERE v.chunk_id IS NULL{extra} LIMIT ?"), (), limit)
 
     def names_without_vectors(self, kinds, limit=256, next=False):
         t = "nvecs_next" if next else "nvecs"
         marks = ",".join("?" * len(kinds))
-        return self.q(f"SELECT f.id, f.name, f.dir FROM files f LEFT JOIN {t} v ON v.file_id=f.id "
-                      f"WHERE v.file_id IS NULL AND f.kind IN ({marks}) LIMIT ?", (*sorted(kinds), limit))
+        return self._first(lambda extra: (
+            f"SELECT f.id, f.name, f.dir FROM files f LEFT JOIN {t} v ON v.file_id=f.id "
+            f"WHERE v.file_id IS NULL AND f.kind IN ({marks}){extra} LIMIT ?"), tuple(sorted(kinds)), limit)
 
     def add_name_vectors(self, rows, next=False):
         """rows: (file_id, blob). An empty blob means "looked at, no words worth a vector" (IMG_0042.jpg)."""
@@ -337,10 +379,11 @@ class Store:
     def photos_to_read(self, exts, min_bytes, max_bytes, limit=64):
         """Photos without a vector, or changed since theirs was made."""
         marks = ",".join("?" * len(exts))
-        return self.q(f"SELECT f.id, f.path, f.mtime FROM files f LEFT JOIN pvecs p ON p.file_id = f.id "
-                      f"WHERE f.ext IN ({marks}) AND f.size BETWEEN ? AND ? "
-                      f"AND (p.file_id IS NULL OR p.mtime IS NOT f.mtime) ORDER BY f.mtime DESC LIMIT ?",
-                      (*sorted(exts), min_bytes, max_bytes, limit))
+        return self._first(lambda extra: (
+            f"SELECT f.id, f.path, f.mtime FROM files f LEFT JOIN pvecs p ON p.file_id = f.id "
+            f"WHERE f.ext IN ({marks}) AND f.size BETWEEN ? AND ? "
+            f"AND (p.file_id IS NULL OR p.mtime IS NOT f.mtime){extra} ORDER BY f.mtime DESC LIMIT ?"),
+            (*sorted(exts), min_bytes, max_bytes), limit)
 
     def count_readable(self, kinds_ext, max_bytes, min_bytes=0):
         """How many files the text reader is meant to read (same filter as needs_text)."""

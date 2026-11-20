@@ -42,7 +42,7 @@ class PerformancePage extends StatelessWidget {
               'stay_running',
               'Keep running after closing the window',
               'Off: closing NOBAD Find quits it completely, nothing stays running. On: it stays in the notification '
-                  'area so the hotkey and the quick find bar keep working.',
+                  'area so the hotkey keeps working.',
             ),
             SwitchSetting(
               'keep_background',
@@ -53,7 +53,7 @@ class PerformancePage extends StatelessWidget {
             SwitchSetting(
               'tray',
               'Show NOBAD Find in the notification area',
-              'The icon works with the window closed: open NOBAD Find, the quick find bar, pause and quit.',
+              'The icon works with the window closed: open NOBAD Find, pause and quit.',
             ),
             TextSetting(
               'workers',

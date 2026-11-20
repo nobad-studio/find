@@ -174,6 +174,10 @@ def parts(q, meaning_on=False):
         add("kind", KIND_LABELS.get(k, k), by.get("kind:" + k, []), lead=True)
     for a in sorted(q.apps):
         add("kind", f"{a.capitalize()} files", [p for p in by.get("app", []) if p.split()[0] == a])
+    if q.langs:
+        from .kinds import language_label
+        for x in sorted(q.langs):
+            add("kind", f"{language_label(x)} code", [p for p in by.get("lang", []) if p.split()[0] == x])
     for e in sorted(q.exts):
         add("kind", e, [e])
     if q.when:

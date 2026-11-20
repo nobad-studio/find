@@ -220,9 +220,44 @@ def presentation_mode():
     return _notification_state() in (2, 4)
 
 
+# The desktop, the taskbar and File Explorer are never a full-screen game, whatever Windows' flag says.
+_NOT_A_GAME = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "CabinetWClass", "ExploreWClass",
+               "Windows.UI.Core.CoreWindow", "LockScreenBackstopFrame"}
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD)]
+
+
+def foreground_covers_screen():
+    """Does the window in front cover its whole monitor (a real full-screen app), and isn't the shell's?"""
+    if not WIN:
+        return False
+    try:
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd or _window_class(hwnd) in _NOT_A_GAME:
+            return False
+        r = wintypes.RECT()
+        if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(r)):
+            return False
+        user32.MonitorFromWindow.restype = wintypes.HANDLE
+        mon = user32.MonitorFromWindow(wintypes.HWND(hwnd), 2)          # MONITOR_DEFAULTTONEAREST
+        mi = _MONITORINFO()
+        mi.cbSize = ctypes.sizeof(mi)
+        if not mon or not user32.GetMonitorInfoW(wintypes.HANDLE(mon), ctypes.byref(mi)):
+            return False
+        m = mi.rcMonitor
+        return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
+    except Exception:
+        return False
+
+
 def fullscreen_game():
-    """True while a full-screen Direct3D program runs (QUNS_RUNNING_D3D_FULL_SCREEN)."""
-    return _notification_state() == 3
+    """True while a full-screen Direct3D program runs (QUNS_RUNNING_D3D_FULL_SCREEN) and its window really fills
+    the screen. 0.9.1: Windows' flag alone can stay set after a game or a video player closed (seen on the
+    maintainer's PC with File Explorer in front), which held NOBAD Find at one worker all day."""
+    return _notification_state() == 3 and foreground_covers_screen()
 
 
 def busy_fullscreen():

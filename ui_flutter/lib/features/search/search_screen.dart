@@ -32,6 +32,7 @@ import '../../widgets/panels.dart';
 import '../../widgets/pressable.dart';
 import '../../widgets/smooth_scroll.dart';
 import 'filter_bar.dart';
+import 'actions_block.dart';
 import 'need_hint.dart';
 import 'home_view.dart';
 import '../../platform/timing.dart';
@@ -300,6 +301,11 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
     sug.close();
+    final act = s.find.launchAction;          // "open bluetooth": Enter opens the setting, not the first file
+    if (act != null) {
+      unawaited(s.find.runAction(act));
+      return;
+    }
     _open();
   }
 
@@ -759,6 +765,7 @@ class _Meta extends StatelessWidget {
         spans.add(TextSpan(text: ' · $n', style: NbType.text(NbSize.small, c.warn)));
       }
     }
+    final acts = f.showingResults ? a.actions : const <SearchAction>[];
     final header = Align(
       alignment: Alignment.topLeft,
       child: ConstrainedBox(
@@ -797,12 +804,24 @@ class _Meta extends StatelessWidget {
         ),
       ),
     );
-    if (a.needs.isEmpty) return header;
+    if (a.needs.isEmpty && acts.isEmpty) return header;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         header,
+        if (acts.isNotEmpty)
+          Align(
+            alignment: Alignment.topLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 8),
+                child: ActionsBlock(acts),
+              ),
+            ),
+          ),
+        if (a.needs.isNotEmpty)
         Align(
           alignment: Alignment.topLeft,
           child: ConstrainedBox(

@@ -42,6 +42,32 @@ class StatusController extends ChangeNotifier {
   void Function(UpdateState)? onUpdateFound;
 
   /// Ask the engine (Settings > About opens): an older engine has none, the state stays unknown.
+  /// Pause for [d] or Resume (0.9.1): the page shows it at once ("Pausing…" / "Resuming…"); the engine's level
+  /// event, which now comes right away too, then says how fast it works.
+  Future<void> pauseFor(Duration d) async {
+    final s = _status ?? const EngineStatus();
+    _status = EngineStatus(level: 'paused', reason: 'Pausing…', phase: s.phase, files: s.files, paused: 'you paused it');
+    _changed();
+    try {
+      await engine.pauseFor(d);
+    } on Object {
+      _status = s;
+      _changed();
+    }
+  }
+
+  Future<void> resume() async {
+    final s = _status ?? const EngineStatus();
+    _status = EngineStatus(level: 'gentle', reason: 'Resuming…', phase: s.phase, files: s.files);
+    _changed();
+    try {
+      await engine.resume();
+    } on Object {
+      _status = s;
+      _changed();
+    }
+  }
+
   Future<void> loadUpdate() async {
     try {
       _update = await engine.updateState();
@@ -99,9 +125,11 @@ class StatusController extends ChangeNotifier {
 
   Future<void> _refreshDetails({bool subscribe = false}) async {
     try {
-      if (subscribe) await engine.watchDetails(true);
+      // 0.9.1: the subscription and the first full status together, not one after the other
+      final sub = subscribe ? engine.watchDetails(true) : Future<void>.value();
       _takeFull(await engine.statusFull());
       _changed();
+      await sub;
       try {
         _turbo = await engine.turboState();
       } on RpcException {

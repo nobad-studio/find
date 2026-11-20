@@ -142,6 +142,9 @@ abstract class EngineApi {
   /// Open the folder model [id] is downloaded to in File Explorer (`model_folder`).
   Future<ActionResult> modelFolder(String id);
 
+  /// Open a Windows Settings page, tool or app a search offered (`run_action`, by its id).
+  Future<ActionResult> runAction(String id);
+
   // ---- in-app updates (0.9.0) ----
   Future<UpdateState> updateState();
 

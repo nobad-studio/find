@@ -53,3 +53,16 @@ def test_sensors_are_safe_off_windows(monkeypatch):
     assert winapi.foreground_hung() is False
     assert winapi.presentation_mode() is False
     assert winapi.fullscreen_game() is False
+
+
+def test_a_stuck_full_screen_flag_isnt_a_game(monkeypatch):
+    """0.9.1: Windows' "full-screen Direct3D" state can stay set with File Explorer in front; that held NOBAD Find
+    at one worker all day. A game counts only when the window in front really fills its screen."""
+    from nobadfind import winapi
+    monkeypatch.setattr(winapi, "_notification_state", lambda: 3)
+    monkeypatch.setattr(winapi, "foreground_covers_screen", lambda: False)
+    assert winapi.fullscreen_game() is False and winapi.busy_fullscreen() is False
+    monkeypatch.setattr(winapi, "foreground_covers_screen", lambda: True)
+    assert winapi.fullscreen_game() is True
+    monkeypatch.setattr(winapi, "_notification_state", lambda: 5)          # accepts notifications: no game
+    assert winapi.fullscreen_game() is False

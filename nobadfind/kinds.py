@@ -59,6 +59,55 @@ APPS = {
     "davinci": {".drp"}, "aftereffects": {".aep"}, "keynote": {".key"},
 }
 
+# Programming languages (0.9.1): "python" means Python files, "c# code" C# files, "sql scripts" SQL files.
+# The key is what people type (several spellings share a set); LANGUAGE_NAMES gives the chip's label.
+_PY, _JS, _TS = {".py", ".pyw", ".pyi", ".ipynb"}, {".js", ".mjs", ".cjs", ".jsx"}, {".ts", ".tsx", ".mts", ".cts"}
+_CPP = {".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx", ".h", ".ipp", ".inl"}
+_CS, _SH = {".cs", ".csx", ".razor", ".cshtml"}, {".sh", ".bash", ".zsh", ".fish"}
+LANGUAGES = {
+    "python": _PY, "py": _PY, "jupyter": {".ipynb"},
+    "javascript": _JS, "js": _JS, "node": _JS, "nodejs": _JS,
+    "typescript": _TS, "react": _JS | _TS,
+    "java": {".java"}, "kotlin": {".kt", ".kts"}, "scala": {".scala", ".sc"}, "groovy": {".groovy", ".gradle"},
+    "c#": _CS, "csharp": _CS, "f#": {".fs", ".fsx", ".fsi"}, "fsharp": {".fs", ".fsx", ".fsi"},
+    "vb": {".vb", ".vbs"}, "vbnet": {".vb"}, "vbscript": {".vbs"},
+    "c": {".c", ".h"}, "c++": _CPP, "cpp": _CPP, "cplusplus": _CPP,
+    "go": {".go"}, "golang": {".go"}, "rust": {".rs"}, "swift": {".swift"}, "objc": {".m", ".mm"},
+    "php": {".php", ".phtml"}, "ruby": {".rb", ".erb", ".rake"}, "perl": {".pl", ".pm"}, "lua": {".lua"},
+    "r": {".r", ".rmd"}, "julia": {".jl"}, "dart": {".dart"}, "flutter": {".dart"}, "haskell": {".hs", ".lhs"},
+    "elixir": {".ex", ".exs"}, "erlang": {".erl", ".hrl"}, "clojure": {".clj", ".cljs", ".cljc", ".edn"},
+    "zig": {".zig"}, "nim": {".nim"}, "ocaml": {".ml", ".mli"}, "matlab": {".m", ".mlx"},
+    "sql": {".sql", ".psql", ".ddl"}, "powershell": {".ps1", ".psm1", ".psd1"}, "pwsh": {".ps1", ".psm1", ".psd1"},
+    "bash": _SH, "shell": _SH, "zsh": {".zsh"}, "batch": {".bat", ".cmd"},
+    "html": {".html", ".htm", ".xhtml"}, "css": {".css", ".scss", ".sass", ".less"}, "sass": {".scss", ".sass"},
+    "vue": {".vue"}, "svelte": {".svelte"}, "solidity": {".sol"}, "assembly": {".asm", ".s"},
+    "asm": {".asm", ".s"}, "verilog": {".v", ".sv"}, "vhdl": {".vhd", ".vhdl"}, "fortran": {".f90", ".f", ".for"},
+    "cobol": {".cob", ".cbl"}, "pascal": {".pas", ".pp"}, "delphi": {".pas", ".dpr"}, "gdscript": {".gd"},
+    "terraform": {".tf", ".tfvars"}, "dockerfile": {".dockerfile"}, "yaml": {".yaml", ".yml"},
+    "toml": {".toml"}, "graphql": {".graphql", ".gql"}, "protobuf": {".proto"},
+}
+LANGUAGE_NAMES = {"python": "Python", "py": "Python", "jupyter": "Jupyter", "javascript": "JavaScript",
+                  "js": "JavaScript", "node": "JavaScript", "nodejs": "JavaScript", "typescript": "TypeScript",
+                  "react": "React", "c#": "C#", "csharp": "C#", "f#": "F#", "fsharp": "F#", "vb": "Visual Basic",
+                  "vbnet": "VB.NET", "c++": "C++", "cpp": "C++", "cplusplus": "C++", "golang": "Go", "objc":
+                  "Objective-C", "php": "PHP", "sql": "SQL", "html": "HTML", "css": "CSS", "pwsh": "PowerShell",
+                  "powershell": "PowerShell", "asm": "Assembly", "vhdl": "VHDL", "gdscript": "GDScript",
+                  "graphql": "GraphQL", "yaml": "YAML", "toml": "TOML", "ocaml": "OCaml", "matlab": "MATLAB"}
+# Also ordinary words (a snake, coffee, metal, a verb, a name, a letter): a language only when typed alone or with a
+# code word after it ("python", "python code", "rust project"), never in "python snake photo" or "go to bed".
+AMBIGUOUS_LANGUAGES = {"python", "java", "go", "rust", "swift", "c", "r", "ruby", "dart", "julia", "perl", "lua",
+                       "shell", "batch", "react", "node", "flutter", "assembly", "elixir", "pascal", "delphi",
+                       "nim", "zig", "vue", "sass", "toml", "yaml", "py", "js", "vb", "asm", "cobol", "fortran"}
+LANGUAGE_CUES = {"code", "codes", "file", "files", "script", "scripts", "project", "projects", "program",
+                 "programs", "source", "sources", "notebook", "notebooks", "module", "modules", "class", "classes",
+                 "function", "functions", "app", "apps", "repo", "repos", "library", "libraries", "snippet",
+                 "snippets", "component", "components", "test", "tests", "package", "packages"}
+
+
+def language_label(w):
+    return LANGUAGE_NAMES.get(w, w.capitalize())
+
+
 AMBIGUOUS_APPS = {"outlook", "keynote", "affinity", "premiere", "blender", "figma", "obsidian", "acrobat", "krita",
                   "davinci", "godot", "jupyter", "ableton", "audacity", "gimp", "inkscape"}
 APP_CUES = {"file", "files", "project", "projects", "document", "documents", "doc", "docs", "design", "designs",

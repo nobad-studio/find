@@ -30,6 +30,24 @@ class NeedHint extends StatefulWidget {
 class _NeedHintState extends State<NeedHint> {
   bool _busy = false;
 
+  /// 0.9.1: while photos are being looked at, the same search runs again every [refresh] so new matches show up.
+  static const refresh = Duration(seconds: 10);
+  Timer? _again;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.need.state == 'analyzing' && widget.onChanged != null) {
+      _again = Timer.periodic(refresh, (_) => widget.onChanged?.call());
+    }
+  }
+
+  @override
+  void dispose() {
+    _again?.cancel();
+    super.dispose();
+  }
+
   String get _setting => widget.need.model == 'photo' ? 'photo_meaning' : 'semantic';
 
   Future<void> _turnOn() async {

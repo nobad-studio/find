@@ -6,7 +6,9 @@ from nobadfind import const, settings, tray
 
 def test_menu_has_the_items_and_pause_follows_the_state():
     items = [label for _id, label in tray.menu(paused=False) if label]
-    assert items == ["Open NOBAD Find", "Quick find bar", "Pause for 1 hour", "Settings", "Index", "Quit NOBAD Find"]
+    assert items == ["Open NOBAD Find", "Pause for 1 hour", "Settings", "Index", "Quit NOBAD Find"]   # 0.9.1: no bar
+    bar = [label for _id, label in tray.menu(paused=False, bar=True) if label]
+    assert bar == ["Open NOBAD Find", "Quick find bar", "Pause for 1 hour", "Settings", "Index", "Quit NOBAD Find"]
     labels = dict(tray.menu(paused=True))
     assert tray.CMD["resume"] in labels and labels[tray.CMD["resume"]] == "Resume"
     assert tray.CMD["pause"] not in labels

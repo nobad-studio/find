@@ -115,6 +115,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.modelRemove(p['id'] as String);
     case 'model_folder' when p['id'] is String:
       return c.modelFolder(p['id'] as String);
+    case 'run_action' when p['id'] is String:
+      return c.runAction(p['id'] as String);
     case 'update_state':
       return c.updateState();
     case 'update_check':

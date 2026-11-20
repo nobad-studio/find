@@ -282,7 +282,7 @@ class _Now extends StatelessWidget {
               paused ? 'Resume' : 'Pause for 1 hour',
               kind: paused ? NbButtonKind.primary : NbButtonKind.ghost,
               icon: paused ? NbGlyph.play : NbGlyph.pause,
-              onPressed: () => paused ? s.engine.resume() : s.engine.pauseFor(const Duration(hours: 1)),
+              onPressed: () => paused ? s.status.resume() : s.status.pauseFor(const Duration(hours: 1)),
             ),
         ],
       ),
@@ -460,6 +460,9 @@ class _Activity extends StatelessWidget {
   const _Activity(this.items);
   final List<ActivityEntry> items;
 
+  /// About six lines: the newest at the top, older ones scroll inside (0.9.1: it no longer pushes the page down).
+  static const _boxHeight = 246.0;
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
@@ -473,9 +476,13 @@ class _Activity extends StatelessWidget {
                 style: NbType.text(13, c.dim),
               ),
             )
-          : Column(
-              children: [
-                for (var i = 0; i < items.length && i < 12; i++)
+          : SizedBox(
+              height: _boxHeight,
+              child: ListView(
+                padding: EdgeInsets.zero,
+                primary: false,
+                children: [
+                for (var i = 0; i < items.length; i++)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
                     decoration: BoxDecoration(
@@ -492,7 +499,8 @@ class _Activity extends StatelessWidget {
                       ],
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
     );
   }

@@ -30,7 +30,7 @@ class Settings {
     'games_mode': 'smart',
     'keep_background': false,
     'stay_running': true,
-    'bar': true,
+    'bar': false,
     'bar_hotkey': 'ctrl+shift+space',
     'pause_on_call': true,
     'workers': 0,

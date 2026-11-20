@@ -77,8 +77,8 @@ void main() {
       expect(engine.calls, contains('hotkey_state'));
       expect(
         find.text('Works now, anywhere in Windows.'),
-        findsNWidgets(2),
-      ); // both hotkeys
+        findsOneWidget,
+      ); // 0.9.1: one window, one shortcut
       expect(
         find.byWidgetPredicate((w) => w is Kbd && w.label == 'Win'),
         findsWidgets,
@@ -137,9 +137,9 @@ void main() {
   testWidgets(
     'typing works too, for combinations Windows never hands to an app',
     (tester) async {
-      final engine = FakeEngine();
+      final engine = FakeEngine(settings: const {'welcome_seen': true, 'bg_notice_seen': true, 'bar': true});
       await openShortcuts(tester, engine);
-      await tester.tap(find.text('Change').last); // the quick find bar's
+      await tester.tap(find.text('Change').last); // the quick find bar's (only while the bar is on)
       await tester.pumpAndSettle();
       await tester.tap(find.text('Type it instead'));
       await tester.pumpAndSettle();
@@ -165,5 +165,16 @@ void main() {
       find.text('Not working: another app on this PC uses it. Change it.'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('0.9.1: only the NOBAD Find shortcut while the bar is off, and Clear removes it', (tester) async {
+    final engine = FakeEngine();
+    await openShortcuts(tester, engine);
+    expect(find.text('Quick find bar'), findsNothing);
+    await tester.tap(find.text('Clear'));
+    await tester.pumpAndSettle();
+    expect(engine.settingsSet.last, {'hotkey': ''});
+    expect(find.textContaining('No shortcut. Open NOBAD Find from the Start menu'), findsOneWidget);
+    expect(find.text('Set'), findsOneWidget);
   });
 }

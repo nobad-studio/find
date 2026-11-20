@@ -242,18 +242,22 @@ class Governor(threading.Thread):
         self._last_cpu_s = None                  # (wall time, Find's CPU seconds)
         self._eco = eco if eco is not None else (lambda on, pid, job=None: winapi.eco_qos(on, pid=pid, job=job))
         self._eco_set = {}                       # worker pid -> EcoQoS on/off as last applied
+        self._now = threading.Event()            # Pause / Resume: decide again now
 
     # ---------- control ----------
     def pause_for(self, seconds):
         self.brain.pause_until = time.time() + max(0, int(seconds))
         self.activity.add("info", f"You paused NOBAD Find for {int(seconds) // 60} min")
+        self._now.set()                             # decide again at once, not at the next tick
 
     def resume(self):
         self.brain.pause_until = 0.0
         self.activity.add("info", "You resumed NOBAD Find")
+        self._now.set()
 
     def stop(self):
         self._stop_ev.set()
+        self._now.set()
 
     @property
     def history(self):
@@ -265,7 +269,8 @@ class Governor(threading.Thread):
                 self.tick()
             except Exception as e:                  # a sensor hiccup must never stop the governor
                 log(f"governor tick failed: {type(e).__name__}", "warn")
-            self._stop_ev.wait(self.every)
+            self._now.wait(self.every)              # a tick, or at once after Pause / Resume (0.9.1)
+            self._now.clear()
 
     # ---------- one step ----------
     def tick(self):

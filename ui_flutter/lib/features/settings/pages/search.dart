@@ -1,4 +1,4 @@
-/// Search: what happens when you open a file, the quick find bar, and the recent searches this window keeps.
+/// Search: what happens when you open a file, and the recent searches this window keeps.
 library;
 
 import 'dart:async';
@@ -25,17 +25,6 @@ class SearchSettingsPage extends StatelessWidget {
               'hide_after_open',
               'Hide after opening a file',
               'Off: the window stays up after Enter opens a file. On: it hides, like a launcher.',
-            ),
-          ],
-        ),
-        const SettingsGroup(
-          'Quick find bar',
-          rows: [
-            SwitchSetting(
-              'bar',
-              'Quick find bar',
-              'A small search box on its own shortcut that shows over whatever you are doing. Takes effect at the '
-                  'next start.',
             ),
           ],
         ),

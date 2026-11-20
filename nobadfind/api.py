@@ -86,10 +86,31 @@ class Api:
                 needs = self._needs(asks, len(r.get("results") or ()))
                 if needs:
                     r["needs"] = needs
+                acts = self.actions_for(text) if channel != "home" else []
+                if acts:
+                    r["actions"] = acts
             return r
         except Exception as e:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
+
+    # ---------- Windows settings and apps from the search box (0.9.1, launcher.py) ----------
+    def actions_for(self, text):
+        lch = getattr(self, "_launcher", None)
+        if lch is None or not text:
+            return []
+        try:
+            return lch.actions(text)
+        except Exception as e:
+            log(f"actions failed: {type(e).__name__}", "warn")
+            return []
+
+    def run_action(self, action_id):
+        """Open a Windows Settings page, a Windows tool or an app, by the id search gave (never a path)."""
+        lch = getattr(self, "_launcher", None)
+        if lch is None:
+            return {"ok": False, "error": "Opening apps and settings isn't available in this copy of NOBAD Find."}
+        return lch.run(action_id)
 
     def _needs(self, asks, found):
         """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
@@ -113,6 +134,25 @@ class Api:
                                     "Turn it on to search what is in them."})
             else:
                 total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
+                where = asks.get("where")
+                if where and where[0] and asks.get("roots") and self._store is not None:
+                    # a folder (or time) was asked: count the photos that fit, and look at those first
+                    try:
+                        from . import photo as ph
+                        marks = ",".join("?" * len(ph.PHOTO_EXT))
+                        row = self._store.q(
+                            f"SELECT count(*), sum(CASE WHEN p.file_id IS NOT NULL AND length(p.v) > 0 THEN 1 ELSE 0 END) "
+                            f"FROM files f LEFT JOIN pvecs p ON p.file_id = f.id WHERE f.ext IN ({marks}) "
+                            f"AND f.size BETWEEN ? AND ?{where[0]}",
+                            (*sorted(ph.PHOTO_EXT), ph.MIN_PHOTO_BYTES, ph.MAX_PHOTO_BYTES, *where[1]))[0]
+                        total, done = int(row[0] or 0), int(row[1] or 0)
+                        todo, ready_n = total - done, done
+                    except Exception as e:
+                        log(f"photo progress count failed: {type(e).__name__}", "warn")
+                    if todo > 0 and asks.get("roots"):
+                        hurry = getattr(self._indexer, "hurry_photos", None)
+                        if hurry is not None:
+                            hurry(asks["roots"])
                 if todo > 0 or ready_n == 0:
                     shown = max(int(total), ready_n)
                     text = (f"Still looking at your photos: {ready_n:,} of {shown:,} done. "
