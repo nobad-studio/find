@@ -125,9 +125,11 @@ class StatusController extends ChangeNotifier {
 
   Future<void> _refreshDetails({bool subscribe = false}) async {
     try {
-      if (subscribe) await engine.watchDetails(true);
+      // 0.9.1: the subscription and the first full status together, not one after the other
+      final sub = subscribe ? engine.watchDetails(true) : Future<void>.value();
       _takeFull(await engine.statusFull());
       _changed();
+      await sub;
       try {
         _turbo = await engine.turboState();
       } on RpcException {
