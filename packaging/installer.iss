@@ -85,8 +85,10 @@ function ProcessIdToSessionId(dwProcessId: Cardinal; var pSessionId: Cardinal): 
 // Only the copies in this Windows session (this signed-in user's desktop), filtered by session number. A
 // "USERNAME eq" filter makes taskkill look up the owner of every process and took about 30 s per call, which made
 // setup and uninstall look stuck. taskkill is started directly, never through a shell. First a normal close
-// request, then forced; /T takes the text-reading worker processes with it. Run twice to catch a copy started
-// meanwhile. The UI (nobad_find.exe) runs outside the engine's job and may outlive it, so it is named too.
+// request, then forced. Run twice to catch a copy started meanwhile. The UI (nobad_find.exe) runs outside the
+// engine's job and may outlive it, so it is named too. The text-reading workers are NobadFind.exe as well, so the
+// name catches them. Never /T (0.9.2): the in-app update starts this setup from NOBAD Find, so /T ended setup
+// itself (a child of NobadFind.exe) before it copied anything, and the old version stayed.
 procedure StopFind;
 var
   rc: Integer;
@@ -96,7 +98,7 @@ begin
   if not ProcessIdToSessionId(GetCurrentProcessId, session) then
     Exit;
   tk := ExpandConstant('{sys}\taskkill.exe');
-  args := '/IM {#MyAppExe} /IM {#MyUiExe} /T /FI "SESSION eq ' + IntToStr(session) + '"';
+  args := '/IM {#MyAppExe} /IM {#MyUiExe} /FI "SESSION eq ' + IntToStr(session) + '"';
   Exec(tk, args, '', SW_HIDE, ewWaitUntilTerminated, rc);
   Sleep(1200);
   Exec(tk, '/F ' + args, '', SW_HIDE, ewWaitUntilTerminated, rc);
