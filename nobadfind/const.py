@@ -83,6 +83,8 @@ DEFAULTS = {
     "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
+    "power": "balanced",            # 0.9.3: balanced (leaves you room) | boost (every thread, even while you use the PC)
+    "safety_net": True,             # 0.9.3: even at Boost, step down and free memory before the PC struggles
     "hotkey": "win+shift+f",
     "autostart": False,
     "hide_after_open": False,       # Enter opens the file and keeps the window up (on: hide it, like a launcher)

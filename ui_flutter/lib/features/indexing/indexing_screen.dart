@@ -208,7 +208,10 @@ class _IndexingScreenState extends State<IndexingScreen> {
                 ? 'Memory now · models in use: ${d.modelsLoaded.join(', ')}'
                 : 'Memory now · no models loaded (they load when you search)',
           ),
-          StatTile(value: d.rate > 0 ? '${groupDigits(d.rate.round())}/s' : '–', label: 'Scan speed'),
+          StatTile(
+            value: d.rate > 0 ? '${groupDigits(d.rate.round())}/s' : 'Not yet',
+            label: s.status.status?.phase == 'names' ? 'Scan speed (files and folders a second)' : 'Last scan speed',
+          ),
           StatTile(value: '${(d.dbBytes / 1048576).toStringAsFixed(0)} MB', label: 'Index size'),
           StatTile(
             value: d.plan != null && d.plan!.cpu > 0

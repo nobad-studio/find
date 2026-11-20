@@ -49,8 +49,11 @@ class Watchdog:
     def __init__(self, activity, kill=kill_process, info=_jobs.process_info,
                  pids=lambda: _jobs.WORKERS.pids() if _jobs.WORKERS else [],
                  job_usage=lambda: _jobs.OUTER.usage() if _jobs.OUTER else {"memory_mb": 0},
-                 release=lambda: None, clock=time.monotonic, names=lambda: {}, recycle=lambda: None):
+                 release=lambda: None, clock=time.monotonic, names=lambda: {}, recycle=lambda: None,
+                 keep_models=lambda: False):
         self.activity = activity
+        self._keep_models = keep_models    # "Keep models loaded": the workers go first, the models only if needed
+        self._spared = False
         self._kill, self._info, self._pids, self._job_usage = kill, info, pids, job_usage
         self._release, self._recycle = release, recycle
         self._clock = clock
@@ -96,11 +99,19 @@ class Watchdog:
 
     def _check_job(self):
         if self._job_usage().get("memory_mb", 0) <= JOB_MB:
+            self._spared = False                # back under the limit: next time the workers go first again
             return
         now = self._clock()
         if self._last_release is not None and now - self._last_release < RELEASE_EVERY:
             return
         self._last_release = now
+        if self._keep_models() and not self._spared:
+            self._spared = True                 # 0.9.3: Keep models loaded is on: the workers first
+            self._recycle()
+            self.activity.add("model", "NOBAD Find is using a lot of memory, so it restarts its workers "
+                                       "(the models stay loaded, as you asked)")
+            return
+        self._spared = False
         self._release()
         self._recycle()
         self.activity.add("model", "NOBAD Find is using a lot of memory, so it let go of its search models "

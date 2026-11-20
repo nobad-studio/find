@@ -48,6 +48,8 @@ def coerce(key, value):
         return value if value in ("", "english", "multilingual", "hindi") else d
     if key == "games_mode":
         return value if value in ("smart", "always", "off") else d
+    if key == "power":
+        return value if value in ("balanced", "boost") else d
     if key == "settings_rev":
         return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1000 else d
     if key == "wsearch_prev":

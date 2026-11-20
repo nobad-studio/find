@@ -546,6 +546,15 @@ class Api:
         if "photo_model" in changed and self._settings.get("photo_meaning") and "photo_meaning" not in changed:
             threading.Thread(target=self._indexer._load_photo, daemon=True).start()
             self._indexer.wake.set()
+        if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
+            self._indexer.replan()                     # 0.9.3: the new workers now, no restart
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call"}:
+            g = getattr(self._indexer, "governor", None)
+            if g is not None and hasattr(g, "now"):
+                g.now()
+        if "models_stay_loaded" in changed and self._settings.get("models_stay_loaded") \
+                and hasattr(self._indexer, "warm_models"):
+            threading.Thread(target=self._indexer.warm_models, daemon=True, name="warm").start()
         if "tray" in changed and getattr(self, "_on_tray", None) is not None:
             self._on_tray(bool(self._settings.get("tray")))
         hotkeys = None

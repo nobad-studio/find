@@ -448,7 +448,8 @@ def run(stop=None, open_ui=None, lock=None):
     activity = Activity()
     pieces = {}
     hooks = worker_hooks(pieces)
-    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")})
+    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")},
+                        keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
     governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
     measure = measure_overrides(os.environ)

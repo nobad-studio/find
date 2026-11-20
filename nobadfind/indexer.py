@@ -71,16 +71,22 @@ def vector_model(store):
     return None
 
 
-def plan(settings, roots):
-    """How hard to work on this PC: walk threads per drive type, text workers from the CPU."""
+def plan(settings, roots, ssd=None):
+    """How hard to work on this PC: walk threads per drive type, text workers from the CPU, model threads.
+    Boost (power, 0.9.3): every thread, even while you use the PC; the safety net still steps down."""
     cpu = os.cpu_count() or 2
-    ssd = all(winapi.is_ssd(os.path.splitdrive(r)[0] + "\\") is not False for r in roots)
-    walk = min(32, cpu * 2) if ssd else 2           # parallel reads help SSDs and hurt spinning disks
-    text = settings.get("workers") or max(1, min(8, cpu - 2))        # while you use the PC: two threads free
-    idle = settings.get("workers") or max(1, min(16, cpu - 1))        # while you're away: one thread free
-    if not ssd and not settings.get("workers"):
+    if ssd is None:
+        ssd = all(winapi.is_ssd(os.path.splitdrive(r)[0] + "\\") is not False for r in roots)
+    boost = settings.get("power") == "boost"
+    walk = (min(64, cpu * 4) if boost else min(32, cpu * 2)) if ssd else 2   # parallel reads help SSDs only
+    chosen = settings.get("workers")
+    text = chosen or (cpu if boost else max(1, min(8, cpu - 2)))       # while you use the PC: two threads free
+    idle = chosen or (cpu if boost else max(1, min(16, cpu - 1)))      # while you're away: one thread free
+    if not ssd and not chosen:
         text, idle = min(text, 2), min(idle, 2)    # a spinning disk is the bottleneck, more readers only seek
-    return {"cpu": cpu, "ssd": ssd, "walk_threads": walk, "text_workers": text, "text_workers_idle": idle}
+    models = cpu if boost else max(1, cpu // 2)     # threads for the meaning and photo workers at most
+    return {"cpu": cpu, "ssd": ssd, "walk_threads": walk, "text_workers": text, "text_workers_idle": idle,
+            "model_threads": models, "boost": boost}
 
 
 def user_roots():
@@ -499,6 +505,8 @@ class Indexer:
             self.store.set_meta("last_scan", time.time())
         self.status["last_scan"] = time.time()
         self.status["errors"] = w.errors
+        if seen[0]:
+            self.status["rate"] = int(seen[0] / max(0.1, time.time() - t0))    # the last scan's speed stays shown
         log(f"names: {seen[0]} entries in {time.time() - t0:.1f}s ({len(read)} drive(s) by turbo, {len(caught)} "
             f"caught up), {removed} gone, {w.errors} unreadable")
 
@@ -569,6 +577,13 @@ class Indexer:
                 if not queued and not inflight:
                     return
                 self.status["phase"] = phase
+                if self.status.get("plan") is not plan_:   # Settings changed the workers or Boost: follow now
+                    plan_ = self.status["plan"]
+                    gentle, full = plan_.get("text_workers", 2), plan_.get("text_workers_idle", 2)
+                    if max(gentle, full) != size and not inflight:
+                        size = max(gentle, full)
+                        pool.shutdown(wait=True)
+                        pool, sent = new_pool(), 0
                 budget = READER_TASKS * max(1, limit)
                 if sent >= budget and not inflight:
                     pool.shutdown(wait=True)        # these readers have done their share: fresh ones
@@ -787,17 +802,20 @@ class Indexer:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
         gpu = level == FULL
-        if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid):
+        plan_now = self.status.get("plan") or {}
+        if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid
+                                        or getattr(self, "_mpool_plan", None) != plan_now.get("model_threads")):
             self._end_meaning_pool()
         if self._mpool is None:
             plan_ = self.status.get("plan") or {}
-            most = max(1, (os.cpu_count() or 2) // 2)
+            most = plan_.get("model_threads") or max(1, (os.cpu_count() or 2) // 2)
             threads = min(most, max(1, workers_for(level, plan_))) if plan_ else most
             spec = models.get(mid) if mid else None
             self._mpool = cf.ProcessPoolExecutor(max_workers=1, initializer=embed.init_meaning_worker,
                                                  initargs=(models.model_dir(mid) if mid else embed.MODEL_DIR,
                                                            threads, gpu, spec))
             self._mpool_gpu, self._mpool_model = gpu, mid
+            self._mpool_plan = plan_.get("model_threads")
             log(f"meaning worker started ({'graphics card if there is one' if gpu else 'processor only'}, "
                 f"{threads} threads)")
         texts = list(texts)
@@ -871,7 +889,7 @@ class Indexer:
             return
         plan_ = self.status.get("plan") or {}
         level = self.governor.decision.level if self.governor is not None else FULL
-        most = max(1, (os.cpu_count() or 2) // 2)
+        most = plan_.get("model_threads") or max(1, (os.cpu_count() or 2) // 2)
         threads = min(most, max(1, workers_for(level, plan_))) if plan_ else 2      # as the meaning worker
         pool = cf.ProcessPoolExecutor(max_workers=1, initializer=photo.init_worker, initargs=(threads,))
         self._photo_pool = pool
@@ -958,6 +976,18 @@ class Indexer:
                 _kill_pool(pool)                    # stopping: don't wait for the photos in flight
             pool.shutdown(wait=True, cancel_futures=True)
             self._photo_pool = None
+
+    def replan(self):
+        """Workers or Boost changed in Settings: the new plan now, no restart. The text readers follow at their
+        next batch, the meaning and photo workers at their next start (they restart when their threads change)."""
+        old = self.status.get("plan") or {}
+        new = plan(self.settings, [], ssd=old.get("ssd")) if "ssd" in old else plan(self.settings, self.roots())
+        self.status["plan"] = new
+        log(f"indexer plan {new} (changed in Settings)")
+        if self.governor is not None:
+            self.governor.now()
+        self.wake.set()
+        return new
 
     def warm_models(self):
         """The window just opened: load the models now, so the first search is quick (released again when idle)."""

@@ -28,6 +28,8 @@ class Settings {
     'pause_on_battery': true,
     'pause_fullscreen': true,
     'games_mode': 'smart',
+    'power': 'balanced',
+    'safety_net': true,
     'keep_background': false,
     'stay_running': true,
     'bar': false,
