@@ -77,8 +77,8 @@ void main() {
       expect(engine.calls, contains('hotkey_state'));
       expect(
         find.text('Works now, anywhere in Windows.'),
-        findsOneWidget,
-      ); // 0.9.1: one window, one shortcut
+        findsNWidgets(2),
+      ); // 0.9.3: the search bar is on, so its own shortcut is listed too
       expect(
         find.byWidgetPredicate((w) => w is Kbd && w.label == 'Win'),
         findsWidgets,
@@ -167,10 +167,14 @@ void main() {
     );
   });
 
-  testWidgets('0.9.1: only the NOBAD Find shortcut while the bar is off, and Clear removes it', (tester) async {
+  testWidgets('only the NOBAD Find shortcut while the bar is off, and Clear removes it', (tester) async {
     final engine = FakeEngine();
     await openShortcuts(tester, engine);
-    expect(find.text('Quick find bar'), findsNothing);
+    expect(find.text('Search bar only (a second shortcut)'), findsOneWidget); // 0.9.3: the bar is on
+    await tester.tap(find.byWidgetPredicate((w) => w is NbSwitch && w.label == 'Search bar'));
+    await tester.pumpAndSettle();
+    expect(engine.settingsSet.last, {'bar': false});
+    expect(find.text('Search bar only (a second shortcut)'), findsNothing);
     await tester.tap(find.text('Clear'));
     await tester.pumpAndSettle();
     expect(engine.settingsSet.last, {'hotkey': ''});

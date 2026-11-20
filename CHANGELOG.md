@@ -2,6 +2,12 @@
 
 ## 0.9.3 · 2026-11-20
 
+### Search bar
+- Like Spotlight: with NOBAD Find's window closed, Win+Shift+F opens a small search bar over any app; with the
+  window open, it goes to the window's search box. The bar shows Windows settings, tools and apps too ("open
+  bluetooth", "battery percentage"), with Open. Settings > Shortcuts > Search bar turns it off (the shortcut then
+  always opens the window). Updating turns the bar on once.
+
 ### Speed
 - Settings > Performance > Speed: Balanced (as before) or Boost. Boost uses every processor thread for reading
   files, photos and meaning, even while you use the PC.

@@ -23,6 +23,7 @@ import '../../engine/models/result.dart';
 import '../../platform/demo.dart';
 import '../../platform/window.dart';
 import '../../state/search_controller.dart';
+import '../../widgets/icons.dart';
 import '../../widgets/common.dart';
 import '../../widgets/pressable.dart';
 import '../search/result_actions.dart';
@@ -89,6 +90,12 @@ class _BarWindowState extends State<BarWindow> {
       ? sug.items.length.clamp(0, maxSuggestions).clamp(0, BarSize.maxRows - 1 - chipRows)
       : 0;
 
+  /// Windows settings, tools and apps for the question (0.9.3: in the bar too, like the window), at most two.
+  List<SearchAction> get actionItems =>
+      find.askedFor.isNotEmpty && find.text.trim().isNotEmpty ? find.answer.actions.take(2).toList() : const [];
+
+  int get actionRows => actionItems.length;
+
   /// The result list's lines: a result's index, or -1 for the "Less sure" line before the first loose match.
   List<int> get listItems {
     final firstWeak = find.results.indexWhere((r) => r.weak);
@@ -98,15 +105,15 @@ class _BarWindowState extends State<BarWindow> {
   }
 
   /// More lines than the window has room for: the list scrolls and the last line says how many there are.
-  bool get overflows => chipRows + suggestionRows + listItems.length > BarSize.maxRows;
+  bool get overflows => chipRows + suggestionRows + actionRows + listItems.length > BarSize.maxRows;
 
   /// Rows the window needs: chips, suggestions and results (and the count line), or one for "No match for …".
   int get rowsNeeded {
     if (find.text.trim().isEmpty) return 0;
     final ns = suggestionRows;
     if (find.askedFor.isEmpty) return ns;
-    if (find.results.isEmpty) return chipRows + ns + 1;
-    return overflows ? BarSize.maxRows : chipRows + ns + listItems.length;
+    if (find.results.isEmpty) return chipRows + ns + (actionRows > 0 ? actionRows : 1);
+    return overflows ? BarSize.maxRows : chipRows + ns + actionRows + listItems.length;
   }
 
   /// ↑/↓ moved the selection: scroll the list so the selected row is in view (every row is BarSize.row tall).
@@ -445,12 +452,19 @@ class _BarWindowState extends State<BarWindow> {
                                 onHover: () => sug.hover(i),
                                 onForget: sug.items[i].isHistory ? () => sug.forget(sug.items[i]) : null,
                               ),
-                            if (find.askedFor.isNotEmpty && find.results.isEmpty)
+                            for (final a in actionItems)
+                              _ActionLine(
+                                a,
+                                onTap: () => unawaited(find.runAction(a).then((ok) {
+                                  if (ok) widget.window.hide();
+                                })),
+                              ),
+                            if (find.askedFor.isNotEmpty && find.results.isEmpty && actionItems.isEmpty)
                               _NoMatch(
                                 find.notice.isNotEmpty ? find.notice : find.askedFor.trim(),
                                 isError: find.notice.isNotEmpty,
                               )
-                            else if (find.askedFor.isNotEmpty)
+                            else if (find.askedFor.isNotEmpty && find.results.isNotEmpty)
                               Expanded(
                                 child: ListView.builder(
                                   controller: scroll,
@@ -824,6 +838,51 @@ class _NoMatch extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+    );
+  }
+}
+
+/// A Windows Settings page, tool or app in the bar, one row tall: click (or Enter after "open ...") opens it.
+class _ActionLine extends StatelessWidget {
+  const _ActionLine(this.a, {required this.onTap});
+  final SearchAction a;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final glyph = switch (a.kind) {
+      'app' => NbGlyph.grid,
+      'tool' => NbGlyph.gauge,
+      _ => NbGlyph.settings,
+    };
+    return Pressable(
+      onTap: onTap,
+      semanticLabel: 'Open ${a.title}',
+      builder: (context, p) => Container(
+        height: BarSize.row.toDouble(),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        color: p.lit ? c.cardHover : null,
+        child: Row(
+          children: [
+            NbIcon(glyph, size: 15, color: c.orange),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Text(a.title, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: NbType.text(13.5, c.text, weight: FontWeight.w600)),
+            ),
+            if (a.subtitle.isNotEmpty) ...[
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(a.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: NbType.text(12, c.dim)),
+              ),
+            ] else
+              const Spacer(),
+            Text('Open', style: NbType.text(12, c.orange, weight: FontWeight.w600)),
+          ],
+        ),
+      ),
     );
   }
 }

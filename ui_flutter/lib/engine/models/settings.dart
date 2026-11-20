@@ -32,7 +32,7 @@ class Settings {
     'safety_net': true,
     'keep_background': false,
     'stay_running': true,
-    'bar': false,
+    'bar': true,
     'bar_hotkey': 'ctrl+shift+space',
     'pause_on_call': true,
     'workers': 0,

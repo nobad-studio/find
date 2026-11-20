@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nobad_find/app/app.dart';
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/platform/window.dart';
 
 import 'package:nobad_find/widgets/pressable.dart';
@@ -72,6 +73,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(w.calls, ['hide', 'hide']);
     expect(engine.opened, [2]);
+  });
+
+  testWidgets('0.9.3: Windows settings and apps show in the bar, and a click opens one', (tester) async {
+    final engine = FakeEngine()
+      ..searchActions = const [
+        SearchAction(id: 'set:bluetooth', kind: 'setting', title: 'Bluetooth & devices', subtitle: 'Windows Settings'),
+      ];
+    final w = await pumpBar(tester, engine);
+    await type(tester, 'open bluetooth');
+    expect(find.text('Bluetooth & devices'), findsOneWidget);
+    await tester.tap(find.text('Bluetooth & devices'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(engine.actionsRun, ['set:bluetooth']);
+    expect(w.calls, contains('hide'));
   });
 
   testWidgets('Alt+Enter hands the words to the main window and hides', (tester) async {

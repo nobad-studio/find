@@ -43,8 +43,15 @@ class ShortcutsPage extends StatelessWidget {
             'Anywhere in Windows',
             rows: [
               const HotkeySetting('hotkey', 'Open NOBAD Find'),
-              // 0.9.1: one window with everything; the quick find bar's shortcut only while the bar is on
-              if (AppScope.of(context).settings.settings.flag('bar')) const HotkeySetting('bar_hotkey', 'Quick find bar'),
+              // 0.9.3: the search bar, like Spotlight: the shortcut opens it when the window isn't open
+              const SwitchSetting(
+                'bar',
+                'Search bar',
+                "With NOBAD Find's window closed, the shortcut opens a small search bar over any app: files, Windows "
+                    "settings and apps. With the window open, it goes to the window's search box.",
+              ),
+              if (AppScope.of(context).settings.settings.flag('bar'))
+                const HotkeySetting('bar_hotkey', 'Search bar only (a second shortcut)'),
             ],
           ),
         ),

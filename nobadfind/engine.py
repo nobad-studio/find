@@ -49,9 +49,11 @@ def _single(name):
 
 
 def here_finder(api, events, ui_pids, foreground=winapi.foreground_window, window_pid=winapi.window_pid,
-                folder=winapi.foreground_folder, spawn=None):
+                folder=winapi.foreground_folder, spawn=None, bar_first=lambda: False, main_open=lambda: False):
     """The main hotkey: show the main window, and find "here" (the File Explorer folder in front) on a thread.
-    Pressed while a NOBAD Find window is in front, "here" stays what it was. A newer press wins."""
+    Pressed while a NOBAD Find window is in front, "here" stays what it was. A newer press wins.
+    0.9.3: with the bar on (bar_first) and the main window not open, it shows the search bar instead (like
+    Spotlight); with the main window open it goes to the window's search box."""
     state = {"n": 0}
     spawn = spawn or (lambda fn: threading.Thread(target=fn, daemon=True, name="here").start())
 
@@ -63,7 +65,7 @@ def here_finder(api, events, ui_pids, foreground=winapi.foreground_window, windo
         api.here = ""
         state["n"] += 1
         mine = state["n"]
-        events.show("main")
+        events.show("bar" if bar_first() and not main_open() else "main")
 
         def find():
             path = folder(front) if front else ""
@@ -291,7 +293,8 @@ class Wiring:
             make = hotkey.Hotkey
         hk_id = 1 if which == "hotkey" else 2
         if which == "hotkey":
-            cb = here_finder(self.api, self.ui, self.ui_pids)
+            cb = here_finder(self.api, self.ui, self.ui_pids, bar_first=lambda: bool(self.settings.get("bar")),
+                             main_open=lambda: bool(getattr(self.events, "showing", lambda w: False)("main")))
         else:
             def cb():
                 self.ui.show("bar")
