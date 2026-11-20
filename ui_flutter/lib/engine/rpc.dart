@@ -360,6 +360,9 @@ class EngineClient {
   Future<Settings> getSettings() async => Settings.fromJson(await call('get_settings'));
   Future<SettingsChange> setSettings(Map<String, Object?> changes) =>
       _inOrder('settings', () async => SettingsChange.fromJson(await call('set_settings', {'changes': changes})));
+  Future<HotkeyState> hotkeyState() async => HotkeyState.fromJson(await call('hotkey_state'));
+  Future<HotkeyProbe> hotkeyProbe(String which, String spec) async =>
+      HotkeyProbe.fromJson(await call('hotkey_probe', {'which': which, 'spec': spec}));
   Future<FolderPick> pickFolder() async => FolderPick.fromJson(await call('pick_folder', const {}, false));
   Future<ActionResult> rescan() => _ok('rescan');
   Future<ActionResult> wipe(String confirm) async {

@@ -138,9 +138,11 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 
 - **`get_settings`** `{}` → `Settings`: every setting (names and types: `$defs/settings` in the schema; they are
   `const.DEFAULTS`).
+- **`hotkey_state`** `{}` → `{hotkey: {spec, state}, bar_hotkey: {spec, state}}`: whether each hotkey is registered and working now. `state` is `ok`, `taken` (another app holds it), `reserved` (Windows keeps it), `invalid` or `off` (the quick find bar is off).
+- **`hotkey_probe`** `{which: "hotkey"|"bar_hotkey", spec}` → `{state, spec, reason}`: would that combination work, before it's saved? The engine registers it for a moment and lets it go. `same` means the other NOBAD Find hotkey uses it; `reason` is one sentence for Settings. A combination NOBAD Find already holds for `which` is `ok`.
 - **`set_settings`** `{changes: {name: value}}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
-  ignored. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect after the
+  ignored. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.

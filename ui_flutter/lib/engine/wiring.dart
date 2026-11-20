@@ -109,6 +109,10 @@ class PipeEngine implements EngineApi {
   Future<Settings> getSettings() => _pipe.getSettings();
   @override
   Future<SettingsChange> setSettings(Map<String, Object?> changes) => _pipe.setSettings(changes);
+  @override
+  Future<HotkeyState> hotkeyState() => _pipe.hotkeyState();
+  @override
+  Future<HotkeyProbe> hotkeyProbe(String which, String spec) => _pipe.hotkeyProbe(which, spec);
 
   @override
   Future<FolderPick> pickFolder() {

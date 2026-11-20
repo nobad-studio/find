@@ -75,7 +75,7 @@ def test_settings_schema_has_every_setting():
     from nobadfind.const import DEFAULTS
     s = METHODS["$defs"]["settings"]
     assert set(s["properties"]) == set(s["required"]) == set(DEFAULTS)
-    assert set(METHODS["$defs"]["settings_changes"]["properties"]) == set(DEFAULTS) - {"wsearch_prev", "turbo"}
+    assert set(METHODS["$defs"]["settings_changes"]["properties"]) == set(DEFAULTS) - {"wsearch_prev", "turbo", "settings_rev"}
     check(DEFAULTS, s)
 
 

@@ -97,6 +97,15 @@ def measure_overrides(env, data_dir=DATA_DIR, default=DEFAULT_DATA_DIR, base=Non
 
 MAIN_TAKEN = "The hotkey is used by another app. Pick another one in Settings."
 BAR_TAKEN = "The quick find bar shortcut is used by another app. Pick another one in Settings."
+MAIN_RESERVED = "Windows keeps the hotkey for itself. Pick another one in Settings."
+BAR_RESERVED = "Windows keeps the quick find bar shortcut for itself. Pick another one in Settings."
+WHAT = {"hotkey": "to open NOBAD Find", "bar_hotkey": "for the quick find bar"}
+
+
+def key_label(spec):
+    """'win+shift+f' -> 'Win+Shift+F' for messages."""
+    return "+".join(p.upper() if len(p) == 1 or (p[0] == "f" and p[1:].isdigit()) else p.capitalize()
+                    for p in str(spec).split("+"))
 
 
 def show_base(lock):
@@ -167,13 +176,18 @@ class Wiring:
         self.make_hotkey = make_hotkey
         self._timer = threading.Timer
         self._seen_ui = False             # a UI has connected or shown a window since the engine started
-        self.keys = []
+        self.keys = []                     # [main hotkey, quick find bar hotkey (if the bar is on)]
+        self.key_state = {}                # hotkey / bar_hotkey -> ok | taken | reserved | invalid | off
+        self.tray_ok = lambda: False       # the engine sets it: is the notification-area icon up?
+        self._keys_lock = threading.Lock()
         self.life = lifecycle.Window(indexer, not settings.get("keep_background"), log, quitting=stop.is_set,
                                      trim=trim)
         api._folder_dialog = dialog if dialog is not None else winapi.pick_folder
         api._on_show = self._shown
-        api._on_hide = lambda: lifecycle.after_hide(self.life, settings, bool(self.keys and self.keys[0].ok),
-                                                    stop.is_set())
+        api._on_hide = lambda: lifecycle.after_hide(self.life, settings, self.reachable(), stop.is_set())
+        api._on_hotkeys = self.rebind
+        api._hotkey_state = self.hotkey_state
+        api._hotkey_probe = self.probe
         api.quit = self._quit
         api._on_all_closed = self._all_closed
 
@@ -186,11 +200,30 @@ class Wiring:
         keeps the hotkeys and the icon as before. Checked again after a short grace, so going from the bar to the
         main window (Alt+Enter), or a window that is just starting, doesn't end anything."""
         self._seen_ui = True
-        if self.settings.get("stay_running") or self.stop.is_set():
+        if self.stop.is_set():
+            return
+        if self.settings.get("stay_running"):
+            self._first_close_note()
             return
         t = self._timer(self.CLOSE_GRACE_S, self._close_check)
         t.daemon = True
         t.start()
+
+    def _first_close_note(self):
+        """Once ever (bg_notice_seen): closing didn't quit, so say where NOBAD Find went and how to get it back."""
+        if self.settings.get("bg_notice_seen") or self._anything_open():
+            return
+        say = self.balloon
+        if say is None:
+            return
+        spec = self.settings.get("hotkey")
+        how = (f"Press {key_label(spec)} to search, or click its icon here." if self.key_state.get("hotkey") == "ok"
+               else "Click its icon here to search.")
+        if say("NOBAD Find is still here",
+               f"{how} Right-click the icon to quit, or change this in Settings > Performance."):
+            self.settings.update({"bg_notice_seen": True})
+
+    balloon = None          # the engine sets it: Tray.balloon of the notification-area icon (None without one)
 
     def _anything_open(self):
         showing = getattr(self.events, "showing", None)
@@ -241,23 +274,106 @@ class Wiring:
             self.events.quitting()
             self.stop.set()
 
-    def start(self):
-        """Indexing (only with background indexing on) and the hotkeys. Returns the hotkeys."""
+    def reachable(self):
+        """Can a hidden NOBAD Find be brought back? Its main hotkey works, or its notification-area icon is up."""
+        return bool(self.keys and self.keys[0].ok) or bool(self.tray_ok())
+
+    def _bind(self, which, fallback):
+        """Register one hotkey from the settings. Returns (hotkey, state). With fallback, a default another app
+        holds on this PC moves to the next free combination in hotkey.FALLBACKS, saved, and a notice says so."""
+        from . import hotkey
+        from .const import DEFAULTS
         make = self.make_hotkey
         if make is None:
-            from .hotkey import Hotkey as make
+            make = hotkey.Hotkey
+        hk_id = 1 if which == "hotkey" else 2
+        if which == "hotkey":
+            cb = here_finder(self.api, self.ui, self.ui_pids)
+        else:
+            def cb():
+                self.ui.show("bar")
+        spec = self.settings.get(which)
+        hk = make(spec, cb, hk_id=hk_id)
+        if hk.start():
+            return hk, "ok"
+        state = "reserved" if hotkey.reserved(spec) else "taken" if hotkey.parse(spec) else "invalid"
+        if not fallback or spec != DEFAULTS[which]:
+            return hk, state
+        other = hotkey.normal(self.settings.get("bar_hotkey" if which == "hotkey" else "hotkey"))
+        for alt in hotkey.FALLBACKS[which]:
+            if hotkey.normal(alt) in (hotkey.normal(spec), other):
+                continue
+            h2 = make(alt, cb, hk_id=hk_id)
+            if h2.start():
+                self.settings.update({which: alt})
+                log(f"engine: {spec} is taken here, {which} moved to {alt}")
+                self.events.notice(f"{key_label(spec)} is used by another app on this PC, so NOBAD Find uses "
+                                   f"{key_label(alt)} {WHAT[which]}. You can change it in Settings.")
+                return h2, "ok"
+        return hk, state
+
+    def _bind_all(self, fallback):
+        """(Re)register both hotkeys from the settings; the old ones are let go first. Returns key_state."""
+        with self._keys_lock:
+            for hk in self.keys:
+                try:
+                    hk.stop()
+                except Exception as e:
+                    log(f"hotkey stop failed: {type(e).__name__}", "warn")
+            self.keys.clear()
+            state = {}
+            for which in ("hotkey", "bar_hotkey"):
+                if which == "bar_hotkey" and not self.settings.get("bar"):
+                    state[which] = "off"
+                    continue
+                hk, st = self._bind(which, fallback)
+                self.keys.append(hk)
+                state[which] = st
+                if st != "ok":
+                    log(f"engine: hotkey {hk.spec} not available ({st})", "warn")
+            self.key_state = state
+            return dict(state)
+
+    def rebind(self):
+        """Settings changed a hotkey or the bar switch: let the old combinations go and take the new ones now,
+        no restart. Returns hotkey_state() so Settings can say at once whether each one works."""
+        self._bind_all(fallback=False)
+        return self.hotkey_state()
+
+    def hotkey_state(self):
+        return {w: {"spec": self.settings.get(w), "state": self.key_state.get(w, "off")}
+                for w in ("hotkey", "bar_hotkey")}
+
+    def probe(self, which, spec):
+        """Would spec work for which? ok | taken | reserved | invalid | same (the other NOBAD Find hotkey)."""
+        from . import hotkey
+        n = hotkey.normal(spec)
+        if n is None or hotkey.parse(n) is None:
+            return "invalid"
+        other = "bar_hotkey" if which == "hotkey" else "hotkey"
+        if n == hotkey.normal(self.settings.get(other)) and (other == "hotkey" or self.settings.get("bar")):
+            return "same"
+        if n == hotkey.normal(self.settings.get(which)) and self.key_state.get(which) == "ok":
+            return "ok"                                      # it's ours already
+        if hotkey.reserved(n):
+            return "reserved"
+        return (self.probe_fn or hotkey.probe)(n)
+
+    probe_fn = None
+
+    def start(self):
+        """Indexing (only with background indexing on) and the hotkeys. Returns the hotkeys."""
         if not self.life.want_idle:
             self.indexer.start()
         else:
             log("engine: indexing starts when the UI shows its window")
-        self.keys.append(make(self.settings.get("hotkey"), here_finder(self.api, self.ui, self.ui_pids)))
-        if self.settings.get("bar"):
-            self.keys.append(make(self.settings.get("bar_hotkey"), lambda: self.ui.show("bar"), hk_id=2))
-        for i, hk in enumerate(self.keys):
-            if not hk.start():
-                log(f"engine: hotkey {hk.spec} not available (another app, or the NOBAD Find window, has it)",
-                    "warn")
-                self.events.notice(BAR_TAKEN if i else MAIN_TAKEN)
+        state = self._bind_all(fallback=True)
+        for which in ("hotkey", "bar_hotkey"):
+            st = state.get(which)
+            if st in ("taken", "invalid"):
+                self.events.notice(BAR_TAKEN if which == "bar_hotkey" else MAIN_TAKEN)
+            elif st == "reserved":
+                self.events.notice(BAR_RESERVED if which == "bar_hotkey" else MAIN_RESERVED)
         threading.Thread(target=self._watch_closed, daemon=True, name="closed-watch").start()
         return self.keys
 
@@ -365,6 +481,8 @@ def run(stop=None, open_ui=None, lock=None):
             tray_box["icon"].stop()
             tray_box["icon"] = None
     api._on_tray = on_tray
+    wiring.tray_ok = lambda: tray_box["icon"] is not None
+    wiring.balloon = lambda title, text: bool(tray_box["icon"] and tray_box["icon"].balloon(title, text))
     log(f"engine ready (pid {os.getpid()})")
     print(f"NOBAD Find engine ready (pid {os.getpid()}). Ctrl+C stops it.", flush=True)
     tip, n = None, 0

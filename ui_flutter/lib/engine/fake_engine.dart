@@ -457,7 +457,40 @@ class FakeEngine implements EngineApi {
         changed.add(e.key);
       }
     }
-    return SettingsChange(changed, Settings(Map.of(_settings)));
+    final keys = changed.any((k) => k == 'hotkey' || k == 'bar_hotkey' || k == 'bar');
+    return SettingsChange(changed, Settings(Map.of(_settings)), hotkeys: keys ? _hotkeyState() : null);
+  });
+
+  /// Combinations 'another app' holds (tests and the demo set it); Win+Shift+number is Windows'.
+  final Set<String> takenHotkeys = {};
+
+  HotkeyState _hotkeyState() {
+    HotkeyOne one(String which) {
+      final spec = '${_settings[which] ?? Settings.defaults[which]}';
+      if (which == 'bar_hotkey' && _settings['bar'] == false) return HotkeyOne(spec, 'off');
+      if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(spec)) return HotkeyOne(spec, 'reserved');
+      return HotkeyOne(spec, takenHotkeys.contains(spec) ? 'taken' : 'ok');
+    }
+
+    return HotkeyState(one('hotkey'), one('bar_hotkey'));
+  }
+
+  @override
+  Future<HotkeyState> hotkeyState() => _answer('hotkey_state', _hotkeyState);
+
+  @override
+  Future<HotkeyProbe> hotkeyProbe(String which, String spec) => _answer('hotkey_probe', () {
+    final s = spec.toLowerCase().replaceAll(' ', '');
+    final other = which == 'hotkey' ? 'bar_hotkey' : 'hotkey';
+    if (!RegExp(r'^(?:(?:win|ctrl|alt|shift)\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$').hasMatch(s)) {
+      return const HotkeyProbe('invalid', '', 'Use Ctrl, Alt, Shift or Win with a letter, a number, Space or F1 to F12.');
+    }
+    if (s == '${_settings[other]}') return HotkeyProbe('same', s, 'The other NOBAD Find shortcut already uses it.');
+    if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(s)) {
+      return HotkeyProbe('reserved', s, 'Windows uses Win+Shift+number for the taskbar.');
+    }
+    if (takenHotkeys.contains(s)) return HotkeyProbe('taken', s, 'Another app on this PC already uses it.');
+    return HotkeyProbe('ok', s, 'Free to use.');
   });
 
   static bool _same(Object? a, Object? b) => a is List && b is List ? listEquals(a, b) : a == b;

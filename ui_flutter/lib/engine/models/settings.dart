@@ -29,12 +29,12 @@ class Settings {
     'pause_fullscreen': true,
     'games_mode': 'smart',
     'keep_background': false,
-    'stay_running': false,
+    'stay_running': true,
     'bar': true,
-    'bar_hotkey': 'ctrl+alt+space',
+    'bar_hotkey': 'ctrl+shift+space',
     'pause_on_call': true,
     'workers': 0,
-    'hotkey': 'win+shift+space',
+    'hotkey': 'win+shift+f',
     'autostart': false,
     'hide_after_open': false,
     'wsearch_prev': '',
@@ -67,13 +67,68 @@ class Settings {
 
 /// `set_settings` answer: what really changed, and the settings after it.
 class SettingsChange {
-  const SettingsChange(this.changed, this.settings);
+  const SettingsChange(this.changed, this.settings, {this.hotkeys});
   final List<String> changed;
   final Settings settings;
 
+  /// Only when hotkey, bar_hotkey or bar changed: whether each hotkey works now (0.9.0 engines).
+  final HotkeyState? hotkeys;
+
   static SettingsChange fromJson(Object? v) {
     final m = jMap(v);
-    return SettingsChange(jStrs(m['changed']), Settings.fromJson(m['settings']));
+    return SettingsChange(
+      jStrs(m['changed']),
+      Settings.fromJson(m['settings']),
+      hotkeys: m['hotkeys'] is Map ? HotkeyState.fromJson(m['hotkeys']) : null,
+    );
+  }
+}
+
+/// One global hotkey as the engine holds it (`hotkey_state`): [state] is ok, taken (another app has it),
+/// reserved (Windows keeps it), invalid, or off (the quick find bar is off, or not known yet).
+class HotkeyOne {
+  const HotkeyOne(this.spec, this.state);
+  final String spec;
+  final String state;
+  bool get ok => state == 'ok';
+
+  static HotkeyOne fromJson(Object? v) {
+    final m = jMap(v);
+    final s = jStr(m['state']);
+    return HotkeyOne(jStr(m['spec']), s.isEmpty ? 'off' : s);
+  }
+}
+
+/// `hotkey_state`: the main hotkey and the quick find bar's.
+class HotkeyState {
+  const HotkeyState(this.main, this.bar);
+  final HotkeyOne main;
+  final HotkeyOne bar;
+
+  /// Before the engine said anything (or an engine older than 0.9.0): nothing to show.
+  static const unknown = HotkeyState(HotkeyOne('', 'off'), HotkeyOne('', 'off'));
+
+  /// [which] is the setting's name: 'hotkey' or 'bar_hotkey'.
+  HotkeyOne of(String which) => which == 'bar_hotkey' ? bar : main;
+
+  static HotkeyState fromJson(Object? v) {
+    final m = jMap(v);
+    return HotkeyState(HotkeyOne.fromJson(m['hotkey']), HotkeyOne.fromJson(m['bar_hotkey']));
+  }
+}
+
+/// `hotkey_probe`: would a combination work, before it's saved. [state] ok | taken | reserved | invalid | same;
+/// [spec] as the engine writes it ('' when invalid); [reason] one sentence to show.
+class HotkeyProbe {
+  const HotkeyProbe(this.state, this.spec, this.reason);
+  final String state;
+  final String spec;
+  final String reason;
+  bool get ok => state == 'ok';
+
+  static HotkeyProbe fromJson(Object? v) {
+    final m = jMap(v);
+    return HotkeyProbe(jStr(m['state']), jStr(m['spec']), jStr(m['reason']));
   }
 }
 

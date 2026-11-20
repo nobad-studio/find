@@ -283,3 +283,113 @@ def test_a_ui_that_opened_and_closed_is_not_starting_any_more(tmp_path):
     assert la.starting()
     la.started(None)
     assert not la.starting()
+
+
+# ---------- 0.9.0: hotkeys change at once, a taken default moves to a free one, a check before saving ----------
+class StopKey(Key):
+    """Records stop(), so a rebind can be seen letting the old combinations go."""
+    stopped = []
+
+    def stop(self):
+        StopKey.stopped.append(self.spec)
+
+
+def test_a_new_hotkey_takes_effect_at_once(tmp_path):
+    w, api, ix, ev, conn, stop = make(tmp_path)
+    w.make_hotkey = StopKey
+    StopKey.stopped = []
+    w.start()
+    r = api.set_settings({"hotkey": "ctrl+alt+shift+f9"})
+    assert r["changed"] == ["hotkey"]
+    assert sorted(StopKey.stopped) == ["ctrl+alt+shift+f11", "ctrl+alt+shift+f12"]     # the old ones let go
+    assert [k.spec for k in w.keys] == ["ctrl+alt+shift+f9", "ctrl+alt+shift+f12"]
+    assert r["hotkeys"] == {"hotkey": {"spec": "ctrl+alt+shift+f9", "state": "ok"},
+                            "bar_hotkey": {"spec": "ctrl+alt+shift+f12", "state": "ok"}}
+
+
+def test_a_taken_new_hotkey_is_reported_not_swapped(tmp_path):
+    """The user picked it: no fallback, Settings shows taken."""
+    w, api, ix, ev, conn, stop = make(tmp_path)
+    w.start()
+    Key.taken = {"ctrl+alt+shift+f9"}
+    try:
+        r = api.set_settings({"hotkey": "ctrl+alt+shift+f9"})
+    finally:
+        Key.taken = set()
+    assert r["hotkeys"]["hotkey"] == {"spec": "ctrl+alt+shift+f9", "state": "taken"}
+    assert api.hotkey_state()["hotkey"]["state"] == "taken"
+
+
+def test_turning_the_bar_off_lets_its_hotkey_go(tmp_path):
+    w, api, ix, ev, conn, stop = make(tmp_path)
+    w.start()
+    r = api.set_settings({"bar": False})
+    assert [k.spec for k in w.keys] == ["ctrl+alt+shift+f11"]
+    assert r["hotkeys"]["bar_hotkey"]["state"] == "off"
+
+
+def test_a_taken_default_moves_to_the_next_free_one_and_says_so(tmp_path):
+    from nobadfind.const import DEFAULTS
+    w, api, ix, ev, conn, stop = make(tmp_path, hotkey=DEFAULTS["hotkey"])
+    Key.taken = {"win+shift+f"}
+    try:
+        w.start()
+    finally:
+        Key.taken = set()
+    assert w.settings.get("hotkey") == "ctrl+alt+f"
+    assert w.key_state["hotkey"] == "ok"
+    assert [x["params"]["text"] for x in conn.sent] == [
+        "Win+Shift+F is used by another app on this PC, so NOBAD Find uses Ctrl+Alt+F to open NOBAD Find. "
+        "You can change it in Settings."]
+
+
+def test_a_reserved_hotkey_gets_its_own_notice(tmp_path):
+    w, api, ix, ev, conn, stop = make(tmp_path, hotkey="win+shift+1")
+    Key.taken = {"win+shift+1"}            # Windows has it, so RegisterHotKey fails
+    try:
+        w.start()
+    finally:
+        Key.taken = set()
+    assert w.key_state["hotkey"] == "reserved"
+    assert [x["params"]["text"] for x in conn.sent] == [engine.MAIN_RESERVED]
+
+
+def test_probe_before_saving(tmp_path):
+    w, api, ix, ev, conn, stop = make(tmp_path)
+    w.probe_fn = lambda spec: "taken" if spec == "ctrl+alt+k" else "ok"
+    w.start()
+    assert api.hotkey_probe("hotkey", "Ctrl+Alt+K") == {"state": "taken", "spec": "ctrl+alt+k",
+                                                        "reason": "Another app on this PC already uses it."}
+    assert api.hotkey_probe("hotkey", "ctrl+alt+shift+f12")["state"] == "same"        # the bar's
+    assert api.hotkey_probe("hotkey", "ctrl+alt+shift+f11")["state"] == "ok"          # ours already
+    assert api.hotkey_probe("hotkey", "shift+win+3")["state"] == "reserved"
+    assert api.hotkey_probe("bar_hotkey", "ctrl+")["state"] == "invalid"
+
+
+def test_close_hides_when_the_tray_can_bring_it_back(tmp_path):
+    """No working main hotkey, but the notification-area icon is up: hiding is fine, not quitting."""
+    w, api, ix, ev, conn, stop = make(tmp_path)
+    Key.taken = {"ctrl+alt+shift+f11"}
+    try:
+        w.start()
+    finally:
+        Key.taken = set()
+    assert not w.reachable()
+    w.tray_ok = lambda: True
+    assert w.reachable()
+
+
+def test_first_close_keeps_running_and_says_where_once(tmp_path):
+    """0.9.0: closing keeps NOBAD Find in the notification area (stay_running on); the first time, a balloon says
+    how to get it back, never again."""
+    w, api, ix, ev, conn, stop = make(tmp_path, stay_running=True, bg_notice_seen=False)
+    said = []
+    w.balloon = lambda title, text: said.append((title, text)) or True
+    w.start()
+    w._all_closed()
+    assert not stop.is_set()
+    assert said == [("NOBAD Find is still here",
+                     "Press Ctrl+Alt+Shift+F11 to search, or click its icon here. Right-click the icon to quit, "
+                     "or change this in Settings > Performance.")]
+    w._all_closed()
+    assert len(said) == 1 and w.settings.get("bg_notice_seen") is True

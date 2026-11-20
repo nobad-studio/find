@@ -98,6 +98,12 @@ abstract class EngineApi {
   Future<Settings> getSettings();
   Future<SettingsChange> setSettings(Map<String, Object?> changes);
 
+  /// Whether each global hotkey is registered and working now (`hotkey_state`).
+  Future<HotkeyState> hotkeyState();
+
+  /// Would [spec] work for [which] ('hotkey' or 'bar_hotkey')? Asked before saving (`hotkey_probe`).
+  Future<HotkeyProbe> hotkeyProbe(String which, String spec);
+
   /// Windows' folder dialog, shown by the engine: path '' if cancelled; busy if one is already open.
   Future<FolderPick> pickFolder();
   Future<ActionResult> rescan();

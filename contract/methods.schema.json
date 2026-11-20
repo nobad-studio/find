@@ -421,7 +421,7 @@
       }
     },
     "set_settings": {
-      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored.",
+      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
       "params": {
         "type": "object",
         "properties": {
@@ -457,6 +457,10 @@
           },
           "settings": {
             "$ref": "#/$defs/settings"
+          },
+          "hotkeys": {
+            "$ref": "#/$defs/hotkey_state",
+            "description": "Only when hotkey, bar_hotkey or bar changed."
           }
         },
         "required": [
@@ -810,6 +814,74 @@
       },
       "result": {
         "$ref": "#/$defs/ok"
+      }
+    },
+    "hotkey_state": {
+      "description": "Whether each NOBAD Find hotkey is registered and working right now.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/hotkey_state"
+      }
+    },
+    "hotkey_probe": {
+      "description": "Would this combination work for that hotkey, before saving it? Registers it for a moment and lets it go. same: the other NOBAD Find hotkey uses it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "which": {
+            "$ref": "#/$defs/hotkey_which"
+          },
+          "spec": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "which",
+          "spec"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "which": "hotkey",
+            "spec": "ctrl+alt+shift+f9"
+          },
+          {
+            "which": "bar_hotkey",
+            "spec": "win+shift+1"
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "taken",
+              "reserved",
+              "invalid",
+              "same"
+            ]
+          },
+          "spec": {
+            "type": "string",
+            "description": "The combination as the engine writes it (win, ctrl, alt, shift order), or \"\" when invalid."
+          },
+          "reason": {
+            "type": "string",
+            "description": "One plain sentence for Settings."
+          }
+        },
+        "required": [
+          "state",
+          "spec",
+          "reason"
+        ],
+        "additionalProperties": false
       }
     }
   },
@@ -2372,6 +2444,12 @@
         "search_history": {
           "type": "boolean",
           "description": "Keep your own typed questions (encrypted, at most 200) for autocomplete; off deletes them."
+        },
+        "settings_rev": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Which one-time settings changes have run (engine only; set_settings ignores it)."
         }
       },
       "required": [
@@ -2413,7 +2491,8 @@
         "text_model",
         "photo_model",
         "language_focus",
-        "search_history"
+        "search_history",
+        "settings_rev"
       ],
       "additionalProperties": false
     },
@@ -2811,6 +2890,54 @@
           "focus": "multilingual"
         }
       ]
+    },
+    "hotkey_which": {
+      "type": "string",
+      "enum": [
+        "hotkey",
+        "bar_hotkey"
+      ]
+    },
+    "hotkey_one": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "string",
+          "description": "The combination in the settings, e.g. win+shift+f."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "taken",
+            "reserved",
+            "invalid",
+            "off"
+          ],
+          "description": "ok: registered and working; taken: another app holds it; reserved: Windows keeps it; invalid: not a combination; off: not registered (the quick find bar is off, or before the engine started)."
+        }
+      },
+      "required": [
+        "spec",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "hotkey_state": {
+      "type": "object",
+      "properties": {
+        "hotkey": {
+          "$ref": "#/$defs/hotkey_one"
+        },
+        "bar_hotkey": {
+          "$ref": "#/$defs/hotkey_one"
+        }
+      },
+      "required": [
+        "hotkey",
+        "bar_hotkey"
+      ],
+      "additionalProperties": false
     }
   }
 }

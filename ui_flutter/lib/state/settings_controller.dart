@@ -38,6 +38,11 @@ class SettingsController extends ChangeNotifier {
   WsearchState? get wsearch => _wsearch;
   bool get wsearchBusy => _wsearchBusy;
 
+  HotkeyState _hotkeys = HotkeyState.unknown;
+
+  /// Whether each global hotkey works now (ok / taken / reserved / off), as the engine last said.
+  HotkeyState get hotkeys => _hotkeys;
+
   void _changed() {
     if (!_disposed) notifyListeners();
   }
@@ -84,11 +89,36 @@ class SettingsController extends ChangeNotifier {
       return false;
     }
     _settings = r.settings;
+    if (r.hotkeys != null) _hotkeys = r.hotkeys!;
     _changed();
     final now = r.settings[key];
     final took = now is List && value is List ? listEquals(now, value) : now == value;
     if (!took) _say("That value wasn't accepted.");
     return took;
+  }
+
+  Future<void> loadHotkeys() async {
+    try {
+      _hotkeys = await engine.hotkeyState();
+    } on Object {
+      return; // an older engine: no state to show
+    }
+    _changed();
+  }
+
+  /// Would [spec] work for [which]? null when the engine can't say (offline, older engine).
+  Future<HotkeyProbe?> probeHotkey(String which, String spec) async {
+    try {
+      return await engine.hotkeyProbe(which, spec);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Save a new hotkey; the engine registers it at once. Returns its state after that (null if not saved).
+  Future<HotkeyOne?> setHotkey(String which, String spec) async {
+    if (!await set(which, spec)) return null;
+    return _hotkeys.of(which);
   }
 
   Future<void> addFolder(String key, String path) async {

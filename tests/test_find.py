@@ -20,7 +20,7 @@ def test_settings_coerce_rejects_bad_values(tmp_path):
     assert settings.coerce("content_max_mb", "9999") == 500
     assert settings.coerce("content_max_mb", "x") == 25
     assert settings.coerce("hotkey", "ctrl+alt+k") == "ctrl+alt+k"
-    assert settings.coerce("hotkey", "ctrl+`rm`") == "win+shift+space"
+    assert settings.coerce("hotkey", "ctrl+`rm`") == "win+shift+f"
     assert settings.coerce("wsearch_prev", "auto; evil") == ""
     assert settings.coerce("roots", ["relative", "C:\\ok", 5]) == ["C:\\ok"]
     assert settings.coerce("semantic", "yes") is False
@@ -308,3 +308,19 @@ def test_folders_dont_crowd_meaning_results(tmp_path):
                                                   filters={"kind": "folder"})["results"]]
     assert names == ["Home"]                               # asked for folders: they count
     s.close()
+
+
+def test_settings_migration_090(tmp_path):
+    """0.9.0: once, closing keeps NOBAD Find in the notification area, and old or Windows-reserved hotkeys move to
+    the new defaults. A combination the user picked that works is kept; it never runs twice."""
+    import json
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"stay_running": False, "hotkey": "win+shift+1", "bar_hotkey": "ctrl+alt+space"}))
+    s = settings.Settings(str(p))
+    assert (s.get("stay_running"), s.get("hotkey"), s.get("bar_hotkey"), s.get("settings_rev")) == \
+        (True, "win+shift+f", "ctrl+shift+space", 1)
+    assert json.loads(p.read_text())["settings_rev"] == 1                 # saved
+    s.update({"stay_running": False})
+    assert settings.Settings(str(p)).get("stay_running") is False         # not again
+    p.write_text(json.dumps({"hotkey": "ctrl+alt+k"}))
+    assert settings.Settings(str(p)).get("hotkey") == "ctrl+alt+k"        # the user's choice stays

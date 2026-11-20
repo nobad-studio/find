@@ -432,7 +432,8 @@ class Api:
     def set_settings(self, changes):
         if not isinstance(changes, dict):
             return {"changed": []}
-        changes = {k: v for k, v in changes.items() if k not in ("wsearch_prev", "turbo")}   # turbo: turbo_set (UAC)
+        changes = {k: v for k, v in changes.items()
+                   if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
@@ -454,6 +455,9 @@ class Api:
             self._indexer.wake.set()
         if "tray" in changed and getattr(self, "_on_tray", None) is not None:
             self._on_tray(bool(self._settings.get("tray")))
+        hotkeys = None
+        if set(changed) & {"hotkey", "bar_hotkey", "bar"} and getattr(self, "_on_hotkeys", None) is not None:
+            hotkeys = self._on_hotkeys()                 # the new combinations work now, no restart
         if "text_model" in changed:
             wake = getattr(self._indexer, "wake", None)
             if wake is not None:
@@ -471,7 +475,30 @@ class Api:
         if "semantic" in changed and self._settings.get("semantic"):
             threading.Thread(target=self._indexer._load_embedder, daemon=True).start()
             self._indexer.wake.set()
-        return {"changed": changed}
+        out = {"changed": changed}
+        if hotkeys is not None:
+            out["hotkeys"] = hotkeys
+        return out
+
+    def hotkey_state(self):
+        """{hotkey, bar_hotkey: {spec, state}}: state ok | taken | reserved | invalid | off."""
+        fn = getattr(self, "_hotkey_state", None)
+        if fn is not None:
+            return fn()
+        return {w: {"spec": self._settings.get(w), "state": "off"} for w in ("hotkey", "bar_hotkey")}
+
+    def hotkey_probe(self, which, spec):
+        """Would spec work for which (hotkey or bar_hotkey)? ok | taken | reserved | invalid | same, and why."""
+        from . import hotkey
+        fn = getattr(self, "_hotkey_probe", None)
+        state = fn(which, spec) if fn is not None else hotkey.probe(spec)
+        n = hotkey.normal(spec) or ""
+        reason = {"ok": "Free to use.",
+                  "taken": "Another app on this PC already uses it.",
+                  "reserved": (hotkey.reserved(n) or "Windows keeps it for itself") + ".",
+                  "invalid": "Use Ctrl, Alt, Shift or Win with a letter, a number, Space or F1 to F12.",
+                  "same": "The other NOBAD Find shortcut already uses it."}[state]
+        return {"state": state, "spec": n if state != "invalid" else "", "reason": reason}
 
     def _remove_secrets(self):
         """Every secret (scope category) out of the index: key files by extension, secret folders by name."""
