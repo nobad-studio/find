@@ -241,6 +241,8 @@ class Wiring:
 
     def _shown(self):
         self._seen_ui = True
+        from . import splash
+        splash.close()                                     # the window is up: the start-up card goes
         done = getattr(self.ui, "started", None)        # the UI that was starting is here: no longer "starting"
         if done is not None:
             done(None)

@@ -5,4 +5,6 @@ from .app import main
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()          # text-reading workers in the packaged app
+    from . import splash
+    splash.show()
     sys.exit(main())

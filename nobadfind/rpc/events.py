@@ -95,6 +95,8 @@ class Events:
             self._notices.append(text)
 
     def quitting(self):
+        from .. import splash
+        splash.close()                       # quitting before the window came: the start-up card goes too
         return self.push("quitting", {})
 
     def turbo(self, state):

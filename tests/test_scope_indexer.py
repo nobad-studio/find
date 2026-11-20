@@ -11,8 +11,11 @@ PROF = scope.profile_dir()
 
 
 class S(dict):
+    # never this PC's own pauses (on battery, a full-screen window or a locked screen, a call): the walk would wait
+    QUIET = {"pause_on_battery": False, "pause_fullscreen": False, "pause_on_call": False}
+
     def get(self, k, d=None):
-        return super().get(k, DEFAULTS.get(k) if d is None else d)
+        return super().get(k, self.QUIET.get(k, DEFAULTS.get(k)) if d is None else d)
 
     def all(self):
         return dict(DEFAULTS, **self)
