@@ -79,14 +79,14 @@ DEFAULTS = {
     "keep_background": False,
     "stay_running": True,           # on (0.9.0): closing the window keeps NOBAD Find in the notification area so the
                                     # hotkeys work; off: closing the last window quits it completely (no process left)
-    "bar": True,
+    "bar": False,                   # 0.9.1 (maintainer): one window with everything; the quick find bar is off
     "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
     "hotkey": "win+shift+f",
     "autostart": False,
     "hide_after_open": False,       # Enter opens the file and keeps the window up (on: hide it, like a launcher)
-    "settings_rev": 1,              # which one-time settings changes (Settings.MIGRATIONS) have run; engine-only
+    "settings_rev": 2,              # which one-time settings changes (Settings.MIGRATIONS) have run; engine-only
     "wsearch_prev": "",             # Windows Search start type saved before NOBAD Find turned it off
     "theme": "dark",
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)

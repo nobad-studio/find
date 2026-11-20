@@ -26,9 +26,9 @@ CMD = {"open": 1, "bar": 2, "pause": 3, "resume": 4, "settings": 5, "index": 6, 
 _ACTION = {v: k for k, v in CMD.items()}
 
 
-def menu(paused):
-    """[(command id, label)]; (0, "") is a separator."""
-    return [(CMD["open"], "Open NOBAD Find"), (CMD["bar"], "Quick find bar"), (0, ""),
+def menu(paused, bar=False):
+    """[(command id, label)]; (0, "") is a separator. The quick find bar only while it's on (off since 0.9.1)."""
+    return [(CMD["open"], "Open NOBAD Find"), *([(CMD["bar"], "Quick find bar")] if bar else []), (0, ""),
             (CMD["resume"], "Resume") if paused else (CMD["pause"], "Pause for 1 hour"),
             (CMD["settings"], "Settings"), (CMD["index"], "Index"), (0, ""), (CMD["quit"], "Quit NOBAD Find")]
 
@@ -73,8 +73,8 @@ class _WNDCLASSEX(ctypes.Structure):
 class Tray:
     """start() shows the icon on its own thread; stop() removes it. on_action(name) gets every click."""
 
-    def __init__(self, on_action, tip, paused):
-        self.on_action, self.tip, self.paused = on_action, tip, paused
+    def __init__(self, on_action, tip, paused, bar=lambda: False):
+        self.on_action, self.tip, self.paused, self.bar = on_action, tip, paused, bar
         self.hwnd = None
         self._icon = None
         self._thread = None
@@ -183,7 +183,7 @@ class Tray:
         u = self._u32()
         m = u.CreatePopupMenu()
         try:
-            for cmd, label in menu(bool(self.paused())):
+            for cmd, label in menu(bool(self.paused()), bool(self.bar())):
                 u.AppendMenuW(m, MF_SEPARATOR if not cmd else MF_STRING, cmd, label or None)
             pt = wintypes.POINT()
             u.GetCursorPos(ctypes.byref(pt))

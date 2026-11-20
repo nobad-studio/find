@@ -38,6 +38,8 @@ def coerce(key, value):
             return d
     if key in ("hotkey", "bar_hotkey"):
         v = str(value).lower().replace(" ", "")
+        if v == "":
+            return ""                                   # cleared (0.9.1): no shortcut; the Start menu and the icon open it
         return v if _HOTKEY.match(v) else d
     if key in ("text_model", "photo_model"):
         from . import models
@@ -84,7 +86,10 @@ class Settings:
     def _migrate(self):
         """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
         rev = self.data.get("settings_rev", 0)
+        if rev >= 2:
+            return
         if rev >= 1:
+            self._migrate_2()
             return
         from . import hotkey
         # 0.9.0: closing the window keeps NOBAD Find in the notification area (maintainer, 2026-11-20), so the
@@ -96,6 +101,12 @@ class Settings:
         if self.data.get("bar_hotkey") == "ctrl+alt+space" or hotkey.reserved(self.data.get("bar_hotkey", "")):
             self.data["bar_hotkey"] = DEFAULTS["bar_hotkey"]
         self.data["settings_rev"] = 1
+        self._migrate_2()
+
+    def _migrate_2(self):
+        """0.9.1 (maintainer, 2026-11-20): one NOBAD Find window with everything: the quick find bar goes off."""
+        self.data["bar"] = False
+        self.data["settings_rev"] = 2
         try:
             self._save()
         except OSError:

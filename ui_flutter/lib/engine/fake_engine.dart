@@ -485,7 +485,7 @@ class FakeEngine implements EngineApi {
   HotkeyState _hotkeyState() {
     HotkeyOne one(String which) {
       final spec = '${_settings[which] ?? Settings.defaults[which]}';
-      if (which == 'bar_hotkey' && _settings['bar'] == false) return HotkeyOne(spec, 'off');
+      if (spec.isEmpty || (which == 'bar_hotkey' && _settings['bar'] == false)) return HotkeyOne(spec, 'off');
       if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(spec)) return HotkeyOne(spec, 'reserved');
       return HotkeyOne(spec, takenHotkeys.contains(spec) ? 'taken' : 'ok');
     }

@@ -62,7 +62,8 @@ class Welcome extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: NbSpace.x6),
-                _Fact(keys: keysOf(st.text('hotkey')), text: 'Opens this window from anywhere.'),
+                if (st.text('hotkey').isNotEmpty)
+                  _Fact(keys: keysOf(st.text('hotkey')), text: 'Opens this window from anywhere.'),
                 if (st.flag('bar'))
                   _Fact(
                     keys: keysOf(st.text('bar_hotkey')),

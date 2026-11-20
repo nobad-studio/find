@@ -68,7 +68,8 @@ def wait_for(cond, secs=3.0):
 
 def make(tmp_path, **changes):
     st = settings_mod.Settings(str(tmp_path / "s.json"))
-    st.update(dict({"hotkey": "ctrl+alt+shift+f11", "bar_hotkey": "ctrl+alt+shift+f12"}, **changes))
+    # the quick find bar is off by default since 0.9.1; these tests cover it, so it is on here
+    st.update(dict({"hotkey": "ctrl+alt+shift+f11", "bar_hotkey": "ctrl+alt+shift+f12", "bar": True}, **changes))
     ix = Ix()
     api = Api(None, st, ix, None)
     conn = Conn()
@@ -216,7 +217,7 @@ class FakeUi:
 def test_hotkeys_with_no_ui_go_through_the_launcher(tmp_path):
     """No UI connected: the launcher starts one on the right page (uilaunch.Launcher)."""
     st = settings_mod.Settings(str(tmp_path / "s.json"))
-    st.update({"hotkey": "ctrl+alt+shift+f11", "bar_hotkey": "ctrl+alt+shift+f12"})
+    st.update({"hotkey": "ctrl+alt+shift+f11", "bar_hotkey": "ctrl+alt+shift+f12", "bar": True})
     ix, ui = Ix(), FakeUi()
     api = Api(None, st, ix, None)
     ev = Events(lambda: [], lambda c: None, api)
@@ -393,3 +394,13 @@ def test_first_close_keeps_running_and_says_where_once(tmp_path):
                      "or change this in Settings > Performance.")]
     w._all_closed()
     assert len(said) == 1 and w.settings.get("bg_notice_seen") is True
+
+
+def test_a_cleared_shortcut_registers_nothing_and_says_nothing(tmp_path):
+    """0.9.1: Clear in Settings: no hotkey (the Start menu and the icon open NOBAD Find), no "taken" notice."""
+    w, api, ix, ev, conn, stop = make(tmp_path, hotkey="", bar=False)
+    w.start()
+    assert w.key_state == {"hotkey": "off", "bar_hotkey": "off"}
+    assert conn.sent == []
+    w.tray_ok = lambda: True
+    assert w.reachable()                     # the icon can still bring it back

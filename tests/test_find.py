@@ -318,9 +318,23 @@ def test_settings_migration_090(tmp_path):
     p.write_text(json.dumps({"stay_running": False, "hotkey": "win+shift+1", "bar_hotkey": "ctrl+alt+space"}))
     s = settings.Settings(str(p))
     assert (s.get("stay_running"), s.get("hotkey"), s.get("bar_hotkey"), s.get("settings_rev")) == \
-        (True, "win+shift+f", "ctrl+shift+space", 1)
-    assert json.loads(p.read_text())["settings_rev"] == 1                 # saved
+        (True, "win+shift+f", "ctrl+shift+space", 2)
+    assert json.loads(p.read_text())["settings_rev"] == 2                 # saved
+    assert s.get("bar") is False                                          # 0.9.1: one window with everything
     s.update({"stay_running": False})
     assert settings.Settings(str(p)).get("stay_running") is False         # not again
     p.write_text(json.dumps({"hotkey": "ctrl+alt+k"}))
     assert settings.Settings(str(p)).get("hotkey") == "ctrl+alt+k"        # the user's choice stays
+
+
+def test_settings_migration_091_and_a_cleared_shortcut(tmp_path):
+    """0.9.1: a 0.9.0 install (rev 1) gets the quick find bar off once; a cleared shortcut ("") stays cleared."""
+    import json
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"settings_rev": 1, "bar": True, "hotkey": "ctrl+alt+k"}))
+    s = settings.Settings(str(p))
+    assert (s.get("bar"), s.get("hotkey"), s.get("settings_rev")) == (False, "ctrl+alt+k", 2)
+    s.update({"hotkey": ""})
+    assert settings.Settings(str(p)).get("hotkey") == ""
+    assert settings.coerce("hotkey", "") == "" and settings.coerce("hotkey", "nonsense") == "win+shift+f"
+

@@ -296,6 +296,8 @@ class Wiring:
                 self.ui.show("bar")
         spec = self.settings.get(which)
         hk = make(spec, cb, hk_id=hk_id)
+        if not spec:
+            return hk, "off"                             # cleared in Settings: no shortcut, nothing to register
         if hk.start():
             return hk, "ok"
         state = "reserved" if hotkey.reserved(spec) else "taken" if hotkey.parse(spec) else "invalid"
@@ -398,7 +400,7 @@ def start_tray(settings, api, governor, wiring):
     import time
     from . import tray
     icon = tray.Tray(wiring.tray_action, tip=lambda: tray.tooltip(api.status_brief()),
-                     paused=lambda: governor.brain.pause_until > time.time())
+                     paused=lambda: governor.brain.pause_until > time.time(), bar=lambda: settings.get("bar"))
     if not icon.start():
         log("tray icon not available", "warn")
         return None
