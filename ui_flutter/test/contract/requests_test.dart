@@ -81,6 +81,10 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.getSettings();
     case 'set_settings' when p['changes'] is Map:
       return c.setSettings(Map<String, Object?>.from(p['changes'] as Map));
+    case 'hotkey_state':
+      return c.hotkeyState();
+    case 'hotkey_probe' when p['which'] is String && p['spec'] is String:
+      return c.hotkeyProbe(p['which'] as String, p['spec'] as String);
     case 'pick_folder':
       return c.pickFolder();
     case 'wsearch_state':
@@ -109,6 +113,14 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.modelDownload(p['id'] as String);
     case 'model_remove' when p['id'] is String:
       return c.modelRemove(p['id'] as String);
+    case 'model_folder' when p['id'] is String:
+      return c.modelFolder(p['id'] as String);
+    case 'update_state':
+      return c.updateState();
+    case 'update_check':
+      return c.updateCheck();
+    case 'update_install' when p['consent'] == 'INSTALL':
+      return c.updateInstall();
     case 'auto_configure':
       return c.autoConfigure();
     case 'model_language' when p['focus'] is String:

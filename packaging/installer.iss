@@ -36,6 +36,7 @@ SolidCompression=yes
 CloseApplications=yes
 RestartApplications=no
 WizardStyle=modern
+DisableReadyPage=no
 #ifdef SignBuild
 SignTool=nobadsign
 SignedUninstaller=yes
@@ -56,6 +57,8 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; AppUserModelID: "NO
 
 [Run]
 Filename: "{app}\{#MyAppExe}"; Description: "Start {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; The in-app update runs this setup silently: NOBAD Find starts again by itself when it's done (0.9.0).
+Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 ; Runs after CurUninstallStepChanged(usUninstall) below has stopped NOBAD Find. It puts Windows Search back the way
@@ -99,6 +102,84 @@ begin
   Exec(tk, '/F ' + args, '', SW_HIDE, ewWaitUntilTerminated, rc);
   Sleep(500);
   Exec(tk, '/F ' + args, '', SW_HIDE, ewWaitUntilTerminated, rc);
+end;
+
+// ---------------------------------------------------------------- the version already installed (0.9.0)
+// Read from this app's uninstall entry (per user). Upgrading keeps the index and settings; the same version can be
+// installed again (repair); going back to an older version asks first, and the silent in-app update never does it.
+const
+  UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A8A5690D-F9AF-4028-8E58-6D29BA8ECF84}_is1';
+
+var
+  InstalledVer: String;
+
+function InstalledVersion: String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', Result) then
+    Result := '';
+end;
+
+// "0.8.5" -> each number in turn; missing numbers count as 0. -1, 0, 1 like a comparison.
+function CompareVer(A, B: String): Integer;
+var
+  pa, pb, na, nb: Integer;
+begin
+  Result := 0;
+  while (Result = 0) and ((A <> '') or (B <> '')) do
+  begin
+    pa := Pos('.', A); pb := Pos('.', B);
+    if pa = 0 then begin na := StrToIntDef(A, 0); A := ''; end
+    else begin na := StrToIntDef(Copy(A, 1, pa - 1), 0); Delete(A, 1, pa); end;
+    if pb = 0 then begin nb := StrToIntDef(B, 0); B := ''; end
+    else begin nb := StrToIntDef(Copy(B, 1, pb - 1), 0); Delete(B, 1, pb); end;
+    if na < nb then Result := -1
+    else if na > nb then Result := 1;
+  end;
+end;
+
+function InitializeSetup: Boolean;
+var
+  c: Integer;
+begin
+  Result := True;
+  InstalledVer := InstalledVersion;
+  if InstalledVer = '' then
+    Exit;                                       // a first install
+  c := CompareVer(InstalledVer, '{#MyAppVersion}');
+  if c > 0 then
+  begin
+    if WizardSilent then
+    begin
+      Result := False;                          // the in-app update never goes back to an older version
+      Exit;
+    end;
+    Result := MsgBox('A newer NOBAD Find (' + InstalledVer + ') is installed.' + #13#10 + #13#10 +
+      'Installing {#MyAppVersion} goes back to an older version. Your index and settings are kept, but an older ' +
+      'version may not read everything the newer one wrote.' + #13#10 + #13#10 + 'Install the older version anyway?',
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+  end
+  else if (c = 0) and not WizardSilent then
+    Result := MsgBox('NOBAD Find {#MyAppVersion} is already installed.' + #13#10 + #13#10 +
+      'Install it again to repair it? Your index and settings are kept.', mbConfirmation, MB_YESNO) = IDYES;
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo,
+  MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  if InstalledVer = '' then
+    Result := 'Install NOBAD Find {#MyAppVersion}.'
+  else if CompareVer(InstalledVer, '{#MyAppVersion}') < 0 then
+    Result := 'Upgrade NOBAD Find ' + InstalledVer + ' to {#MyAppVersion}.' + NewLine +
+      'Your search index and settings are kept. NOBAD Find is closed first if it is running.'
+  else if CompareVer(InstalledVer, '{#MyAppVersion}') = 0 then
+    Result := 'Repair NOBAD Find {#MyAppVersion} (install it again).' + NewLine +
+      'Your search index and settings are kept.'
+  else
+    Result := 'Go back from NOBAD Find ' + InstalledVer + ' to {#MyAppVersion}.' + NewLine +
+      'Your search index and settings are kept.';
+  if MemoDirInfo <> '' then
+    Result := Result + NewLine + NewLine + MemoDirInfo;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

@@ -18,6 +18,7 @@ import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
+import 'models/update.dart';
 
 class FakeEngine implements EngineApi {
   FakeEngine({
@@ -164,8 +165,12 @@ class FakeEngine implements EngineApi {
             for (final w in t.split(RegExp(r'\s+')))
               if (w.isNotEmpty && !_stop.contains(w)) w,
           ],
+          needs: searchNeeds,
         );
       });
+
+  /// What every search says it needs (0.9.0 `needs`); tests and the demo set it.
+  List<SearchNeed> searchNeeds = const [];
 
   static const _stop = {'from', 'in', 'my', 'the', 'last', 'week', 'photos', 'photo', 'pdf'};
 
@@ -457,7 +462,40 @@ class FakeEngine implements EngineApi {
         changed.add(e.key);
       }
     }
-    return SettingsChange(changed, Settings(Map.of(_settings)));
+    final keys = changed.any((k) => k == 'hotkey' || k == 'bar_hotkey' || k == 'bar');
+    return SettingsChange(changed, Settings(Map.of(_settings)), hotkeys: keys ? _hotkeyState() : null);
+  });
+
+  /// Combinations 'another app' holds (tests and the demo set it); Win+Shift+number is Windows'.
+  final Set<String> takenHotkeys = {};
+
+  HotkeyState _hotkeyState() {
+    HotkeyOne one(String which) {
+      final spec = '${_settings[which] ?? Settings.defaults[which]}';
+      if (which == 'bar_hotkey' && _settings['bar'] == false) return HotkeyOne(spec, 'off');
+      if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(spec)) return HotkeyOne(spec, 'reserved');
+      return HotkeyOne(spec, takenHotkeys.contains(spec) ? 'taken' : 'ok');
+    }
+
+    return HotkeyState(one('hotkey'), one('bar_hotkey'));
+  }
+
+  @override
+  Future<HotkeyState> hotkeyState() => _answer('hotkey_state', _hotkeyState);
+
+  @override
+  Future<HotkeyProbe> hotkeyProbe(String which, String spec) => _answer('hotkey_probe', () {
+    final s = spec.toLowerCase().replaceAll(' ', '');
+    final other = which == 'hotkey' ? 'bar_hotkey' : 'hotkey';
+    if (!RegExp(r'^(?:(?:win|ctrl|alt|shift)\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$').hasMatch(s)) {
+      return const HotkeyProbe('invalid', '', 'Use Ctrl, Alt, Shift or Win with a letter, a number, Space or F1 to F12.');
+    }
+    if (s == '${_settings[other]}') return HotkeyProbe('same', s, 'The other NOBAD Find shortcut already uses it.');
+    if (RegExp(r'^win\+shift\+[0-9]$').hasMatch(s)) {
+      return HotkeyProbe('reserved', s, 'Windows uses Win+Shift+number for the taskbar.');
+    }
+    if (takenHotkeys.contains(s)) return HotkeyProbe('taken', s, 'Another app on this PC already uses it.');
+    return HotkeyProbe('ok', s, 'Free to use.');
   });
 
   static bool _same(Object? a, Object? b) => a is List && b is List ? listEquals(a, b) : a == b;
@@ -593,6 +631,33 @@ class FakeEngine implements EngineApi {
       });
     }
     return _ok;
+  });
+
+  /// The update the fake 'finds' (tests and the demo set it).
+  UpdateState updates = const UpdateState(state: 'uptodate', current: '0.9.0', latest: '0.9.0');
+
+  @override
+  Future<UpdateState> updateState() => _new('update_state', () => updates);
+
+  @override
+  Future<ActionResult> updateCheck() => _new('update_check', () {
+    emit(UpdateEvent(updates));
+    return _ok;
+  });
+
+  @override
+  Future<ActionResult> updateInstall() => _new('update_install', () {
+    if (!updates.canInstall) return const ActionResult(false, 'Check for updates first.');
+    updates = UpdateState(state: 'installing', current: updates.current, latest: updates.latest, size: updates.size,
+        got: updates.size, auto: updates.auto);
+    emit(UpdateEvent(updates));
+    return _ok;
+  });
+
+  @override
+  Future<ActionResult> modelFolder(String id) => _new('model_folder', () {
+    final m = modelsInfo.models.where((x) => x.id == id).firstOrNull;
+    return m == null || m.builtin ? const ActionResult(false, 'That model is part of Windows.') : _ok;
   });
 
   @override
@@ -772,7 +837,7 @@ class FakeEngine implements EngineApi {
       files: _brief.files,
       paused: _brief.paused,
       details: IndexDetails(
-        version: '0.8.5',
+        version: '0.9.0',
         withText: 31877,
         memoryMb: 186,
         rate: 2140,
@@ -1146,6 +1211,7 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       sizeMb: 211,
       languages: ['en'],
       improves: "Finds photos by what's in them (English questions)",
+      dir: r'C:\Users\me\AppData\Local\NOBAD\Find\photo-model',
     ),
     const ModelInfo(
       id: 'siglip2-base',

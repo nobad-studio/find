@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/controls.dart';
+import '../hotkey_setting.dart';
 import '../settings_parts.dart';
 
 const _keys = [
@@ -37,18 +38,7 @@ class ShortcutsPage extends StatelessWidget {
       children: [
         const SettingsGroup(
           'Anywhere in Windows',
-          rows: [
-            TextSetting(
-              'hotkey',
-              'Open NOBAD Find',
-              'For example win+shift+space or ctrl+alt+f. Takes effect at the next start.',
-            ),
-            TextSetting(
-              'bar_hotkey',
-              'Quick find bar',
-              'For example ctrl+alt+space or win+alt+f. Takes effect at the next start.',
-            ),
-          ],
+          rows: [HotkeySetting('hotkey', 'Open NOBAD Find'), HotkeySetting('bar_hotkey', 'Quick find bar')],
         ),
         SettingsGroup(
           'In this window',

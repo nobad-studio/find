@@ -1,7 +1,7 @@
 """Model downloads and tiers.
 
 download_model, download_photo_model (0.7.0: only with the download allowed in Settings, the Api checks it) stay as
-they were. models, model_use, model_download, model_remove, auto_configure, model_language: Settings -> Models
+they were. models, model_use, model_download, model_remove, model_folder, auto_configure, model_language: Settings -> Models
 (models.CATALOG). Progress comes as `download` events (id = the model id), changes as `models` events."""
 import re
 
@@ -38,6 +38,7 @@ def methods(api, events=None):
             "model_use": lambda params, conn=None: _use(api, params),
             "model_download": lambda params, conn=None: ok(api.model_download(_model_id(params), _consent(params))),
             "model_remove": lambda params, conn=None: ok(api.model_remove(_model_id(params))),
+            "model_folder": lambda params, conn=None: ok(api.model_folder(_model_id(params))),
             "auto_configure": lambda params, conn=None: api.auto_configure(),
             "model_language": lambda params, conn=None: ok(api.model_language(
                 choice_param(params, "focus", FOCUSES, None)))}

@@ -1,4 +1,4 @@
-"""get_settings, set_settings, pick_folder, rescan, wipe, scope_info, turbo_state, turbo_set.
+"""get_settings, set_settings, hotkey_state, hotkey_probe, pick_folder, rescan, wipe, scope_info, turbo_state, turbo_set.
 
 Every value goes through settings.coerce inside Api.set_settings. pick_folder shows
 Windows' folder dialog from the engine, so the UI never hands the engine a folder path of its own."""
@@ -15,8 +15,20 @@ def methods(api, events=None):
         changes = params.get("changes")
         if not isinstance(changes, dict):
             raise RpcError(INVALID_PARAMS, "'changes' must be an object of setting names and values")
-        r = api.set_settings(changes)
-        return {"changed": list((r or {}).get("changed") or []), "settings": api.get_settings()}
+        r = api.set_settings(changes) or {}
+        out = {"changed": list(r.get("changed") or []), "settings": api.get_settings()}
+        if isinstance(r.get("hotkeys"), dict):
+            out["hotkeys"] = r["hotkeys"]
+        return out
+
+    def hotkey_probe(params, conn=None):
+        which = str_param(params, "which")
+        if which not in ("hotkey", "bar_hotkey"):
+            raise RpcError(INVALID_PARAMS, "'which' must be hotkey or bar_hotkey")
+        spec = str_param(params, "spec")
+        if len(spec) > 40:
+            raise RpcError(INVALID_PARAMS, "'spec' is too long")
+        return api.hotkey_probe(which, spec)
 
     def pick_folder(params, conn=None):
         """busy: a folder dialog is already open (it was brought to the front); path is "" then."""
@@ -42,6 +54,8 @@ def methods(api, events=None):
             "turbo_state": lambda params, conn=None: api.turbo_state(),
             "turbo_set": turbo_set,
             "set_settings": set_settings,
+            "hotkey_state": lambda params, conn=None: api.hotkey_state(),
+            "hotkey_probe": hotkey_probe,
             "pick_folder": pick_folder,
             "rescan": lambda params, conn=None: ok(api.rescan()),
             "wipe": lambda params, conn=None: ok(api.wipe(str_param(params, "confirm")))}

@@ -151,6 +151,12 @@ class ModelsController extends ChangeNotifier {
     return r.ok;
   }
 
+  /// File Explorer on the folder [m] is downloaded to (the engine opens it; the UI never hands it a path).
+  Future<void> openFolder(ModelInfo m) async {
+    final r = await _run('folder-${m.id}', () => engine.modelFolder(m.id));
+    if (r != null && !r.ok) _say(r.error.isNotEmpty ? r.error : "Couldn't open the folder.");
+  }
+
   Future<void> remove(ModelInfo m) async {
     final r = await _run(m.id, () => engine.modelRemove(m.id));
     if (r == null) return;

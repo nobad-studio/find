@@ -145,10 +145,37 @@ class FakeApi:
 
     def set_settings(self, changes):
         """Like Settings.update: every value through the real settings.coerce."""
-        new = {k: coerce(k, v) for k, v in changes.items() if k in DEFAULTS and k not in ("wsearch_prev", "turbo")}
+        new = {k: coerce(k, v) for k, v in changes.items()
+               if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)
-        return {"changed": changed}
+        out = {"changed": changed}
+        if set(changed) & {"hotkey", "bar_hotkey", "bar"}:
+            out["hotkeys"] = self.hotkey_state()
+        return out
+
+    def hotkey_state(self):
+        """Both registered, except the bar's when the bar is off (no Windows here: nothing is ever taken)."""
+        return {"hotkey": {"spec": self.settings["hotkey"], "state": "ok"},
+                "bar_hotkey": {"spec": self.settings["bar_hotkey"], "state": "ok" if self.settings["bar"] else "off"}}
+
+    def hotkey_probe(self, which, spec):
+        """The real Api.hotkey_probe's answers, with the real hotkey.reserved and normal (no RegisterHotKey here)."""
+        from nobadfind import hotkey
+        n = hotkey.normal(spec)
+        other = "bar_hotkey" if which == "hotkey" else "hotkey"
+        if n is None or hotkey.parse(n) is None:
+            state = "invalid"
+        elif n == hotkey.normal(self.settings[other]):
+            state = "same"
+        elif hotkey.reserved(n):
+            state = "reserved"
+        else:
+            state = "ok"
+        reason = {"ok": "Free to use.", "invalid": "Use Ctrl, Alt, Shift or Win with a letter, a number, Space or F1 to F12.",
+                  "same": "The other NOBAD Find shortcut already uses it.",
+                  "reserved": (hotkey.reserved(n or "") or "Windows keeps it for itself") + "."}[state]
+        return {"state": state, "spec": n if state != "invalid" else "", "reason": reason}
 
     def pick_folder(self):
         return {"path": "C:\\Users\\me\\Projects", "busy": False}
@@ -197,7 +224,9 @@ class FakeApi:
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
                         "builtin": bool(m["builtin"]), "state": state, "capable": ok, "capable_reason": why,
                         "recommended": choice.get(m["feature"]) == m["id"],
-                        "quality": dict(m["quality"]) if m.get("quality") else None})
+                        "quality": dict(m["quality"]) if m.get("quality") else None,
+                        "dir": "" if m["builtin"] else "C:\\Users\\me\\AppData\\Local\\NOBAD\\Find\\"
+                               + (m.get("dir") or "models\\" + m["id"])})
         return {"pc": pc, "tier_recommended": rec, "tier_current": cat.tier_current(self.settings, focus),
                 "language_focus": focus, "models": out}
 
@@ -218,6 +247,28 @@ class FakeApi:
         if consent != "DOWNLOAD":
             return {"ok": False, "error": "A model is only downloaded when you say Download."}
         self.dl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()), "error": ""}
+        return {"ok": True}
+
+    def update_state(self):
+        """Like Api.update_state with an update found: this is 0.0.0-contract, the newest release 0.9.0."""
+        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0,
+                "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "",
+                "auto": bool(self.settings["update_check"]), "checked_at": 1763600000}
+
+    def update_check(self):
+        return {"ok": True}
+
+    def update_install(self, consent):
+        if consent != "INSTALL":
+            return {"ok": False, "error": "Nothing is installed without your OK."}
+        return {"ok": True}
+
+    def model_folder(self, mid):
+        """Like Api.model_folder: an id only; a built-in model has no folder (no Explorer here)."""
+        from nobadfind import models as cat
+        m = cat.get(mid)
+        if m is None or m["builtin"]:
+            return {"ok": False, "error": "That model is part of Windows: it has no folder of its own."}
         return {"ok": True}
 
     def model_remove(self, mid):

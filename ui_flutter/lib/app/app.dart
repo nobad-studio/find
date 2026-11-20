@@ -23,7 +23,7 @@ import 'theme/theme.dart';
 
 enum AppMode { main, bar }
 
-const appVersion = '0.8.5';
+const appVersion = '0.9.0';
 
 class NobadFindApp extends StatefulWidget {
   const NobadFindApp({
@@ -62,7 +62,8 @@ class NobadFindApp extends StatefulWidget {
 class _NobadFindAppState extends State<NobadFindApp> {
   late final toasts = ToastController(engine: widget.engine);
   late final settings = SettingsController(widget.engine, toasts: toasts);
-  late final status = StatusController(widget.engine);
+  late final status = StatusController(widget.engine)
+    ..onUpdateFound = (u) => toasts.show('NOBAD Find ${u.latest} is available. Settings > About installs it.');
   late final find = FindController(widget.engine, toasts: toasts, recent: widget.recent);
   late final nav = AppNav(widget.startPage);
   bool _glass = false;

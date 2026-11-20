@@ -46,6 +46,8 @@ def coerce(key, value):
         return value if value in ("", "english", "multilingual", "hindi") else d
     if key == "games_mode":
         return value if value in ("smart", "always", "off") else d
+    if key == "settings_rev":
+        return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1000 else d
     if key == "wsearch_prev":
         return value if value in WSEARCH_STARTS else d
     if key == "theme":
@@ -73,8 +75,31 @@ class Settings:
                     self.data["games_mode"] = "off"
                 if "scope" not in raw:          # before scopes: a folder list meant exactly those folders
                     self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
+                rev = raw.get("settings_rev") if isinstance(raw.get("settings_rev"), int) else 0
+                self.data["settings_rev"] = rev
+                self._migrate()
         except (OSError, ValueError):
             pass
+
+    def _migrate(self):
+        """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
+        rev = self.data.get("settings_rev", 0)
+        if rev >= 1:
+            return
+        from . import hotkey
+        # 0.9.0: closing the window keeps NOBAD Find in the notification area (maintainer, 2026-11-20), so the
+        # hotkeys work after closing. The old defaults were taken on many PCs (Win+Shift+Space is Windows'
+        # keyboard-layout switch); a combination Windows keeps for itself never worked, so it goes too.
+        self.data["stay_running"] = True
+        if self.data.get("hotkey") == "win+shift+space" or hotkey.reserved(self.data.get("hotkey", "")):
+            self.data["hotkey"] = DEFAULTS["hotkey"]
+        if self.data.get("bar_hotkey") == "ctrl+alt+space" or hotkey.reserved(self.data.get("bar_hotkey", "")):
+            self.data["bar_hotkey"] = DEFAULTS["bar_hotkey"]
+        self.data["settings_rev"] = 1
+        try:
+            self._save()
+        except OSError:
+            pass                                    # read-only folder: the same changes run at the next start
 
     def get(self, key):
         return self.data.get(key, DEFAULTS.get(key))

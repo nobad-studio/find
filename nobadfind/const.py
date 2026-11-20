@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "0.8.5"
+APP_VER = "0.9.0"
 
 # NOBAD Find runs as the normal user, so its data lives in the user's own profile (not readable by other users).
 DATA_DIR = os.environ.get("NOBAD_FIND_DATA_DIR") or os.path.join(
@@ -77,19 +77,23 @@ DEFAULTS = {
     "pause_fullscreen": True,       # old: replaced by games_mode, kept so a downgrade still reads it
     "games_mode": "smart",          # smart | always | off: what to do while a game is running
     "keep_background": False,
-    "stay_running": False,          # off: closing the last window quits NOBAD Find completely (no process left)
+    "stay_running": True,           # on (0.9.0): closing the window keeps NOBAD Find in the notification area so the
+                                    # hotkeys work; off: closing the last window quits it completely (no process left)
     "bar": True,
-    "bar_hotkey": "ctrl+alt+space",
+    "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
-    "hotkey": "win+shift+space",
+    "hotkey": "win+shift+f",
     "autostart": False,
     "hide_after_open": False,       # Enter opens the file and keeps the window up (on: hide it, like a launcher)
+    "settings_rev": 1,              # which one-time settings changes (Settings.MIGRATIONS) have run; engine-only
     "wsearch_prev": "",             # Windows Search start type saved before NOBAD Find turned it off
     "theme": "dark",
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)
     "bg_notice_seen": False,        # the one-time "closing keeps NOBAD Find ready" notice was dismissed
     "welcome_seen": False,          # the Flutter UI's first-run welcome was dismissed (Start searching)
+    "update_check": True,           # look for a newer NOBAD Find once a day (GitHub, nobad-studio/find; update.py)
+    "models_stay_loaded": False,    # on: models stay in memory (instant searches, more memory); off: freed when idle
     "tray": True,                   # NOBAD Find's icon in the notification area (the engine's, works with the UI closed)
     "text_model": "minilm-l6-v2",   # meaning model (models.CATALOG, feature "text"); used once it is downloaded
     "photo_model": "siglip-base",   # photo model (models.CATALOG, feature "photo")

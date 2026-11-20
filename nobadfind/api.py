@@ -77,13 +77,62 @@ class Api:
         if not text and not listing:
             return empty
         try:
-            return search(self._store, text, self._indexer.embedder, self._vindex, drives=self._indexer.drive_list,
-                          here=self.here, filters=filters, roots=self._indexer.roots(self._indexer.drive_list),
-                          photo_text=self._indexer.photo_text, pindex=self._indexer.pindex, cancelled=cancelled,
-                          romanized=self._romanized())
+            asks = {}
+            r = search(self._store, text, self._indexer.embedder, self._vindex, drives=self._indexer.drive_list,
+                       here=self.here, filters=filters, roots=self._indexer.roots(self._indexer.drive_list),
+                       photo_text=self._indexer.photo_text, pindex=self._indexer.pindex, cancelled=cancelled,
+                       romanized=self._romanized(), asks=asks)
+            if not r.get("cancelled"):
+                needs = self._needs(asks, len(r.get("results") or ()))
+                if needs:
+                    r["needs"] = needs
+            return r
         except Exception as e:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
+
+    def _needs(self, asks, found):
+        """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
+        counts come from the Index page's cached totals, never a count over the index per keystroke.
+        photo: the model is missing (offer the download), off (offer to switch it on), or still looking at photos.
+        meaning: only when a description found little and meaning search is missing or off."""
+        out, s = [], self._settings
+        if asks.get("photo"):
+            pid = self._photo_in_use()
+            spec = models.get(pid) or {}
+            mb = models.size_mb(spec) if spec else 0
+            pindex = getattr(self._indexer, "pindex", None)
+            ready_n = int(getattr(pindex, "n", 0) or 0)
+            if not models.ready(pid, self._mdir()):
+                out.append({"model": "photo", "state": "missing", "id": pid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": f"To find what is in your photos, NOBAD Find needs its photo model ({mb} MB, "
+                                    "downloaded once). Until then it only matches names and words in pictures."})
+            elif not s.get("photo_meaning"):
+                out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": "Photo search is off, so only names and words in pictures are matched. "
+                                    "Turn it on to search what is in them."})
+            else:
+                total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
+                if todo > 0 or ready_n == 0:
+                    shown = max(int(total), ready_n)
+                    text = (f"Still looking at your photos: {ready_n:,} of {shown:,} done. "
+                            "Photo results get better as it goes." if shown
+                            else "NOBAD Find hasn't looked at your photos yet. Photo results come as it does.")
+                    out.append({"model": "photo", "state": "analyzing", "id": pid, "size_mb": mb,
+                                "done": ready_n, "total": shown, "text": text})
+        if asks.get("meaning") and not asks.get("photo") and found < 5:
+            mid = self._text_in_use()
+            spec = models.get(mid) or {}
+            mb = models.size_mb(spec) if spec else 0
+            if not models.ready(mid, self._mdir()):
+                out.append({"model": "meaning", "state": "missing", "id": mid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": f"Search by meaning finds files by what they are about (\u201crent\u201d finds "
+                                    f"\u201clease\u201d). It needs a {mb} MB model, downloaded once."})
+            elif not s.get("semantic"):
+                out.append({"model": "meaning", "state": "off", "id": mid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": "Search by meaning is off, so only names and words are matched. Turn it on to "
+                                    "find files by what they are about."})
+        return out
 
     # ---------- smart search (0.8.5): suggestions while typing, your own search history ----------
     def suggest(self, text, channel="main"):
@@ -282,10 +331,11 @@ class Api:
         """(total, still to do) for each phase that counts files (cached TOTALS_TTL seconds)."""
         key = (self._settings.get("content_max_mb"), self._settings.get("src_mail"))
         at, k, counts = self._totals
-        if not counts:
-            return self._refresh(now, key)                  # the very first call computes inline
         ttl = max(TOTALS_TTL, COUNT_SHARE * getattr(self, "_totals_took", 0.0))
-        if (k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
+        # Never inline, not even the first time (0.9.0): on a million-entry index the counts take seconds, and every
+        # status poll that waited for them held one of the pipe's few request threads, so the Index page and then
+        # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
+        if (not counts or k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")
             self._refresher.start()                         # the COUNT queries never hold up a status poll
         return counts
@@ -328,6 +378,7 @@ class Api:
               "watching": True,
               "rebuild": cur == "rebuild" or "rebuild" in counts}
         counter = {"text": "texts", "ocr": "texts", "meaning": "vectors", "photos": "photos", "rebuild": "rebuilt"}
+        counting = not counts                     # the first count is still running: nothing is known to be done
         out = []
         for pid, label in PHASES:
             total = remaining = None
@@ -342,6 +393,8 @@ class Api:
             elif pid == "names":
                 state = "waiting" if cur in ("starting", "error", None) else "done"
             elif pid == "watching":
+                state = "waiting"
+            elif counting and pid in counter:
                 state = "waiting"
             else:
                 state = "done" if not remaining else "waiting"
@@ -432,7 +485,8 @@ class Api:
     def set_settings(self, changes):
         if not isinstance(changes, dict):
             return {"changed": []}
-        changes = {k: v for k, v in changes.items() if k not in ("wsearch_prev", "turbo")}   # turbo: turbo_set (UAC)
+        changes = {k: v for k, v in changes.items()
+                   if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
@@ -454,6 +508,9 @@ class Api:
             self._indexer.wake.set()
         if "tray" in changed and getattr(self, "_on_tray", None) is not None:
             self._on_tray(bool(self._settings.get("tray")))
+        hotkeys = None
+        if set(changed) & {"hotkey", "bar_hotkey", "bar"} and getattr(self, "_on_hotkeys", None) is not None:
+            hotkeys = self._on_hotkeys()                 # the new combinations work now, no restart
         if "text_model" in changed:
             wake = getattr(self._indexer, "wake", None)
             if wake is not None:
@@ -471,7 +528,30 @@ class Api:
         if "semantic" in changed and self._settings.get("semantic"):
             threading.Thread(target=self._indexer._load_embedder, daemon=True).start()
             self._indexer.wake.set()
-        return {"changed": changed}
+        out = {"changed": changed}
+        if hotkeys is not None:
+            out["hotkeys"] = hotkeys
+        return out
+
+    def hotkey_state(self):
+        """{hotkey, bar_hotkey: {spec, state}}: state ok | taken | reserved | invalid | off."""
+        fn = getattr(self, "_hotkey_state", None)
+        if fn is not None:
+            return fn()
+        return {w: {"spec": self._settings.get(w), "state": "off"} for w in ("hotkey", "bar_hotkey")}
+
+    def hotkey_probe(self, which, spec):
+        """Would spec work for which (hotkey or bar_hotkey)? ok | taken | reserved | invalid | same, and why."""
+        from . import hotkey
+        fn = getattr(self, "_hotkey_probe", None)
+        state = fn(which, spec) if fn is not None else hotkey.probe(spec)
+        n = hotkey.normal(spec) or ""
+        reason = {"ok": "Free to use.",
+                  "taken": "Another app on this PC already uses it.",
+                  "reserved": (hotkey.reserved(n) or "Windows keeps it for itself") + ".",
+                  "invalid": "Use Ctrl, Alt, Shift or Win with a letter, a number, Space or F1 to F12.",
+                  "same": "The other NOBAD Find shortcut already uses it."}[state]
+        return {"state": state, "spec": n if state != "invalid" else "", "reason": reason}
 
     def _remove_secrets(self):
         """Every secret (scope category) out of the index: key files by extension, secret folders by name."""
@@ -642,7 +722,8 @@ class Api:
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
                         "builtin": bool(m["builtin"]), "state": self._model_state(m), "capable": ok,
                         "capable_reason": why, "recommended": choice.get(m["feature"]) == m["id"],
-                        "quality": dict(m["quality"]) if m.get("quality") else None})
+                        "quality": dict(m["quality"]) if m.get("quality") else None,
+                        "dir": "" if m["builtin"] else models.model_dir(m["id"], self._mdir())})
         return {"pc": pc, "tier_recommended": rec, "tier_current": models.tier_current(self._settings, focus),
                 "language_focus": focus, "models": out}
 
@@ -703,6 +784,53 @@ class Api:
         self._mdl_thread = threading.Thread(target=run, daemon=True, name="model-download")
         self._mdl_thread.start()
         return {"ok": True, "error": ""}
+
+    # ---------- updates (0.9.0, update.py) ----------
+    def update_state(self):
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"state": "idle", "current": APP_VER, "latest": "", "size": 0, "got": 0, "notes_url": "",
+                    "error": "", "auto": bool(self._settings.get("update_check")), "checked_at": 0}
+        return u.snapshot()
+
+    def update_check(self):
+        """Check now (the Settings button): in the background; the update event (or update_state) says how it went."""
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"ok": False, "error": "Updates aren't available in this copy of NOBAD Find."}
+        u.check_in_background()
+        return {"ok": True}
+
+    def update_install(self, consent):
+        """Download the newer version's installer, check it and run it: only with consent "INSTALL" (the button)."""
+        u = getattr(self, "_updater", None)
+        if u is None:
+            return {"ok": False, "error": "Updates aren't available in this copy of NOBAD Find."}
+        if consent != "INSTALL":
+            return {"ok": False, "error": "Nothing is installed without your OK."}
+        if u.release is None or u.state not in ("available", "ready", "error"):
+            return {"ok": False, "error": "Check for updates first."}
+
+        def go():
+            if u.state != "ready" and not u.download():
+                return
+            u.install()
+        threading.Thread(target=go, daemon=True, name="update-install").start()
+        return {"ok": True}
+
+    def model_folder(self, mid):
+        """Open the folder a model is (or will be) downloaded to in File Explorer: a catalog id only, never a path
+        from the UI. The models folder itself when that model's folder isn't there yet."""
+        m = models.get(mid) if isinstance(mid, str) else None
+        if m is None or m["builtin"]:
+            return {"ok": False, "error": "That model is part of Windows: it has no folder of its own."}
+        d = models.model_dir(mid, self._mdir())
+        target = d if os.path.isdir(d) else os.path.join(self._mdir(), "models")
+        if not os.path.isdir(target):
+            target = self._mdir()
+        if not os.path.isdir(target) or not open_folder(target):
+            return {"ok": False, "error": "Couldn't open the folder."}
+        return {"ok": True}
 
     def model_remove(self, mid):
         m = models.get(mid) if isinstance(mid, str) else None
@@ -849,6 +977,17 @@ def reveal_in_explorer(path):
         return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0
     finally:
         shell32.ILFree(pidl)
+
+
+def open_folder(path):
+    """File Explorer on a folder (ShellExecute "open", no command line is built)."""
+    if not winapi.WIN:
+        return False
+    shell32 = ctypes.WinDLL("shell32")
+    shell32.ShellExecuteW.restype = ctypes.c_void_p
+    shell32.ShellExecuteW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                      ctypes.c_wchar_p, ctypes.c_int]
+    return (shell32.ShellExecuteW(None, "open", path, None, None, 1) or 0) > 32
 
 
 def set_autostart(on):

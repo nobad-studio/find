@@ -288,7 +288,9 @@ def _indexer(tmp_path, monkeypatch, fake):
     class S(dict):
         def get(self, k, d=None):
             return super().get(k, DEFAULTS.get(k) if d is None else d)
-    ix = indexer.Indexer(s, S(scope="custom", roots=[str(root)]))
+    # never this PC's own pauses (on battery, a full-screen window or a locked screen, a call): the walk would wait
+    ix = indexer.Indexer(s, S(scope="custom", roots=[str(root)], pause_on_battery=False, pause_fullscreen=False,
+                              pause_on_call=False))
     ix.status["plan"] = {"walk_threads": 2}
     ix.turbo = fake
     return ix, s, root, drive

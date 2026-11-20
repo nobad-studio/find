@@ -206,7 +206,7 @@ def test_old_pause_fullscreen_setting_migrates(tmp_path):
 def test_games_mode_coerce():
     assert coerce("games_mode", "bogus") == "smart"
     assert coerce("games_mode", "always") == "always"
-    assert coerce("bar_hotkey", "nonsense") == "ctrl+alt+space"
+    assert coerce("bar_hotkey", "nonsense") == "ctrl+shift+space"
     assert coerce("keep_background", "x") is False
 
 

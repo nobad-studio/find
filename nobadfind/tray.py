@@ -17,6 +17,8 @@ WM_LBUTTONUP, WM_RBUTTONUP, WM_CONTEXTMENU = 0x0202, 0x0205, 0x007B
 CALLBACK = WM_APP + 1
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_SHOWTIP = 0x1, 0x2, 0x4, 0x80
+NIF_INFO = 0x10
+NIIF_INFO, NIIF_RESPECT_QUIET_TIME = 0x1, 0x80      # an information balloon; not during focus or full screen
 MF_STRING, MF_SEPARATOR = 0x0, 0x800
 TPM_RIGHTBUTTON, TPM_RETURNCMD, TPM_NONOTIFY = 0x2, 0x100, 0x80
 
@@ -115,6 +117,13 @@ class Tray:
         if self.hwnd:
             self._notify(NIM_MODIFY)
 
+    def balloon(self, title, text):
+        """A Windows notification from the icon (title up to 63, text up to 255 characters). Windows holds it back
+        during Focus, presentations and full-screen apps (NIIF_RESPECT_QUIET_TIME)."""
+        if not self.hwnd:
+            return False
+        return self._notify(NIM_MODIFY, info=(str(title)[:63], str(text)[:255]))
+
     def _u32(self):
         u = ctypes.WinDLL("user32", use_last_error=True)
         u.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -152,11 +161,15 @@ class Tray:
                 return h
         return u.LoadIconW(None, ctypes.c_void_p(32512))              # IDI_APPLICATION
 
-    def _notify(self, what):
+    def _notify(self, what, info=None):
         nid = _NID()
         nid.cbSize = ctypes.sizeof(_NID)
         nid.hWnd, nid.uID = self.hwnd, 1
         nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP
+        if info is not None:
+            nid.uFlags |= NIF_INFO
+            nid.szInfoTitle, nid.szInfo = info
+            nid.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME
         nid.uCallbackMessage, nid.hIcon = CALLBACK, self._icon
         try:
             nid.szTip = self.tip()[:127]

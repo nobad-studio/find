@@ -421,7 +421,7 @@
       }
     },
     "set_settings": {
-      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored.",
+      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
       "params": {
         "type": "object",
         "properties": {
@@ -457,6 +457,10 @@
           },
           "settings": {
             "$ref": "#/$defs/settings"
+          },
+          "hotkeys": {
+            "$ref": "#/$defs/hotkey_state",
+            "description": "Only when hotkey, bar_hotkey or bar changed."
           }
         },
         "required": [
@@ -807,6 +811,127 @@
       "description": "\"English first\", \"Many languages\" or \"Hindi\" (Settings -> Models): changes the recommendation; nothing is downloaded or switched by itself.",
       "params": {
         "$ref": "#/$defs/model_language_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
+    "hotkey_state": {
+      "description": "Whether each NOBAD Find hotkey is registered and working right now.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/hotkey_state"
+      }
+    },
+    "hotkey_probe": {
+      "description": "Would this combination work for that hotkey, before saving it? Registers it for a moment and lets it go. same: the other NOBAD Find hotkey uses it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "which": {
+            "$ref": "#/$defs/hotkey_which"
+          },
+          "spec": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "which",
+          "spec"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "which": "hotkey",
+            "spec": "ctrl+alt+shift+f9"
+          },
+          {
+            "which": "bar_hotkey",
+            "spec": "win+shift+1"
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "taken",
+              "reserved",
+              "invalid",
+              "same"
+            ]
+          },
+          "spec": {
+            "type": "string",
+            "description": "The combination as the engine writes it (win, ctrl, alt, shift order), or \"\" when invalid."
+          },
+          "reason": {
+            "type": "string",
+            "description": "One plain sentence for Settings."
+          }
+        },
+        "required": [
+          "state",
+          "spec",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "model_folder": {
+      "description": "Open the folder a model is downloaded to in File Explorer (the models folder if it isn't there yet). A catalog id, never a path.",
+      "params": {
+        "$ref": "#/$defs/model_id_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
+    "update_state": {
+      "description": "The update state (installed version, the newest release, a download in progress).",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/update_state"
+      }
+    },
+    "update_check": {
+      "description": "Look for a newer NOBAD Find now (GitHub, nobad-studio/find), in the background; the update event says how it went.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
+    "update_install": {
+      "description": "Download the newer version's installer, check its size and SHA-256, and run it (it closes NOBAD Find, installs over it and starts it again). Only with consent \"INSTALL\".",
+      "params": {
+        "type": "object",
+        "properties": {
+          "consent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "consent": "INSTALL"
+          },
+          {
+            "consent": "no"
+          }
+        ]
       },
       "result": {
         "$ref": "#/$defs/ok"
@@ -1164,6 +1289,13 @@
             }
           ],
           "description": "The best guess: one result the engine is sure of, always results[0] when there is one; null when unsure (a wrong guess is worse than none)."
+        },
+        "needs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/search_need"
+          },
+          "description": "Only when something isn't ready: what to download, switch on, or wait for."
         }
       },
       "required": [
@@ -2372,6 +2504,18 @@
         "search_history": {
           "type": "boolean",
           "description": "Keep your own typed questions (encrypted, at most 200) for autocomplete; off deletes them."
+        },
+        "settings_rev": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Which one-time settings changes have run (engine only; set_settings ignores it)."
+        },
+        "models_stay_loaded": {
+          "type": "boolean"
+        },
+        "update_check": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2413,7 +2557,10 @@
         "text_model",
         "photo_model",
         "language_focus",
-        "search_history"
+        "search_history",
+        "settings_rev",
+        "models_stay_loaded",
+        "update_check"
       ],
       "additionalProperties": false
     },
@@ -2553,6 +2700,12 @@
         },
         "search_history": {
           "type": "boolean"
+        },
+        "models_stay_loaded": {
+          "type": "boolean"
+        },
+        "update_check": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -2659,6 +2812,10 @@
             "hindi"
           ],
           "additionalProperties": false
+        },
+        "dir": {
+          "type": "string",
+          "description": "The folder its files are (or will be) downloaded to; \"\" for one built into Windows."
         }
       },
       "required": [
@@ -2811,6 +2968,168 @@
           "focus": "multilingual"
         }
       ]
+    },
+    "hotkey_which": {
+      "type": "string",
+      "enum": [
+        "hotkey",
+        "bar_hotkey"
+      ]
+    },
+    "hotkey_one": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "string",
+          "description": "The combination in the settings, e.g. win+shift+f."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "taken",
+            "reserved",
+            "invalid",
+            "off"
+          ],
+          "description": "ok: registered and working; taken: another app holds it; reserved: Windows keeps it; invalid: not a combination; off: not registered (the quick find bar is off, or before the engine started)."
+        }
+      },
+      "required": [
+        "spec",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "hotkey_state": {
+      "type": "object",
+      "properties": {
+        "hotkey": {
+          "$ref": "#/$defs/hotkey_one"
+        },
+        "bar_hotkey": {
+          "$ref": "#/$defs/hotkey_one"
+        }
+      },
+      "required": [
+        "hotkey",
+        "bar_hotkey"
+      ],
+      "additionalProperties": false
+    },
+    "search_need": {
+      "type": "object",
+      "description": "Something this search would need that isn't ready (0.9.0): a hint above the results.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "enum": [
+            "photo",
+            "meaning"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "off",
+            "analyzing"
+          ],
+          "description": "missing: not downloaded (offer model_download); off: downloaded but switched off (offer set_settings photo_meaning / semantic); analyzing: on, photos still being looked at (done of total)."
+        },
+        "id": {
+          "type": "string",
+          "description": "The model (models.CATALOG id)."
+        },
+        "size_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "state",
+        "id",
+        "size_mb",
+        "done",
+        "total",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "update_state": {
+      "type": "object",
+      "description": "In-app updates (update.py): what is installed, the newest release, and where an update is.",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "checking",
+            "uptodate",
+            "available",
+            "downloading",
+            "ready",
+            "installing",
+            "error"
+          ]
+        },
+        "current": {
+          "type": "string"
+        },
+        "latest": {
+          "type": "string",
+          "description": "\"\" until a check found one."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The installer's size in bytes."
+        },
+        "got": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes downloaded so far."
+        },
+        "notes_url": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "auto": {
+          "type": "boolean",
+          "description": "update_check: look once a day."
+        },
+        "checked_at": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Unix seconds of the last check, 0 never."
+        }
+      },
+      "required": [
+        "state",
+        "current",
+        "latest",
+        "size",
+        "got",
+        "notes_url",
+        "error",
+        "auto",
+        "checked_at"
+      ],
+      "additionalProperties": false
     }
   }
 }

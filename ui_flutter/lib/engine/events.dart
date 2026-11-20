@@ -3,6 +3,7 @@
 /// changes from these.
 library;
 
+import 'models/update.dart';
 import 'models/json.dart';
 import 'models/models_info.dart';
 import 'models/scope_info.dart';
@@ -13,7 +14,7 @@ sealed class EngineEvent {
 
   /// What the main window subscribes to (status_full only while the Indexing page is open).
   static const mainWindow = [
-    'status', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', 'models', 'turbo', //
+    'status', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', 'models', 'turbo', 'update', //
   ];
 
   /// What the quick find bar subscribes to.
@@ -56,6 +57,8 @@ sealed class EngineEvent {
         return ModelsEvent(ModelsInfo.fromJson(params));
       case 'turbo':
         return TurboEvent(TurboState.fromJson(params));
+      case 'update':
+        return UpdateEvent(UpdateState.fromJson(params));
       case 'here':
         return HereEvent(jStr(m['path']));
       case 'quitting':
@@ -140,6 +143,12 @@ class ModelsEvent extends EngineEvent {
 class TurboEvent extends EngineEvent {
   const TurboEvent(this.state);
   final TurboState state;
+}
+
+/// An update was found, is downloading, ready, installing or failed (0.9.0).
+class UpdateEvent extends EngineEvent {
+  const UpdateEvent(this.state);
+  final UpdateState state;
 }
 
 /// A sentence for a toast.

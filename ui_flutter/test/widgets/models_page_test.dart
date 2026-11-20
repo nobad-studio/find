@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/engine/models/models_info.dart';
+import 'package:nobad_find/widgets/controls.dart';
 
 import '../support/fake_engine.dart';
 
@@ -25,7 +26,7 @@ void main() {
     expect(find.text('MANY LANGUAGES'), findsOneWidget);
     expect(find.text('HINDI + ENGLISH'), findsOneWidget);
     expect(find.text('Needs 16 GB of memory and 8 cores (or a graphics card with 4 GB for DirectML)'), findsWidgets);
-    expect(find.textContaining('Measured: 80% in the top 5'), findsOneWidget);
+    expect(find.text('80% right in the top 5'), findsOneWidget); // the measured quality, as a chip
   });
 
   testWidgets('the language focus changes the recommendation only', (tester) async {
@@ -71,5 +72,38 @@ void main() {
     expect(find.textContaining('needs a newer engine'), findsOneWidget);
     expect(find.text('Allow the one-time model download'), findsOneWidget);
     expect(find.text('multilingual-e5-small'), findsNothing);
+  });
+
+  testWidgets('0.9.0: Details show where a model is downloaded, and Open folder asks the engine to open it', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    const folder = r'C:\Users\me\AppData\Local\NOBAD\Find\photo-model';
+    expect(find.text(folder), findsNothing); // folded away until Details
+    final card = find.ancestor(
+      of: find.text('SigLIP base'),
+      matching: find.byWidgetPredicate((w) => '${w.runtimeType}' == '_ModelRow'),
+    );
+    final details = find.descendant(of: card, matching: find.text('Details'));
+    await tester.ensureVisible(details);
+    await tester.tap(details);
+    await tester.pumpAndSettle();
+    expect(find.text(folder), findsOneWidget);
+    expect(find.textContaining('SHA-256 are checked before use'), findsWidgets);
+    await tester.tap(find.text('Open folder'));
+    await tester.pumpAndSettle();
+    expect(engine.calls, contains('model_folder'));
+  });
+
+  testWidgets('0.9.0: Keep models loaded is a switch, off by default', (tester) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    final sw = find.byWidgetPredicate((w) => w is NbSwitch && w.label == 'Keep models loaded');
+    expect((tester.widget(sw) as NbSwitch).value, isFalse);
+    await tester.ensureVisible(sw);
+    await tester.tap(sw);
+    await tester.pumpAndSettle();
+    expect(engine.settingsSet.last, {'models_stay_loaded': true});
   });
 }

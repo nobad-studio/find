@@ -80,6 +80,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
     what was typed, the only match, the picture that clearly fits best, a clear winner on name and content). When
     there is one it is always `results[0]`, so Enter opens it. `null` when unsure.
   `channel` (optional, default `"main"`): which search of the UI this is (`"home"` for the Home list, `"bar"`). A newer search on the same connection and channel cancels the one still running, which then answers with `cancelled: true` (and no results): ignore that answer. Other channels are left alone.
+- **`search` → `needs`** (0.9.0, only when something isn't ready): `[{model: photo|meaning, state: missing|off|analyzing, id, size_mb, done, total, text}]`. A described photo search ("black shirt image") whose photo model isn't downloaded (`missing`: offer `model_download`), is switched off (`off`: offer `set_settings` `photo_meaning`), or is still looking at photos (`analyzing`: `done` of `total`); a description that found little while meaning search is missing or off. `text` is the sentence to show.
 - **`suggest`** `{text: string (≤ 2000), channel?: "main"|"bar"|...}` → `{items: [Suggestion], complete: string}`:
   autocomplete for every keystroke (well under a millisecond on the eval corpus, `docs/measurements.md`). Up to 8
   items (5 for `channel: "bar"`), in order: the user's own past questions (only while `search_history` is on), the
@@ -138,9 +139,11 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 
 - **`get_settings`** `{}` → `Settings`: every setting (names and types: `$defs/settings` in the schema; they are
   `const.DEFAULTS`).
+- **`hotkey_state`** `{}` → `{hotkey: {spec, state}, bar_hotkey: {spec, state}}`: whether each hotkey is registered and working now. `state` is `ok`, `taken` (another app holds it), `reserved` (Windows keeps it), `invalid` or `off` (the quick find bar is off).
+- **`hotkey_probe`** `{which: "hotkey"|"bar_hotkey", spec}` → `{state, spec, reason}`: would that combination work, before it's saved? The engine registers it for a moment and lets it go. `same` means the other NOBAD Find hotkey uses it; `reason` is one sentence for Settings. A combination NOBAD Find already holds for `which` is `ok`.
 - **`set_settings`** `{changes: {name: value}}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
-  ignored. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect after the
+  ignored. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.
@@ -175,6 +178,10 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`model_download`** `{id, consent}` → `Ok`: download a model, only with `consent: "DOWNLOAD"` (the consent dialog's
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
+- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, ready, installing or error.
+- **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
+- **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
+- **`model_folder`** `{id}` → `{ok, error}`: opens the folder that model is downloaded to in File Explorer (the models folder when it isn't there yet). Only a catalog id, never a path; each model in `models` also sends its `dir` ("" when built into Windows).
 - **`model_remove`** `{id}` → `Ok`: delete a downloaded model's files; not for built-in models or the one in use.
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
   and language focus. Everything that needs no download is applied at once; for each step with `needs_download`, the
@@ -248,6 +255,7 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`download`** → `{id: meaning|photo|<model id>, state: missing|downloading|ready, got_mb, size_mb, mb_s, error}`: a model
   download moved on: progress up to twice a second while `downloading`, then `ready`, or `missing` with `error` saying
   why it failed.
+- **`update`** → `UpdateState`: an update was found, is downloading, ready, installing or failed.
 - **`notice`** → `{text}`: a sentence to show as a toast (for example a hotkey another app took). A notice nobody was
   subscribed to waits (the last 5) and goes to the first connection that subscribes to `notice`.
 - **`models`** → the `models` result: something in it changed (a download changed state, a model was chosen,

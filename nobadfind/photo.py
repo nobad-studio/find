@@ -157,6 +157,8 @@ _CANON = re.compile(r"[^\w\s]", re.UNICODE)
 
 
 PAD2 = 0                                  # SigLIP 2 (Gemma tokenizer): <pad>; <eos> is 1 there too
+# How a question is asked of the photo model: the bare words and caption-like phrasings, averaged (encode_question).
+QUESTION_TEMPLATES = ("{}", "a photo of {}", "a picture of {}", "a close-up photo of {}")
 
 
 def question_ids(tok, text, style="siglip"):
@@ -189,9 +191,23 @@ class TextEncoder:
         opts.log_severity_level = 3
         self.sess = ort.InferenceSession(os.path.join(model_dir, "text.onnx"), opts, providers=["CPUExecutionProvider"])
         self._lock = threading.Lock()
+        self._asked = {}
 
     def encode(self, text):
         ids = question_ids(self.tok, text, self.style)
         with self._lock:
             out = self.sess.run(["pooler_output"], {"input_ids": np.array([ids], np.int64)})[0]
         return _unit(out[0]).astype(np.float32)
+
+    def encode_question(self, text):
+        """A search question as captions (QUESTION_TEMPLATES), their vectors averaged: closer to how the model
+        learned what pictures show than the bare words. Cached per question, so typing doesn't redo it."""
+        key = " ".join(text.lower().split())
+        hit = self._asked.get(key)
+        if hit is not None:
+            return hit
+        v = _unit(np.mean([self.encode(t.format(key)) for t in QUESTION_TEMPLATES], axis=0)).astype(np.float32)
+        if len(self._asked) >= 64:
+            self._asked.pop(next(iter(self._asked)))
+        self._asked[key] = v
+        return v

@@ -40,6 +40,14 @@ class Gov:
         self.calls.append(("resume",))
 
 
+def counted(a):
+    """The phase counts run in the background (0.9.0): start them and wait, as the Index page's next poll would."""
+    a._counts(a._clock())
+    if a._refresher is not None:
+        a._refresher.join(10)
+    return a
+
+
 def make(tmp_path, phase="text", **changes):
     s = Store(str(tmp_path / "i.db"), encrypt=False)
     s.upsert_files([("C:/p/a.docx", "a.docx", "C:/p", ".docx", "document", 10, 1.0, 1.0, 1),
@@ -87,13 +95,13 @@ def test_status_without_governor(tmp_path):
 
 def test_phase_states(tmp_path):
     a, s = make(tmp_path, "text")
-    ph = {p["id"]: p for p in a.status()["phases"]}
+    ph = {p["id"]: p for p in counted(a).status()["phases"]}
     assert ph["text"]["state"] == "running" and ph["text"]["total"] == 2 and ph["text"]["done"] == 0
     assert ph["names"]["state"] == "done"
     assert ph["meaning"]["state"] == "off"                     # meaning search is not on
     s.close()
     a, s = make(tmp_path, "text", content=False)
-    ph = {p["id"]: p for p in a.status()["phases"]}
+    ph = {p["id"]: p for p in counted(a).status()["phases"]}
     assert ph["text"]["state"] == "off" and ph["ocr"]["state"] == "off"
     s.close()
 
@@ -102,7 +110,7 @@ def test_phase_done_and_eta(tmp_path):
     a, s = make(tmp_path, "watching")
     s.set_text(1, 1.0, ["x"])
     s.set_text(2, 1.0, ["y"])
-    ph = {p["id"]: p for p in a.status()["phases"]}
+    ph = {p["id"]: p for p in counted(a).status()["phases"]}
     assert ph["text"]["state"] == "done" and ph["text"]["done"] == 2
     assert ph["watching"]["state"] == "running"
     s.close()
@@ -215,6 +223,7 @@ def test_model_cards_describe_the_worker(tmp_path, monkeypatch):
 def test_eta_rate_window_and_reset(tmp_path):
     a, s = make(tmp_path, "text")
     t = _clock(a)
+    counted(a)
     a._indexer.status["texts"] = 0
     a.status()
     t[0] = 10.0
@@ -248,10 +257,12 @@ def test_counts_are_cached_and_refreshed_in_background(tmp_path):
     calls = []
     real = s.count_needs_text
     s.count_needs_text = lambda *x, **k: (calls.append(1), real(*x, **k))[1]
-    first = a._counts(0.0)
+    assert a._counts(0.0) == {}                                  # the first call never counts inline (0.9.0)
+    a._refresher.join(5)
     n = len(calls)
     assert n > 0
-    assert a._counts(5.0) is first and len(calls) == n          # inside 10 s: no queries
+    first = a._counts(1.0)                                       # the background count's result
+    assert first and a._counts(5.0) is first and len(calls) == n  # inside 10 s: no queries
     assert a._counts(11.0) is first                              # stale: old values now, refresh in the background
     a._refresher.join(5)
     assert len(calls) > n and a._counts(12.0) is not first
@@ -364,4 +375,26 @@ def test_hard_exit_is_armed_once(tmp_path):
     a._arm_hard_exit()
     a._arm_hard_exit()
     assert len(_Timer.made) == 1 and _Timer.made[0].daemon and _Timer.made[0].started
+    s.close()
+
+
+def test_the_first_status_never_waits_for_the_counts(tmp_path):
+    """0.9.0: on a big index the counts take seconds; the first status answers at once (phases "waiting", no
+    total) and the counts come in the background, so the Index and Settings pages never stay blank."""
+    import threading
+    a, s = make(tmp_path, "watching")
+    gate = threading.Event()
+    real = a._refresh
+
+    def slow(now, key):
+        gate.wait(5)
+        return real(now, key)
+    a._refresh = slow
+    ph = {p["id"]: p for p in a.status()["phases"]}              # answers while the count is held back
+    assert ph["text"]["state"] == "waiting" and ph["text"]["total"] is None
+    assert a.status() and a._refresher.is_alive()                # a second poll starts no second count
+    gate.set()
+    a._refresher.join(5)
+    ph = {p["id"]: p for p in a.status()["phases"]}
+    assert ph["text"]["total"] == 2
     s.close()

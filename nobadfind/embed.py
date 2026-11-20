@@ -227,6 +227,12 @@ class Lazy:
     def encode(self, *args, **kwargs):
         return self._get().encode(*args, **kwargs)
 
+    def encode_question(self, text):
+        """The model's own question encoder (photo.TextEncoder.encode_question), else plain encode."""
+        m = self._get()
+        fn = getattr(m, "encode_question", None)
+        return fn(text) if fn is not None else m.encode(text)
+
     @property
     def loaded(self):
         return self._model is not None
@@ -368,6 +374,23 @@ class VectorIndex:
             top = top[np.argsort(-scores[top])]
             at = rows[top] if rows is not None else top
             return [(int(self._ids[i]), float(s)) for i, s in zip(at, scores[top])]
+
+    def search_among(self, qvec, ids, k=200):
+        """The exact top k among only these ids: a filtered search ("in downloads", "last week") ranks the photos
+        that fit, not the PC's best few hundred filtered afterwards (which could leave none that fit)."""
+        q = np.asarray(qvec, np.float32)
+        want = np.fromiter(ids, np.int64)
+        with self._lock:
+            if not self.n or not len(want):
+                return []
+            rows = np.nonzero(np.isin(self._ids[:self.n], want))[0]
+            if not len(rows):
+                return []
+            scores = self._mat[rows].astype(np.float32) @ q
+            k = min(k, len(rows))
+            top = np.argpartition(-scores, k - 1)[:k]
+            top = top[np.argsort(-scores[top])]
+            return [(int(self._ids[rows[i]]), float(scores[i])) for i in top]
 
 
 def name_key(file_id):

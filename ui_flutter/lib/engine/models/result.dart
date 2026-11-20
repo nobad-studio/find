@@ -169,7 +169,12 @@ class SearchAnswer {
     this.cancelled = false,
     this.parts = const [],
     this.best,
+    this.needs = const [],
   });
+
+  /// 0.9.0: what this search would need that isn't ready (a model to download or switch on, photos still
+  /// being looked at). Empty from older engines and when everything is ready.
+  final List<SearchNeed> needs;
 
   /// How the question was understood, as removable chips (0.8.5; an older engine: empty, see [understood]).
   final List<QueryPart> parts;
@@ -191,6 +196,7 @@ class SearchAnswer {
     cancelled: cancelled,
     parts: parts,
     best: best,
+    needs: needs,
   );
 
   /// A newer search on the same channel replaced this one: ignore the answer (no message, no empty state).
@@ -222,6 +228,43 @@ class SearchAnswer {
       cancelled: json['cancelled'] == true,
       parts: json['parts'] is List ? [for (final p in json['parts'] as List) ?QueryPart.fromJson(p)] : const [],
       best: BestGuess.fromJson(json['best']),
+      needs: json['needs'] is List ? [for (final n in json['needs'] as List) ?SearchNeed.fromJson(n)] : const [],
+    );
+  }
+}
+
+/// One `needs` entry: [model] photo | meaning, [state] missing | off | analyzing ([done] of [total]),
+/// [id] the model, [text] the sentence to show.
+class SearchNeed {
+  const SearchNeed({
+    required this.model,
+    required this.state,
+    this.id = '',
+    this.sizeMb = 0,
+    this.done = 0,
+    this.total = 0,
+    required this.text,
+  });
+  final String model;
+  final String state;
+  final String id;
+  final int sizeMb;
+  final int done;
+  final int total;
+  final String text;
+
+  static SearchNeed? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final model = _str(v['model']), state = _str(v['state']), text = _str(v['text']);
+    if (model.isEmpty || state.isEmpty || text.isEmpty) return null;
+    return SearchNeed(
+      model: model,
+      state: state,
+      id: _str(v['id']),
+      sizeMb: _int(v['size_mb']) ?? 0,
+      done: _int(v['done']) ?? 0,
+      total: _int(v['total']) ?? 0,
+      text: text,
     );
   }
 }

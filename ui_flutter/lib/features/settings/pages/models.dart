@@ -18,6 +18,7 @@ import '../../../state/models_controller.dart';
 import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
 import '../../../widgets/glass.dart';
+import '../../../widgets/icons.dart';
 import '../../../widgets/panels.dart';
 import '../../consent/download_consent_dialog.dart';
 import '../settings_parts.dart';
@@ -56,7 +57,12 @@ class _ModelsPageState extends State<ModelsPage> {
     builder: (context, _) {
       final m = _m!;
       return switch (m.load) {
-        ModelsLoad.loading => const SizedBox(height: 200),
+        ModelsLoad.loading => SizedBox(
+          height: 120,
+          child: Center(
+            child: Text('Loading the models…', style: NbType.text(13, NbColors.of(context).muted)),
+          ),
+        ),
         ModelsLoad.ready => _Catalogue(m),
         ModelsLoad.needsNewer => _Legacy(note: 'Choosing between models needs a newer engine. ${m.why}'.trim()),
         ModelsLoad.offline => const _Legacy(),
@@ -82,6 +88,17 @@ class _Catalogue extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _PcAndTier(m),
+        const SettingsGroup(
+          'Memory',
+          rows: [
+            SwitchSetting(
+              'models_stay_loaded',
+              'Keep models loaded',
+              'Searches by meaning and in photos answer at once, but the models use memory all the time. '
+                  'Off (recommended): they leave memory a few minutes after the last use and load again when needed.',
+            ),
+          ],
+        ),
         if (focus != null)
           SettingsGroup(
             'Languages',
@@ -236,81 +253,252 @@ class _FeatureGroup extends StatelessWidget {
   }
 }
 
-class _ModelRow extends StatelessWidget {
+/// One model as a card: an avatar for what it does, its name and tags, one line on what it improves, the facts as
+/// chips (download, memory, licence, languages, measured quality), and Details: speed, the measurement, where it
+/// comes from and the folder it's downloaded to (with Open folder), so nothing about it is hidden.
+class _ModelRow extends StatefulWidget {
   const _ModelRow(this.x, this.m);
+  final ModelInfo x;
+  final ModelsController m;
+
+  @override
+  State<_ModelRow> createState() => _ModelRowState();
+}
+
+class _ModelRowState extends State<_ModelRow> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final x = widget.x;
+    final m = widget.m;
+    final p = m.progress(x.id);
+    final downloading = x.state == ModelUseState.downloading || p != null;
+    final q = x.quality;
+    final active = x.state == ModelUseState.active;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: active ? c.orange.withValues(alpha: .06) : c.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: active ? c.orange.withValues(alpha: .45) : c.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Avatar(x),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(x.name, style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3)),
+                          if (x.tier.isNotEmpty) _Tag(tierLabel(x.tier)),
+                          if (x.recommended) const _Tag('Recommended', strong: true),
+                        ],
+                      ),
+                      if (x.improves.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(x.improves, style: NbType.text(12.5, c.muted, height: 1.4)),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _Actions(x: x, m: m, busy: m.busy(x.id) || downloading),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (x.builtin)
+                  const _Fact(NbGlyph.check, 'Built into Windows')
+                else if (x.sizeMb > 0)
+                  _Fact(NbGlyph.download, '${x.sizeMb.round()} MB download'),
+                if (x.ramMb > 0) _Fact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
+                if (x.licence.isNotEmpty) _Fact(NbGlyph.shield, x.licence),
+                if (x.languages.isNotEmpty) _Fact(NbGlyph.info, x.languageText),
+                if (q != null) _Fact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
+              ],
+            ),
+            if (!x.capable && x.capableReason.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(x.capableReason, style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4)),
+              ),
+            if (x.state == ModelUseState.failed && p == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('The last download failed.', style: NbType.text(12, c.danger, height: 1.4)),
+              ),
+            if (downloading) ...[
+              const SizedBox(height: 8),
+              NbMeter(fraction: p?.fraction ?? 0, busy: p == null || p.sizeMb == 0),
+              const SizedBox(height: 2),
+              Text(
+                p == null || p.sizeMb == 0
+                    ? 'Downloading…'
+                    : 'Downloading… ${p.gotMb.round()} of ${p.sizeMb.round()} MB'
+                          '${p.mbS > 0 ? ' · ${p.mbS.toStringAsFixed(1)} MB/s' : ''}',
+                style: NbType.data(11, c.dim),
+              ),
+            ],
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: NbButton(
+                _open ? 'Hide details' : 'Details',
+                small: true,
+                kind: NbButtonKind.quiet,
+                onPressed: () => setState(() => _open = !_open),
+              ),
+            ),
+            if (_open) _Details(x: x, m: m),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A coloured tile for what the model does: Aa (meaning), a picture (photos), a page (words in pictures).
+class _Avatar extends StatelessWidget {
+  const _Avatar(this.x);
+  final ModelInfo x;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final (Color a, Color b) = switch (x.feature) {
+      'photo' => (const Color(0xFF4F5DFF), const Color(0xFFD0347A)),
+      'ocr' => (const Color(0xFF2B8A6E), const Color(0xFF4F5DFF)),
+      _ => (c.orange, const Color(0xFFD0347A)),
+    };
+    return Container(
+      width: 44,
+      height: 44,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]),
+      ),
+      child: x.feature == 'text'
+          ? Text('Aa', style: NbType.text(16, const Color(0xFFFFFFFF), weight: FontWeight.w700, height: 1))
+          : NbIcon(x.feature == 'photo' ? NbGlyph.image : NbGlyph.doc, size: 20, color: const Color(0xFFFFFFFF)),
+    );
+  }
+}
+
+class _Fact extends StatelessWidget {
+  const _Fact(this.glyph, this.text);
+  final NbGlyph glyph;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.cardHover,
+        borderRadius: NbRadius.pillAll,
+        border: Border.all(color: c.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          NbIcon(glyph, size: 12, color: c.dim),
+          const SizedBox(width: 5),
+          Text(text, style: NbType.text(11.5, c.muted, height: 1.3)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Everything else about the model, plainly: how fast, how it measured, where it comes from, where it lives.
+class _Details extends StatelessWidget {
+  const _Details({required this.x, required this.m});
   final ModelInfo x;
   final ModelsController m;
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    final p = m.progress(x.id);
-    final downloading = x.state == ModelUseState.downloading || p != null;
-    final facts = [
-      if (x.builtin) 'Built into Windows' else if (x.sizeMb > 0) '${x.sizeMb.round()} MB',
-      if (x.ramMb > 0) '${x.ramMb.round()} MB RAM',
-      if (x.licence.isNotEmpty) x.licence,
-      if (x.languages.isNotEmpty) x.languageText,
-    ].join('  ·  ');
     final q = x.quality;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+    Widget line(String label, Widget value) => Padding(
+      padding: const EdgeInsets.only(top: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(x.name, style: NbType.text(13.5, c.text, weight: FontWeight.w600, height: 1.3)),
-                    if (x.tier.isNotEmpty) _Tag(tierLabel(x.tier)),
-                    if (x.recommended) const _Tag('Recommended', strong: true),
-                  ],
-                ),
-                if (x.improves.isNotEmpty) Text(x.improves, style: NbType.text(12, c.muted, height: 1.45)),
-                Text(facts, style: NbType.data(11, c.dim, height: 1.55)),
-                if (x.speedNote.isNotEmpty) Text(x.speedNote, style: NbType.text(12, c.dim, height: 1.4)),
-                if (q != null)
-                  Text(
-                    'Measured: ${(q.recall5 * 100).round()}% in the top 5 · ranking ${q.ndcg10.toStringAsFixed(2)} '
-                    '(nDCG@10)',
-                    style: NbType.data(11, c.muted, height: 1.55),
-                  ),
-                if (x.source.isNotEmpty)
-                  TailText(
-                    x.source.replaceFirst(RegExp(r'^https?://'), ''),
-                    style: NbType.data(12, c.dim),
-                    textAlign: TextAlign.left,
-                  ),
-                if (!x.capable && x.capableReason.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(x.capableReason, style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4)),
-                  ),
-                if (x.state == ModelUseState.failed && p == null)
-                  Text('The last download failed.', style: NbType.text(12, c.danger, height: 1.4)),
-                if (downloading) ...[
-                  const SizedBox(height: 6),
-                  NbMeter(fraction: p?.fraction ?? 0, busy: p == null || p.sizeMb == 0),
-                  const SizedBox(height: 2),
-                  Text(
-                    p == null || p.sizeMb == 0
-                        ? 'Downloading…'
-                        : 'Downloading… ${p.gotMb.round()} of ${p.sizeMb.round()} MB'
-                              '${p.mbS > 0 ? ' · ${p.mbS.toStringAsFixed(1)} MB/s' : ''}',
-                    style: NbType.data(11, c.dim),
+          SizedBox(width: 118, child: Text(label, style: NbType.text(12, c.dim, height: 1.45))),
+          Expanded(child: value),
+        ],
+      ),
+    );
+    Text val(String s) => Text(s, style: NbType.text(12, c.text, height: 1.45));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (x.speedNote.isNotEmpty) line('Speed', val(x.speedNote)),
+          if (q != null)
+            line(
+              'Measured',
+              val(
+                '${(q.recall5 * 100).round()}% of test questions found in the top 5; ranking ${q.ndcg10.toStringAsFixed(2)} '
+                '(nDCG@10, 1.00 is perfect)',
+              ),
+            ),
+          if (x.source.isNotEmpty)
+            line(
+              'Comes from',
+              TailText(
+                x.source.replaceFirst(RegExp(r'^https?://'), ''),
+                style: NbType.data(12, c.text),
+                textAlign: TextAlign.left,
+              ),
+            ),
+          if (x.builtin)
+            line('Where it is', val('Part of Windows: nothing is downloaded.'))
+          else if (x.dir.isNotEmpty)
+            line(
+              'Download folder',
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(x.dir, style: NbType.data(12, c.text)),
+                  NbButton(
+                    'Open folder',
+                    small: true,
+                    kind: NbButtonKind.ghost,
+                    onPressed: () => unawaited(m.openFolder(x)),
                   ),
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          _Actions(x: x, m: m, busy: m.busy(x.id) || downloading),
+          if (!x.builtin)
+            line(
+              'Checked',
+              val('Downloaded over HTTPS from that exact revision; its size and SHA-256 are checked before use.'),
+            ),
         ],
       ),
     );

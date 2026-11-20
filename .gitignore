@@ -1,7 +1,17 @@
 # NOBAD Find build outputs (packaging/build.ps1)
 .venv-build/
+.venv/
 build/
 dist/
 dist-installer/
 packaging/version_info.txt
 .pytest_cache/
+
+# Python and the OS (were in the monorepo's root .gitignore until the move, 2026-11-20)
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
