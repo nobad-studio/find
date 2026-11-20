@@ -65,8 +65,11 @@ def test_the_app_list_is_saved_and_read_back(tmp_path, monkeypatch):
     L.refresh()
     saved = json.loads((tmp_path / "apps.json").read_text(encoding="utf-8"))
     assert [a["name"] for a in saved["apps"]] == ["Brave", "Calculator"]
+    monkeypatch.setattr(launcher.wsettings, "load", lambda *a, **k: [])
     again = launcher.Launcher(str(tmp_path), run=lambda a: None)
     assert [a["name"] for a in again.apps] == ["Brave", "Calculator"] and again.apps[0]["version"] == "1.2"
+    assert again.refresh_in_background() is True                             # the settings catalog, once
+    again._busy.join(5)
     assert again.refresh_in_background() is False                            # fresh: not again for hours
 
 

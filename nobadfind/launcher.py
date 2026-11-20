@@ -6,11 +6,14 @@ wifi", "chrome", "open spotify".
 - Apps: Windows' own Start list (Get-StartApps: programs and Store apps alike), read in the background once and
   then every few hours, kept in <data>/apps.json; the registry's installed-programs list adds the version,
   publisher and install folder. Nothing stays running.
+- Every other Windows setting: Windows' own Settings search catalog (wsettings.py, about 1,750 settings in the
+  user's language), read in the background, matched through a word index.
 - Matching: the question without "open", "launch", "settings", ...; whole words, word starts and typos
   (difflib), the name counting most. Cheap: a few hundred short strings.
 - Running: only by an action id from this table or the app list, never a path or a command from the window. An
   app starts through the shell (explorer.exe shell:AppsFolder\\<AppID>), outside NOBAD Find's job, as the user.
 """
+import bisect
 import difflib
 import json
 import os
@@ -19,6 +22,7 @@ import subprocess
 import threading
 import time
 
+from . import wsettings
 from .log import log
 
 REFRESH_S = 6 * 3600
@@ -114,7 +118,7 @@ SETTINGS = [
     ("network-connections", "Network connections", "tool:ncpa.cpl", "network connections adapters adapter"),
     ("sound-panel", "Sound control panel", "tool:mmsys.cpl", "sound control panel playback recording devices"),
     ("programs-features", "Programs and Features", "tool:appwiz.cpl", "programs and features uninstall a program"),
-    ("system-properties", "System properties", "tool:sysdm.cpl", "system properties environment variables"),
+    ("system-properties", "System properties", "tool:sysdm.cpl", "system properties advanced system settings"),
     ("power-options", "Power options", "tool:powercfg.cpl", "power options power plan"),
     ("firewall", "Windows Defender Firewall", "tool:firewall.cpl", "firewall"),
     ("command-prompt", "Command Prompt", "tool:cmd.exe", "command prompt cmd terminal"),
@@ -122,6 +126,7 @@ SETTINGS = [
     ("file-explorer", "File Explorer", "tool:explorer.exe", "file explorer explorer files folders"),
     ("snipping-tool", "Snipping Tool", "ms-screenclip:", "snipping tool screenshot snip screen capture"),
 ]
+SETTINGS_BY_ID = {"set:" + x[0]: x for x in SETTINGS}
 _TOOLS = {"taskmgr.exe", "devmgmt.msc", "diskmgmt.msc", "control.exe", "services.msc", "eventvwr.msc",
           "msinfo32.exe", "resmon.exe", "ncpa.cpl", "mmsys.cpl", "appwiz.cpl", "sysdm.cpl", "powercfg.cpl",
           "firewall.cpl", "cmd.exe", "powershell.exe", "explorer.exe"}
@@ -167,8 +172,77 @@ def _score(qwords, title, extra):
     return s
 
 
+class Catalog:
+    """Windows' settings catalog with a word index: a question looks only at the settings sharing a word."""
+
+    def __init__(self, items):
+        self.items = list(items)
+        self.title_words = [set(words(i["title"])) for i in self.items]
+        self.all_words = []
+        index = {}
+        for n, i in enumerate(self.items):
+            ws = self.title_words[n] | set(words(i.get("words", "")))
+            self.all_words.append(ws)
+            for w in ws:
+                index.setdefault(w, []).append(n)
+        self.index = index
+        self.vocab = sorted(index)
+
+    def _matches(self, q):
+        """{word in the catalog: how well it fits q} for one question word."""
+        out = {}
+        if q in self.index:
+            out[q] = 1.0
+        if len(q) >= 3:
+            i = bisect.bisect_left(self.vocab, q)
+            while i < len(self.vocab) and self.vocab[i].startswith(q):
+                out.setdefault(self.vocab[i], 0.85)
+                i += 1
+        if not out and len(q) >= 4:
+            for w in difflib.get_close_matches(q, self.vocab, n=3, cutoff=0.8):
+                out[w] = difflib.SequenceMatcher(None, q, w).ratio() * 0.9
+        return out
+
+    def search(self, qwords, limit=6):
+        """[(score, item)] best first."""
+        if not qwords or not self.items:
+            return []
+        per = [self._matches(q) for q in qwords]
+        cand = set()
+        for m in per:
+            for w in m:
+                cand.update(self.index[w])
+        joined = " ".join(qwords)
+        scored = []
+        for n in cand:
+            tw, aw = self.title_words[n], self.all_words[n]
+            total, named = 0.0, False
+            for m in per:
+                best = 0.0
+                for w, s in m.items():
+                    if w in tw:
+                        best = max(best, s)
+                        named = True
+                    elif w in aw:
+                        best = max(best, s * 0.9)        # a keyword counts a little less than the name
+                total += best
+            s = total / len(qwords)
+            title = self.items[n]["title"].lower()
+            if joined == " ".join(words(title)):
+                s += 0.2                                # the exact name
+            s += 0.1 * len(tw & set(qwords)) / max(len(tw), 1)     # shorter, closer names first
+            scored.append((s * 0.95, named, self.items[n]))     # the hand table's page wins a tie
+        if any(x[1] for x in scored):
+            scored = [x for x in scored if x[1]]       # a word only in the keywords: only when no name has it
+        scored.sort(key=lambda x: -x[0])
+        return [(s, item) for s, _named, item in scored[:limit]]
+
+
 class Launcher:
     def __init__(self, data_dir, run=None, clock=time.time):
+        self.data_dir = data_dir
+        self.catalog = Catalog([])
+        self._catalog_read = False
         self.path = os.path.join(data_dir, "apps.json")
         self.apps = []                                  # [{id, name, app_id, version, publisher, folder}]
         self._at = 0.0
@@ -190,11 +264,31 @@ class Launcher:
             pass
 
     def refresh_in_background(self):
-        if self._clock() - self._at < REFRESH_S or (self._busy is not None and self._busy.is_alive()):
+        if self._busy is not None and self._busy.is_alive():
             return False
-        self._busy = threading.Thread(target=self.refresh, daemon=True, name="apps")
+        apps = self._clock() - self._at >= REFRESH_S
+        if not apps and self._catalog_read:
+            return False
+
+        def work():
+            if not self._catalog_read:
+                self.read_catalog()
+            if apps:
+                self.refresh()
+        self._busy = threading.Thread(target=work, daemon=True, name="apps")
         self._busy.start()
         return True
+
+    def read_catalog(self, files=None, resolve=None):
+        """Windows' settings catalog (from <data>/wsettings.json while Windows' files are unchanged)."""
+        try:
+            kw = {} if resolve is None else {"resolve": resolve}
+            items = wsettings.load(self.data_dir, files, **kw)
+            with self._lock:
+                self.catalog = Catalog(items)
+        except Exception as e:
+            log(f"settings catalog failed: {type(e).__name__}", "warn")
+        self._catalog_read = True
 
     def refresh(self):
         try:
@@ -234,7 +328,15 @@ class Launcher:
                 out.append((s + (0.05 if launch else 0), {"id": "set:" + sid, "kind": kind, "title": title,
                                                            "subtitle": sub}))
         with self._lock:
-            apps = list(self.apps)
+            apps, catalog = list(self.apps), self.catalog
+        pages = {SETTINGS_BY_ID[a["id"]][2] for _s, a in out}
+        for s, item in catalog.search(w):
+            if item.get("uri") in pages:
+                continue                                # the same page is already offered by its usual name
+            if s >= (0.6 if launch else 0.8):
+                sub = "Windows Settings" if "uri" in item else "Control Panel"
+                out.append((s + (0.05 if launch else 0), {"id": item["id"], "kind": "setting", "title": item["title"],
+                                                           "subtitle": sub}))
         for a in apps:
             s = _score(w, a["name"], a.get("publisher", ""))
             if a["name"].lower().startswith("uninstall") and len(w) < 2:
@@ -270,6 +372,19 @@ class Launcher:
             if not _SAFE_URI.match(target):
                 return {"ok": False, "error": "That setting isn't known."}
             return self._start(["explorer.exe", target], hit[1])
+        if action_id.startswith("ws:"):
+            with self._lock:
+                item = next((x for x in self.catalog.items if x["id"] == action_id), None)
+            if item is None:
+                return {"ok": False, "error": "That setting isn't known."}
+            if "uri" in item:
+                if not wsettings._PAGE_URI.match(item["uri"]):
+                    return {"ok": False, "error": "That setting isn't known."}
+                return self._start(["explorer.exe", item["uri"]], item["title"])
+            argv = wsettings.target(item.get("link"))
+            if argv is None:
+                return {"ok": False, "error": "That setting isn't known."}
+            return self._start(argv, item["title"])
         if action_id.startswith("app:"):
             with self._lock:
                 a = next((x for x in self.apps if x["id"] == action_id), None)

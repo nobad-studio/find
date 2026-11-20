@@ -29,6 +29,10 @@
   "open chrome" or an app's name: the Windows Settings page, Windows tool or app shows above the results, with
   Open; Enter opens it when you typed "open ...". Apps come from Windows' own Start list (with their version,
   publisher and install folder), read in the background.
+- Every setting Windows' own Settings search knows, about 1,400 on Windows 11 ("battery percentage", "edit
+  environment variables", "create a restore point", "screen saver", "mouse double-click speed"), in your Windows
+  language: read from Windows' own catalog on your PC, so it matches your Windows version. Settings open their
+  page; Control Panel ones open their Control Panel item or Windows program.
 
 ### Changed
 - One NOBAD Find window with everything: the quick find bar is off (and no longer in Settings or the tray menu).
