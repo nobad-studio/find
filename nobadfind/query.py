@@ -11,7 +11,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from .kinds import AMBIGUOUS_APPS, APP_CUES, APPS, WORDS
+from .kinds import AMBIGUOUS_LANGUAGES, LANGUAGE_CUES, LANGUAGES, AMBIGUOUS_APPS, APP_CUES, APPS, WORDS
 
 MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
@@ -72,6 +72,7 @@ class Query:
     when: str = ""                                  # how the time was understood, for the UI
     apps: set = field(default_factory=set)          # "photoshop files" -> {"photoshop"}; their extensions below
     app_exts: set = field(default_factory=set)
+    langs: set = field(default_factory=set)          # "python" -> {"python"}; their extensions are in app_exts
     place: str = ""                                 # "removable" | "network" | "fixed" | "E:" | "label:<name>"
     drives: list = field(default_factory=list)      # the drives the place is matched against
     folder: str = ""                                # "downloads" | "desktop" | "documents" | "pictures" | ...
@@ -112,6 +113,9 @@ class Query:
             out.append(", ".join(sorted(self.kinds)))
         if self.apps:
             out.append(", ".join(f"{a} files" for a in sorted(self.apps)))
+        if self.langs:
+            from .kinds import language_label
+            out.append(", ".join(f"{language_label(x)} code" for x in sorted(self.langs)))
         if self.exts:
             out.append(", ".join(sorted(self.exts)))
         if self.when:
@@ -485,6 +489,23 @@ def parse(text, now=None, labels=(), is_dir=None, times=True, romanized=False, f
             used.add(i)
             continue
         cue = i + 1 < len(words) and words[i + 1] in APP_CUES
+        if w in LANGUAGES and w not in q.langs:
+            lcue = i + 1 < len(words) and words[i + 1] in LANGUAGE_CUES
+            alone = len([x for x in words if x not in LANGUAGE_CUES]) == 1
+            # "python flask", "rust tokio": first word, then a word that isn't a stop word: a soft guess, tried
+            # first and dropped by search if no file of that language matches ("swift report" then finds words)
+            lead = (soft_kinds and i == 0 and i + 1 < len(words) and words[i + 1] not in STOP
+                    and not any(x in WORDS and WORDS[x] in ("image", "video", "audio") for x in words))
+            if (soft_kinds or lcue) and (w not in AMBIGUOUS_LANGUAGES or lcue or alone or lead):
+                if not lcue:                        # no "code"/"files" after it: a guess, dropped if nothing matches
+                    q.soft.append(w)
+                q.langs.add(w)
+                q.app_exts |= LANGUAGES[w]
+                q.cuts.append(("lang", w + (" " + words[i + 1] if lcue else "")))
+                used.add(i)
+                if lcue:
+                    cue_at = i + 1
+                continue
         if w in APPS and (w not in AMBIGUOUS_APPS or cue):
             q.apps.add(w)
             q.app_exts |= APPS[w]

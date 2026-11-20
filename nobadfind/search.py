@@ -423,7 +423,17 @@ def _asks(q):
     described = bool(words)
     # a description, not a file name: "lease.pdf" or "budget" alone are looked up, not described
     sentence = len(words) >= 2 and not any("." in w or "\\" in w or "/" in w for w in words)
-    return {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+    out = {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+    if out["photo"]:
+        roots = []
+        if q.folder:
+            from .winapi import known_folder
+            roots.append(known_folder(q.folder))
+        if q.path:
+            roots.append(q.path)
+        out["roots"] = [r for r in roots if r]
+        out["where"] = _filters(q)                # the photos that fit, for "x of y done" in that folder
+    return out
 
 
 def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=None, here="", filters=None,

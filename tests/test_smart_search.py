@@ -40,7 +40,7 @@ def p(text, **k):
     ("word document about the lease", "", {"document"}, "lease"),
     ("slides for the quarterly review", "", {"slides"}, "quarterly review"),
     ("presentation in pictures", "pictures", {"slides"}, ""),
-    ("python code for the scraper", "", {"code"}, "python scraper"),
+    ("python code for the scraper", "", set(), "scraper"),          # 0.9.1: Python files (q.langs)
     ("photos in pictures from last week", "pictures", {"image"}, ""),
 ])
 def test_places_kinds_and_the_description(text, folder, kinds, meaning):

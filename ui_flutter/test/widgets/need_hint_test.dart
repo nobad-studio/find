@@ -61,6 +61,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Still looking at your photos: 120 of 8,400 done.'), findsOneWidget);
     expect(find.text('Download…'), findsNothing);
+    final before = engine.searches.length;
+    await tester.pump(const Duration(seconds: 11)); // 0.9.1: it asks again while photos are being looked at
+    await tester.pumpAndSettle();
+    expect(engine.searches.length, greaterThan(before));
   });
 
   test('needs are read from the engine, rows it can\'t use are dropped, older engines send none', () {

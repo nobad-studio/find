@@ -83,6 +83,21 @@ def plan(settings, roots):
     return {"cpu": cpu, "ssd": ssd, "walk_threads": walk, "text_workers": text, "text_workers_idle": idle}
 
 
+def user_roots():
+    """Downloads, Desktop, Documents, Pictures, Videos, Music (Windows' known folders: they follow OneDrive and
+    "move this folder") and OneDrive itself: read, looked at and understood before the rest of the PC (0.9.1)."""
+    out = []
+    for name in ("downloads", "desktop", "documents", "pictures", "videos", "music"):
+        p = winapi.known_folder(name)
+        if p and os.path.isdir(p):
+            out.append(p)
+    for env in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        p = os.environ.get(env)
+        if p and os.path.isdir(p) and p not in out:
+            out.append(p)
+    return tuple(out)
+
+
 class Indexer:
     def __init__(self, store, settings, vindex=None, governor=None, activity=None):
         self.store = store
@@ -329,6 +344,7 @@ class Indexer:
                 log(f"text index upgrade failed: {type(e).__name__}", "warn")
             self.status["plan"] = plan(self.settings, self.roots())
             log(f"indexer plan {self.status['plan']}")
+            self.store.prefer_roots = user_roots()         # your own folders first in every work queue (0.9.1)
             if self.embedder is None:               # started again after a stop: already loaded
                 self._load_embedder()
             if self.photo_text is None:
@@ -382,6 +398,16 @@ class Indexer:
     _more = False
 
     _round_checks = 0
+
+    def hurry_photos(self, roots):
+        """A photo search asked about these folders (0.9.1): their photos go first, and the step working now ends
+        its turn after the batch in hand, so the photo step comes next instead of in a few minutes."""
+        self.store.asked_roots = tuple(roots)
+        if self._round_end is not None:
+            self._round_end = 0.0
+        wake = getattr(self, "wake", None)
+        if wake is not None:
+            wake.set()
 
     def _round_over(self):
         """This step's turn is up (ROUND_S): it stops after the batch in hand and the round goes on. A step always
