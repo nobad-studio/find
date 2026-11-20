@@ -1,4 +1,4 @@
-/// An in-memory engine with the contract's shapes (apps/find/contract, protocol 1) and a small made-up index. Used
+/// An in-memory engine with the contract's shapes (contract, protocol 1) and a small made-up index. Used
 /// only by the tests, the goldens and the explicit `NOBAD_FIND_FAKE_ENGINE=1` demo; the app never falls back to it.
 ///
 /// With [live] it also does what the engine does on its own: `status` every 2 s, `status_full` every 2 s while

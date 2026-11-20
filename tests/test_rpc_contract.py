@@ -1,4 +1,4 @@
-"""The UI <-> engine contract (apps/find/contract): every handler against methods.schema.json, every event against
+"""The UI <-> engine contract (contract): every handler against methods.schema.json, every event against
 events.schema.json, and the recorded transcripts replayed against the real handlers and events.
 
 Re-record the transcripts after a deliberate contract change (keeps the send/engine lines, rewrites the replies):

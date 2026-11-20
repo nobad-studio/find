@@ -1,5 +1,5 @@
 """NOBAD Find's engine: the encrypted index, the indexer, the governor, the watchdog, the hotkeys, the tray icon and
-the private pipe (nobadfind.rpc) the Flutter UI talks to (apps/find/contract).
+the private pipe (nobadfind.rpc) the Flutter UI talks to (contract).
 
 NobadFind.exe runs it (app.py) and starts the UI (nobad_find.exe, uilaunch) on the page asked for; with --background
 (Start with Windows) or --engine (development, measurements) it starts without a window. The hotkeys and the tray
@@ -77,7 +77,7 @@ MEASURE_LEVELS = ("full", "gentle", "light", "paused")
 
 
 def measure_overrides(env, data_dir=DATA_DIR, default=DEFAULT_DATA_DIR, base=None):
-    """Dev only (apps/find/tools/measure.py): with a separate index (NOBAD_FIND_DATA_DIR), the engine may serve
+    """Dev only (tools/measure.py): with a separate index (NOBAD_FIND_DATA_DIR), the engine may serve
     its own pipe (NOBAD_FIND_MEASURE_PIPE, letters/digits/dashes) so it runs next to another engine, and keep one
     work level (NOBAD_FIND_MEASURE_LEVEL). Ignored with the real index. {"level", "pipe"}, None = not asked."""
     out = {"level": None, "pipe": None}

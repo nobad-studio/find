@@ -4,7 +4,7 @@ Only what you typed into NOBAD Find and committed (Enter, opening a result, pick
 encrypted index (SQLCipher, table search_history), capped at CAP entries, oldest dropped first. Setting
 search_history (on by default); turning it off deletes what was kept. "Clear search history" in Settings > Privacy,
 and the x on a suggestion forgets one. This is not activity history: nothing from Windows, browsers or other
-programs is read (that stays out of scope, apps/find/AGENTS.md).
+programs is read (that stays out of scope, AGENTS.md).
 """
 import re
 import time

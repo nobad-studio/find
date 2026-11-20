@@ -4,7 +4,6 @@ Builds the Windows installer `dist-installer\NobadFind-Setup-<version>.exe`. It 
 with no admin rights, into `%LOCALAPPDATA%\Programs\NOBAD Find`, and adds a Start menu shortcut.
 
 ```
-cd apps/find
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1                 # app + installer
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -InstallTools   # also installs Inno Setup 6 (winget)
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -AppOnly        # just dist\NobadFind

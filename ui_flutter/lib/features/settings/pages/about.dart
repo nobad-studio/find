@@ -14,7 +14,7 @@ import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
 import '../settings_parts.dart';
 
-const sourceLink = 'github.com/nobad-studio/Nobad-VPN';
+const sourceLink = 'github.com/nobad-studio/find';
 
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});

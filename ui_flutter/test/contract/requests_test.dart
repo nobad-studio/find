@@ -1,4 +1,4 @@
-// Every request in apps/find/contract/transcripts, made with this UI's typed client: what the client sends must
+// Every request in contract/transcripts, made with this UI's typed client: what the client sends must
 // mean the same as the transcript's `send` line, and the transcript's answer (result or error) must come back as
 // the typed result or an RpcException with the same code.
 import 'dart:async';

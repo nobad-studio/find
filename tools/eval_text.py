@@ -1,6 +1,5 @@
 """Search quality on a fixed, made-up set of personal files (dev only, not shipped).
 
-    cd apps/find
     python tools/eval_text.py --models-dir <data folder with models/> [--set english|hindi] [--model ID ...]
 
 For each text model: index tools/evalset/<set>.json into a throwaway encrypted-less Store (real files on disk, the

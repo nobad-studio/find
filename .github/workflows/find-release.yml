@@ -4,9 +4,9 @@ name: NOBAD Find release
 # with the installer and its SHA-256, plus a signed build-provenance attestation. Same shape as vpn-release.yml.
 #   Release:  git tag -a find-v0.6.0 -m "NOBAD Find 0.6.0" && git push origin find-v0.6.0
 #   Dry run:  Actions tab -> "NOBAD Find release" -> Run workflow (builds and uploads an artifact, no release)
-#   Verify a download:  gh attestation verify NobadFind-Setup-<version>.exe -R nobad-studio/Nobad-VPN --signer-workflow nobad-studio/Nobad-VPN/.github/workflows/find-release.yml --source-ref refs/tags/find-v<version> --deny-self-hosted-runners
-# NOBAD VPN and NOBAD Find share this repository: Find releases are never marked as the repository's "latest"
-# release, so links to the latest NOBAD VPN keep working.
+#   Verify a download:  gh attestation verify NobadFind-Setup-<version>.exe -R nobad-studio/find --signer-workflow nobad-studio/find/.github/workflows/find-release.yml --source-ref refs/tags/find-v<version> --deny-self-hosted-runners
+# Releases up to 0.8.5 were published from nobad-studio/Nobad-VPN (where NOBAD Find lived until 2026-11-20) and
+# stay there; their attestations name that repository.
 on:
   push:
     tags: ["find-v*"]
@@ -22,7 +22,6 @@ jobs:
     defaults:
       run:
         shell: pwsh
-        working-directory: apps/find
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -82,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nobad-find-release
-          path: apps/find/dist-installer/*
+          path: dist-installer/*
           retention-days: 30
           if-no-files-found: error
 
@@ -117,7 +116,7 @@ jobs:
           notes=dist/release-notes.md
           files=$(ls dist/* | grep -v release-notes.md)
           gh release create "$TAG" $files -R "${{ github.repository }}" \
-            --title "NOBAD Find $VER" --notes-file "$notes" --verify-tag --latest=false
+            --title "NOBAD Find $VER" --notes-file "$notes" --verify-tag --latest
 
       - name: Site entry for releases/find/releases.json
         env:

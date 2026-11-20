@@ -5,9 +5,9 @@ engine over the private pipe `\\.\pipe\NOBADFind-<user SID>` (JSON-RPC 2.0, the 
 Layout follows `docs/STRUCTURE.md`.
 
 ```
-# the engine (from apps/find)
+# the engine (from the repository root)
 python -m nobadfind --engine
-# the UI (from apps/find/ui_flutter)
+# the UI (from ui_flutter)
 flutter test && flutter analyze
 flutter build windows --release
 build\windows\x64\runner\Release\nobad_find.exe          # main window

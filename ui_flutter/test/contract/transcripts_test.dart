@@ -1,4 +1,4 @@
-// Replays the engine's recorded contract sessions (apps/find/contract/transcripts, the same files the Python
+// Replays the engine's recorded contract sessions (contract/transcripts, the same files the Python
 // contract test replays) through this UI's models and its pipe client. `engine` and `note` lines are the engine's side and are skipped.
 import 'dart:async';
 import 'dart:convert';

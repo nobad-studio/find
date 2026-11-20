@@ -3,7 +3,7 @@
 **Read this first if you are picking NOBAD Find up, human or AI, even in the middle of a phase.**
 It records where the app is, why it is about to change, the exact order of work, and how to resume.
 Update the [status table](#status) at the end of every step you finish. Rules in [`AGENTS.md`](AGENTS.md) and the
-root [`AGENTS.md`](../../AGENTS.md) still apply and win over anything here.
+[`AGENTS.md`](AGENTS.md) still apply and win over anything here.
 
 Written 2026-11-18, after NOBAD Find 0.7.0 shipped (CI tag `find-v0.7.0`, main `c47df03`).
 
@@ -90,7 +90,7 @@ indexer (`indexer.Indexer._run`), governor tick every 2 s (`governor.Governor`),
 window lifecycle (`lifecycle.Window`), hotkeys (`hotkey.Hotkey` x2), file watcher (`watcher.py`), pywebview UI,
 status count refresher (`api.Api`).
 
-### Modules (apps/find/nobadfind)
+### Modules (nobadfind)
 | Module | Responsibility | Survives the Flutter move? |
 |---|---|---|
 | `app.py` | Start-up, windows, hotkeys, splash, close/quit wiring | **Split**: engine start-up stays; window code moves to Flutter |
@@ -157,13 +157,13 @@ Settings and system
 ## 6. The plan
 
 ### Phase 0: measure (do this first, it decides everything after)
-Build `apps/find/tools/measure.py` (dev-only, not shipped):
+Build `tools/measure.py` (dev-only, not shipped):
 - Starts the built app with a temp data dir and a fixed test corpus (a folder of ~5,000 generated files: docs,
   PDFs, images), samples every process in Find's job every second: working set, private bytes, CPU %, GPU %
   (PDH), I/O, handle and thread counts.
 - Scenarios: cold start to window shown; idle with window open; indexing at each level; search typing; window
   closed (idle process); models loaded/unloaded.
-- Writes a CSV + a summary table. Commit the **summary** of each run to `apps/find/docs/measurements.md` (date,
+- Writes a CSV + a summary table. Commit the **summary** of each run to `docs/measurements.md` (date,
   commit, PC) so every later change is compared against numbers, not feelings.
 
 **Budgets** (targets; Phase 1 and 3 must meet them or say why):
@@ -221,7 +221,7 @@ Prepare the engine so any UI can sit on top, and so a UI crash can't take indexi
    UI is running, it starts the UI process.
 3. **Contract tests:** `tests/test_rpc_contract.py` checks every method's request/response schema; a recorded
    transcript is replayed so the Flutter side and the Python side test against the same file
-   (`apps/find/contract/*.json`).
+   (`contract/*.json`).
 4. Keep the current WebView UI working on top of `rpc.py` during this phase (pywebview `js_api` calls forward to
    the same handlers) so nothing breaks for users before Flutter is ready.
 
@@ -235,7 +235,7 @@ Prototype first (one week max), then the full move.
 `measure.py`: UI ≤ 100 MB, cold start ≤ 1.5 s, typing latency within budget. If it misses, try Qt (QML) with the
 same contract before deciding.
 
-**Full UI (new folder `apps/find/ui_flutter/`):**
+**Full UI (new folder `ui_flutter/`):**
 - Screens to rebuild: Home, Search results (virtualized list, thumbnails), Indexing (level, pipeline, resources
   chart, models, activity), Settings (six pages), quick find bar, splash, first-run welcome, consent dialogs
   (0.8.0), notices/toasts.
@@ -246,7 +246,7 @@ same contract before deciding.
 - Closing the window **exits the UI process**: with background indexing off the engine goes idle
   (the "one small process"), so closed-state memory is just the engine.
 - Tests: widget tests + golden screenshots in dark and light, an integration test against a fake engine that
-  replays `apps/find/contract/*.json`.
+  replays `contract/*.json`.
 
 **Python changes in this phase**
 - Remove: `pywebview`, `bottle`, pythonnet/clr deps, `ui/` folder, `bar.py` window code, the page heartbeat
@@ -297,7 +297,7 @@ both; the release workflow (`find-release.yml`) builds and attests both; SHA-256
 ## 8. How to resume in the middle
 1. Read the [status table](#status) below: the first row that isn't **done** is where you are.
 2. Check the branch named in that row (`git log origin/main..<branch>`), run the tests
-   (`cd apps/find && python -m pytest -q tests`), and read the last entries of `docs/measurements.md`.
+   (`python -m pytest -q tests`), and read the last entries of `docs/measurements.md`.
 3. Continue the step's "Done when" condition. If you change the plan, edit this file in the same PR and add a
    row to the decisions table (section 3) with the date and why.
 4. Before you stop, update the status row (what is done, what is next, any open risk) and push.

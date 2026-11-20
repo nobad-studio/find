@@ -1,6 +1,6 @@
 """The engine's only door to the UI: JSON-RPC 2.0 over a private named pipe (see docs/STRUCTURE.md, ROADMAP §6).
 
-The whole 0.7.0 API surface plus the engine's events; the contract is apps/find/contract (schemas, transcripts,
+The whole 0.7.0 API surface plus the engine's events; the contract is contract (schemas, transcripts,
 README), checked by tests/test_rpc_contract.py.
 """
 from . import handlers

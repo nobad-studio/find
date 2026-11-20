@@ -6,8 +6,9 @@ Describe what you're looking for the way you remember it: *"rent pdf from last w
 march"*, *"budget.xlsx"*. NOBAD Find looks at file names, the words inside files and, if you turn it on, what
 they're about, and tells you why each result matched.
 
-> **Download:** the installer is on the [NOBAD Find releases](https://github.com/nobad-studio/Nobad-VPN/releases?q=find-v)
-> (per-user, no admin). It isn't code-signed yet, so Windows SmartScreen warns: **More info**, then **Run anyway**.
+> **Download:** the installer is on the [NOBAD Find releases](https://github.com/nobad-studio/find/releases)
+> (per-user, no admin; 0.8.5 and older are on the
+> [earlier releases](https://github.com/nobad-studio/Nobad-VPN/releases?q=find-v)). It isn't code-signed yet, so Windows SmartScreen warns: **More info**, then **Run anyway**.
 
 ## What it does
 - **Names, instantly.** Any part of a file or folder name, across your profile and every fixed drive.
@@ -81,7 +82,6 @@ starts the window; they talk only over a private named pipe that only your Windo
 
 ## Run from source
 ```
-cd apps/find
 python -m pip install --require-hashes -r requirements-lock.txt
 cd ui_flutter && flutter build windows --release && cd ..   # the window, once (needs the Flutter SDK)
 python -m nobadfind              # the engine + the window; --page settings|index, --bar, --background, --engine
@@ -98,7 +98,7 @@ cd ui_flutter && flutter analyze && flutter test
 ```
 
 ## Build the installer
-`powershell -ExecutionPolicy Bypass -File packaging\build.ps1` (from `apps/find`) builds a per-user installer
+`powershell -ExecutionPolicy Bypass -File packaging\build.ps1` builds a per-user installer
 that needs no admin rights; see [`packaging/README.md`](packaging/README.md).
 
 MIT License.

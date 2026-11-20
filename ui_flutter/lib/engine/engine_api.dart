@@ -1,4 +1,4 @@
-/// Everything the screens can ask the engine, typed after apps/find/contract (protocol 1). Controllers depend on
+/// Everything the screens can ask the engine, typed after contract (protocol 1). Controllers depend on
 /// this interface only.
 ///
 /// Implementations:

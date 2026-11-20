@@ -1,6 +1,5 @@
 """NOBAD Find measurement harness (ROADMAP Phase 0). Dev only: never shipped, never imported by the app.
 
-    cd apps/find
     python tools/measure.py                     # gentle (all scenarios) + full and light (indexing only)
     python tools/measure.py --files 1000 --levels gentle --out C:/somewhere
 
@@ -531,7 +530,7 @@ def run_level(level, corpus, work, full, args, searches):
     env = dict(os.environ, NOBAD_FIND_DATA_DIR=data, NOBAD_FIND_MEASURE_LEVEL=level, NOBAD_FIND_MEASURE_PIPE=tag)
     env.pop("NOBAD_FIND_UI_DEMO", None)
     if args.entry == "launch":
-        env["PYTHONPATH"] = APP_DIR                    # a script's own folder is on the path, not apps/find
+        env["PYTHONPATH"] = APP_DIR                    # a script's own folder is on the path, not the repository root
     marks = {"run": level}
     t0 = time.monotonic()
     entry = ["-m", "nobadfind"] if args.entry == "module" else [os.path.join(APP_DIR, "packaging", "launch.py")]

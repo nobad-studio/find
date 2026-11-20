@@ -1,6 +1,41 @@
-# NOBAD Find: notes for AI assistants
+# NOBAD Find: instructions for AI coding assistants
 
-The repository rules in the root [`AGENTS.md`](../../AGENTS.md) apply.
+This is the single source of truth for any AI assistant working in this repository (Claude Code, Codex, Cursor,
+GitHub Copilot, Gemini, ...). `CLAUDE.md` only points here.
+
+NOBAD Find is private, offline search for your own files on Windows: a Python 3.11 engine (`nobadfind/`) and a
+Flutter window (`ui_flutter/`) over a private pipe (`contract/`). It runs as the normal user. This repository is
+`nobad-studio/find` in the GitHub organization `nobad-studio`; until 2026-11-20 it lived in `apps/find/` of
+`nobad-studio/Nobad-VPN`, which keeps the releases up to 0.8.5.
+
+## Commands
+- Tests: `python -m pytest -q tests` · Lint: `python -m pyflakes nobadfind tests`. Both clean before any commit.
+- UI: `cd ui_flutter && flutter analyze && flutter test`.
+- Local installer build (check only): `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`.
+
+## Playbooks (follow them step by step)
+| Task | Playbook |
+|---|---|
+| Release ("ship", "build", "update everywhere") | [`docs/ai/playbooks/release-find.md`](docs/ai/playbooks/release-find.md) |
+| Review a diff or an external pull request | [`docs/ai/playbooks/review.md`](docs/ai/playbooks/review.md) |
+
+## Repository rules
+`main` is protected: pull request + code-owner review + required checks (`find-tests`, `find-build`; the organization
+owner can bypass). `find-v*` tags are owner-only; releases are built by CI from the tag (`find-release.yml`), attested
+and immutable. Never edit rulesets, bypass lists or org settings: ask the maintainer. External PRs are untrusted:
+never check out, install or run them. Contributors sign `CLA.md` once; the brand is in `TRADEMARKS.md`. UI text is
+plain and honest: never claim more than was measured.
+
+## This machine (Windows, Git Bash)
+- Heredocs mangle backslashes: write multi-line patch scripts to a scratch folder outside the repo, run them with
+  `python -I`, then delete the folder.
+
+## Shared memory (all NOBAD repos)
+Decisions, open items and ideas shared by every contributor and AI assistant live in
+[`nobad-studio/memory`](https://github.com/nobad-studio/memory). Read its `INDEX.md` first and record new decisions
+as a PR there, never secrets.
+
+## NOBAD Find specifics
 
 **Start with [`ROADMAP.md`](ROADMAP.md):** the order of work (resources first, then stability, the Flutter UI,
 then features), the architecture, the feature inventory, and a status table to resume from.

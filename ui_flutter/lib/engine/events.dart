@@ -1,4 +1,4 @@
-/// Typed engine → UI events, exactly as apps/find/contract/events.schema.json (protocol 1): status, status_full,
+/// Typed engine → UI events, exactly as contract/events.schema.json (protocol 1): status, status_full,
 /// level, activity, download, notice, show, here, quitting. The UI never polls: everything that changes on its own
 /// changes from these.
 library;

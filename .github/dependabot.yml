@@ -1,0 +1,26 @@
+version: 2
+# Weekly version updates. Security updates are on as well (repository setting) and open their own PRs as soon as an
+# advisory lands. Minor and patch bumps are grouped to keep the PR list short.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # pyproject.toml, requirements*.txt, requirements-lock.txt
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      find-minor:
+        update-types: [minor, patch]
+    ignore:
+      # winrt-* must all move together on one version (AGENTS.md); the 4!10.x line is a different package family
+      # and broke the install when bumped one by one (2026-11-18). Upgrade them by hand, tested.
+      - dependency-name: "winrt-*"
+        versions: [">=4"]

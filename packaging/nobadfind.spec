@@ -1,5 +1,5 @@
 # PyInstaller spec for NOBAD Find's engine - onedir, windowed (the installer wraps the folder). build.ps1 runs it from
-# apps/find, then copies the Flutter UI (nobad_find.exe and its files) into the same folder:
+# the repository root, then copies the Flutter UI (nobad_find.exe and its files) into the same folder:
 #   python -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging\nobadfind.spec
 # No uac_admin: NOBAD Find runs as the normal user and refuses to start elevated. The one elevated step (the Windows
 # Search switch) asks for it itself, through `NobadFind.exe --wsearch <word>`.
@@ -12,7 +12,7 @@ ROOT = os.path.dirname(HERE)
 ICON = os.path.join(HERE, "nobadfind.ico")
 VERSION = os.path.join(HERE, "version_info.txt")
 
-# No window toolkit here: the window is the Flutter UI (apps/find/ui_flutter), a separate exe.
+# No window toolkit here: the window is the Flutter UI (ui_flutter), a separate exe.
 datas = []
 binaries = []
 

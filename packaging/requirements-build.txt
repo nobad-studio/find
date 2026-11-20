@@ -1,4 +1,4 @@
-# Build-only tools for apps/find/packaging/build.ps1 (PyInstaller), hash-pinned. Installed after requirements-lock.txt.
+# Build-only tools for packaging/build.ps1 (PyInstaller), hash-pinned. Installed after requirements-lock.txt.
 # Python 3.11, Windows x64. Top-level pins: pyinstaller==6.22.3, pyinstaller-hooks-contrib==2026.10 (as in apps/vpn).
 # Regenerate after a deliberate upgrade: put those two pins in requirements-build.in, then
 #    pip-compile --allow-unsafe --generate-hashes --output-file=requirements-build.txt requirements-build.in

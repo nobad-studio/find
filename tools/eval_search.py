@@ -1,6 +1,5 @@
 """Smart search evaluation (dev only, not shipped): natural-language questions over a generated corpus.
 
-    cd apps/find
     python tools/eval_search.py [--models-dir DIR] [--check] [--json]
 
 Builds a throwaway index (temp folder, never the user's Find data) over a generated corpus: documents in English,

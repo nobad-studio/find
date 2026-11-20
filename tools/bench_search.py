@@ -1,7 +1,6 @@
 """Search speed at whole-PC scale (dev only, not shipped): a synthetic index of --rows file entries in a throwaway
 folder, then questions typed one letter at a time through the engine's real search.search().
 
-    cd apps/find
     python tools/bench_search.py --rows 1000000 [--keep DIR]
 
 Prints p50 / p90 / max per keystroke for short (1-2 letters), name (3+ letters) and multi-word questions.

@@ -5,7 +5,7 @@ normal user; the engine never runs elevated), so closing the UI and quitting the
 page to open: --page search|settings|index, or --bar for the quick find bar.
 
 Where the UI is: next to the engine exe in the installed app (nobad_find.exe); from source, NOBAD_FIND_UI_EXE or the
-Flutter release build in apps/find/ui_flutter.
+Flutter release build in ui_flutter.
 """
 import os
 import sys
