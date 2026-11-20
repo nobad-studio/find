@@ -116,6 +116,14 @@ def test_installer_stops_find_quickly_by_session_not_user_name():
     assert '"SESSION eq ' in stop and "USERNAME eq" not in stop
 
 
+def test_installer_never_stops_its_own_process_tree():
+    """0.9.2: the in-app update starts setup from NobadFind.exe; taskkill /T ended setup too (the old version stayed)."""
+    iss = ISS.read_text(encoding="utf-8")
+    stop = iss[iss.index("procedure StopFind;"):iss.index("function PrepareToInstall")]
+    code = " ".join(line.split("//")[0] for line in stop.splitlines())
+    assert "/T" not in code
+
+
 def test_installer_stops_the_ui_too():
     """The UI runs outside the engine's job: upgrades and uninstalls stop nobad_find.exe as well."""
     iss = ISS.read_text(encoding="utf-8")

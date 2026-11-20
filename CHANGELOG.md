@@ -1,5 +1,14 @@
 # NOBAD Find changelog
 
+## 0.9.2 · 2026-11-20
+
+### Fixed
+- Updating from inside the app (Settings > About > Updates > Install) closed NOBAD Find and left the old version:
+  setup stopped NOBAD Find together with every program it had started, and setup itself was one of them, so it
+  ended before copying anything. Setup now stops NOBAD Find and its own workers by name only. From 0.9.2 on, the
+  in-app update installs; to get to 0.9.2 from 0.9.0 or 0.9.1, run the installer yourself once (download it, or
+  open it from %LOCALAPPDATA%/NOBAD/Find/updates).
+
 ## 0.9.1 · 2026-11-20
 
 ### Fixed
