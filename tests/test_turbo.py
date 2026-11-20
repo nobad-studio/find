@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 import pytest
 
@@ -473,3 +474,31 @@ def test_from_source_the_engine_asks_for_no_permission_without_the_dev_switch(tm
     r = t.turn_on()
     assert r["ok"] is False and ntfs.DEV_ENV in r["error"] and asked == []
     s.close()
+
+
+class SilentLink(Link):
+    """A helper that says hello, then never answers a scan (what the 0.9.0 pipe deadlock looked like)."""
+
+    def send(self, msg):
+        self.sent.append(msg)
+
+
+def test_a_helper_that_goes_quiet_leaves_the_drive_to_the_walk(env, monkeypatch):
+    """0.9.1: the scan wait has a deadline; it used to wait forever and freeze the whole indexer."""
+    t, _s, _st, _ix, _p = env
+    t._launch = lambda: SilentLink(t)
+    t.turn_on()
+    now = [1000.0]
+    t._clock = lambda: now[0]
+    monkeypatch.setattr(turbo, "QUIET_S", 5)
+    stop = threading.Event()
+    box = {}
+    th = threading.Thread(target=lambda: box.setdefault("r", t.scan([PROF, DRIVE], 1, lambda rows: None, stop)),
+                          daemon=True)
+    th.start()
+    time.sleep(0.8)
+    assert th.is_alive()                              # still waiting: under the deadline
+    now[0] += 6
+    th.join(3)
+    assert not th.is_alive() and box["r"] == (set(), set())     # gave up: the caller walks the drive
+    assert "stopped answering" in t.state()["error"]
