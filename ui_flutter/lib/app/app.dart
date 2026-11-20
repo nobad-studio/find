@@ -23,7 +23,7 @@ import 'theme/theme.dart';
 
 enum AppMode { main, bar }
 
-const appVersion = '0.8.5';
+const appVersion = '0.9.0';
 
 class NobadFindApp extends StatefulWidget {
   const NobadFindApp({

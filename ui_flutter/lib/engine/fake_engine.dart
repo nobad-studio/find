@@ -837,7 +837,7 @@ class FakeEngine implements EngineApi {
       files: _brief.files,
       paused: _brief.paused,
       details: IndexDetails(
-        version: '0.8.5',
+        version: '0.9.0',
         withText: 31877,
         memoryMb: 186,
         rate: 2140,

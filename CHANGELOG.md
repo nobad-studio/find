@@ -1,5 +1,56 @@
 # NOBAD Find changelog
 
+## 0.9.0 · 2026-11-20
+
+### Shortcuts and closing
+- Closing the window keeps NOBAD Find in the notification area, so its shortcuts always work (it used to quit
+  completely, and with it every shortcut). The first time, a notification says how to get it back. Settings >
+  Performance > "Keep running after closing the window" still turns this off.
+- New default shortcuts: Win+Shift+F opens NOBAD Find, Ctrl+Shift+Space the quick find bar. The old Win+Shift+Space
+  is Windows' own keyboard-layout switch and never worked on many PCs. When a default is taken on a PC, NOBAD Find
+  picks the next free combination and says so. An upgrade moves old or Windows-reserved shortcuts to the new ones
+  once; a shortcut you chose that works is kept.
+- Settings > Shortcuts: each shortcut shows whether it works right now. Change it by pressing the new keys (or
+  typing them); NOBAD Find checks first whether it's free, used by another app, or kept by Windows, and only then
+  saves it. It takes effect at once, no restart.
+
+### Photo search
+- Photos are looked at while indexing goes on: photos, text, scans and meaning each get a turn of up to 2 minutes,
+  so on a big index photos no longer wait until every document is read (that could take days).
+- A photo search in a folder ("in downloads black shirt image") ranks the photos in that folder. Before, the best
+  few hundred photos on the whole PC were picked first and the folder applied afterwards, which could leave none.
+- A photo question is asked the way the photo model learned: as captions ("a photo of …"), averaged. About 87 ms
+  for a new question on the reference PC (21 ms before), instant again; not yet measured for accuracy.
+- When a search needs something that isn't ready, it says so above the results with one button: the photo model
+  to download (with your OK), photo or meaning search to turn on, or "Still looking at your photos: 120 of 8,400".
+- Every word of a photo question reaches the model as you typed it; nothing is filtered.
+
+### Settings > Models
+- Each model is a card: what it's for, its facts as chips (download size, memory, licence, languages, measured
+  quality), and Details with its speed, how it was measured, where it comes from, how it's checked and the folder
+  it's downloaded to, with Open folder.
+- "Keep models loaded" (Memory): instant meaning and photo searches at the cost of memory; off by default (models
+  leave memory a few minutes after the last use, as before).
+
+### Updates
+- NOBAD Find can update itself (Settings > About > Updates). Once a day, while "Check for updates automatically" is
+  on, it asks GitHub for its newest release; Install downloads that installer, checks its exact size and SHA-256
+  against the release's .sha256 file and GitHub's own digest, and installs it over this version. NOBAD Find closes
+  and starts again; your index and settings are kept. The installer isn't code-signed yet, so the checksum (and
+  HTTPS) is the check.
+- The installer knows what is installed: it upgrades, repairs the same version, or asks before going back to an
+  older one.
+
+### Fixed
+- The Index page, and then Settings pages such as Models, could stay blank for a while after starting: the first
+  look at the Index page counted the whole index while the others waited. The counts now run in the background.
+- A start-up card shows the moment NobadFind.exe starts, until the window is up.
+- The window can be made smaller (720 x 500 at the least, was 860 x 600).
+
+### Privacy and security
+- New connection: the update check and download, HTTPS to GitHub for nobad-studio/find only. Nothing about your
+  PC or your files is sent. Turn it off in Settings > About.
+
 ## 0.8.5 · 2026-11-19
 
 0.8.0 was never released on its own; its changes ship in 0.8.5.
