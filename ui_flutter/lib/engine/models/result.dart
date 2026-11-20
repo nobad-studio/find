@@ -170,7 +170,11 @@ class SearchAnswer {
     this.parts = const [],
     this.best,
     this.needs = const [],
+    this.actions = const [],
   });
+
+  /// 0.9.1: Windows settings, tools and apps the question fits ("open bluetooth", "chrome"), best first.
+  final List<SearchAction> actions;
 
   /// 0.9.0: what this search would need that isn't ready (a model to download or switch on, photos still
   /// being looked at). Empty from older engines and when everything is ready.
@@ -197,6 +201,7 @@ class SearchAnswer {
     parts: parts,
     best: best,
     needs: needs,
+    actions: actions,
   );
 
   /// A newer search on the same channel replaced this one: ignore the answer (no message, no empty state).
@@ -229,8 +234,38 @@ class SearchAnswer {
       parts: json['parts'] is List ? [for (final p in json['parts'] as List) ?QueryPart.fromJson(p)] : const [],
       best: BestGuess.fromJson(json['best']),
       needs: json['needs'] is List ? [for (final n in json['needs'] as List) ?SearchNeed.fromJson(n)] : const [],
+      actions: json['actions'] is List
+          ? [for (final a in json['actions'] as List) ?SearchAction.fromJson(a)]
+          : const [],
     );
   }
+}
+
+/// Something to open instead of a file (0.9.1): [kind] setting | tool | app; run it with run_action([id]).
+class SearchAction {
+  const SearchAction({required this.id, required this.kind, required this.title, this.subtitle = ''});
+  final String id;
+  final String kind;
+  final String title;
+  final String subtitle;
+
+  static SearchAction? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final id = _str(v['id']), title = _str(v['title']);
+    if (id.isEmpty || title.isEmpty) return null;
+    final k = _str(v['kind']);
+    return SearchAction(id: id, kind: k.isEmpty ? 'app' : k, title: title, subtitle: _str(v['subtitle']));
+  }
+}
+
+/// "open bluetooth", "turn off wifi", "display settings": the question asks to open something (Enter opens the
+/// first action instead of the first file).
+bool wantsLaunch(String text) {
+  final w = text.toLowerCase().trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+  if (w.isEmpty) return false;
+  return const {'open', 'launch', 'start', 'run', 'turn', 'switch', 'enable', 'disable'}.contains(w.first) ||
+      w.last == 'settings' ||
+      w.last == 'setting';
 }
 
 /// One `needs` entry: [model] photo | meaning, [state] missing | off | analyzing ([done] of [total]),

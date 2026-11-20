@@ -166,8 +166,21 @@ class FakeEngine implements EngineApi {
               if (w.isNotEmpty && !_stop.contains(w)) w,
           ],
           needs: searchNeeds,
+          actions: searchActions,
         );
       });
+
+  /// What every search offers to open (0.9.1 `actions`); tests set it.
+  List<SearchAction> searchActions = const [];
+
+  /// The action ids run_action was asked for.
+  final actionsRun = <String>[];
+
+  @override
+  Future<ActionResult> runAction(String id) => _new('run_action', () {
+    actionsRun.add(id);
+    return searchActions.any((a) => a.id == id) ? _ok : const ActionResult(false, "That isn't something NOBAD Find can open.");
+  });
 
   /// What every search says it needs (0.9.0 `needs`); tests and the demo set it.
   List<SearchNeed> searchNeeds = const [];

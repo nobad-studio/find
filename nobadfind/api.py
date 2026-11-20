@@ -86,10 +86,31 @@ class Api:
                 needs = self._needs(asks, len(r.get("results") or ()))
                 if needs:
                     r["needs"] = needs
+                acts = self.actions_for(text) if channel != "home" else []
+                if acts:
+                    r["actions"] = acts
             return r
         except Exception as e:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
+
+    # ---------- Windows settings and apps from the search box (0.9.1, launcher.py) ----------
+    def actions_for(self, text):
+        lch = getattr(self, "_launcher", None)
+        if lch is None or not text:
+            return []
+        try:
+            return lch.actions(text)
+        except Exception as e:
+            log(f"actions failed: {type(e).__name__}", "warn")
+            return []
+
+    def run_action(self, action_id):
+        """Open a Windows Settings page, a Windows tool or an app, by the id search gave (never a path)."""
+        lch = getattr(self, "_launcher", None)
+        if lch is None:
+            return {"ok": False, "error": "Opening apps and settings isn't available in this copy of NOBAD Find."}
+        return lch.run(action_id)
 
     def _needs(self, asks, found):
         """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo

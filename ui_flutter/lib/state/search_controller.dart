@@ -225,6 +225,27 @@ class FindController extends ChangeNotifier {
   }
 
   /// Open the selected file with its default program (the engine does it, by id). True if it opened.
+  /// 0.9.1: open a Windows Settings page, tool or app the search offered. The question is remembered like a
+  /// search that opened a file.
+  Future<bool> runAction(SearchAction a) async {
+    ActionResult r;
+    try {
+      r = await engine.runAction(a.id);
+    } on Object {
+      r = const ActionResult(false, "NOBAD Find's engine isn't running.");
+    }
+    if (!r.ok) {
+      _say(r.error.isNotEmpty ? r.error : "Couldn't open ${a.title}.");
+      return false;
+    }
+    remember(_text);
+    return true;
+  }
+
+  /// The first action, when the question asks to open something ("open bluetooth"): Enter runs it.
+  SearchAction? get launchAction =>
+      answer.actions.isNotEmpty && wantsLaunch(_text) ? answer.actions.first : null;
+
   Future<bool> openSelected() => _act((id) => engine.open(id), "That file isn't there any more.");
 
   /// Show the selected file in File Explorer.

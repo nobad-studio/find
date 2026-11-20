@@ -469,6 +469,9 @@ def run(stop=None, open_ui=None, lock=None):
     updater = Updater(settings)
     updater.on_change = rpc.events.update
     api._updater = updater
+    from .launcher import Launcher
+    launcher = Launcher(DATA_DIR)
+    api._launcher = launcher
     wiring = Wiring(api, settings, indexer, rpc.events, stop, rpc.ui_pids)
     if first_ui is not None:
         wiring.ui.started(first_ui)             # a hotkey right now doesn't start a second one
@@ -497,6 +500,8 @@ def run(stop=None, open_ui=None, lock=None):
             n += 1
             if n % 120 == 60 and updater.due():               # a minute after start, then every minute's look
                 updater.check_in_background()
+            if n % 120 == 20:                                 # the Start list: at start, then every few hours
+                launcher.refresh_in_background()
             icon = tray_box["icon"]
             if icon is not None and n % 10 == 0:          # the tooltip follows the level and the count (5 s)
                 now = icon.tip()

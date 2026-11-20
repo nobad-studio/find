@@ -154,6 +154,13 @@ class _BarWindowState extends State<BarWindow> {
     final x = sug.current;
     if (x == null) {
       sug.close();
+      final act = find.launchAction;            // "open bluetooth" in the bar: open it, the bar hides
+      if (act != null) {
+        unawaited(find.runAction(act).then((ok) {
+          if (ok) widget.window.hide();
+        }));
+        return;
+      }
       unawaited(_act());
       return;
     }

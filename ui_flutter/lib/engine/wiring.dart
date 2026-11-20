@@ -157,6 +157,8 @@ class PipeEngine implements EngineApi {
   @override
   Future<ActionResult> modelFolder(String id) => _pipe.modelFolder(id);
   @override
+  Future<ActionResult> runAction(String id) => _pipe.runAction(id);
+  @override
   Future<UpdateState> updateState() => _pipe.updateState();
   @override
   Future<ActionResult> updateCheck() => _pipe.updateCheck();

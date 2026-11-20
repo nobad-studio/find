@@ -59,6 +59,11 @@
 {"recv": {"jsonrpc": "2.0", "id": 303, "result": {"ok": false, "error": "Nothing is installed without your OK."}}}
 {"send": {"jsonrpc": "2.0", "id": 304, "method": "update_install", "params": {"consent": "INSTALL"}}}
 {"recv": {"jsonrpc": "2.0", "id": 304, "result": {"ok": true, "error": ""}}}
+{"note": "0.9.1: open what a search offered (a Windows Settings page); a path is never run."}
+{"send": {"jsonrpc": "2.0", "id": 401, "method": "run_action", "params": {"id": "set:bluetooth"}}}
+{"recv": {"jsonrpc": "2.0", "id": 401, "result": {"ok": true, "error": ""}}}
+{"send": {"jsonrpc": "2.0", "id": 402, "method": "run_action", "params": {"id": "C:\\Windows\\evil.exe"}}}
+{"recv": {"jsonrpc": "2.0", "id": 402, "result": {"ok": false, "error": "That isn't something NOBAD Find can open."}}}
 {"send": {"jsonrpc": "2.0", "id": 17, "method": "quit", "params": {"confirm": "no"}}}
 {"recv": {"jsonrpc": "2.0", "id": 17, "result": {"ok": false, "error": "Send confirm \"QUIT\" to quit NOBAD Find."}}}
 {"send": {"jsonrpc": "2.0", "id": 18, "method": "quit", "params": {}}}

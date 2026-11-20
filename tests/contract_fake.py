@@ -249,6 +249,13 @@ class FakeApi:
         self.dl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()), "error": ""}
         return {"ok": True}
 
+    def run_action(self, action_id):
+        """Like Api.run_action: ids from the launcher's table only (nothing is opened here)."""
+        from nobadfind import launcher
+        if action_id.startswith("set:") and any("set:" + x[0] == action_id for x in launcher.SETTINGS):
+            return {"ok": True, "error": ""}
+        return {"ok": False, "error": "That isn't something NOBAD Find can open."}
+
     def update_state(self):
         """Like Api.update_state with an update found: this is 0.0.0-contract, the newest release 0.9.0."""
         return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0,
