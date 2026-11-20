@@ -32,6 +32,7 @@ import '../../widgets/panels.dart';
 import '../../widgets/pressable.dart';
 import '../../widgets/smooth_scroll.dart';
 import 'filter_bar.dart';
+import 'need_hint.dart';
 import 'home_view.dart';
 import '../../platform/timing.dart';
 import '../../state/typed_filters.dart';
@@ -758,7 +759,7 @@ class _Meta extends StatelessWidget {
         spans.add(TextSpan(text: ' · $n', style: NbType.text(NbSize.small, c.warn)));
       }
     }
-    return Align(
+    final header = Align(
       alignment: Alignment.topLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
@@ -795,6 +796,25 @@ class _Meta extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (a.needs.isEmpty) return header;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        header,
+        Align(
+          alignment: Alignment.topLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 8),
+              child: NeedHint(a.needs.first, key: ValueKey('${a.needs.first.model}-${a.needs.first.state}'),
+                  onChanged: () => unawaited(f.run())),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -114,3 +114,67 @@ def test_photo_files_are_pinned():
         assert path and size > 1000 and len(sha) == 64 and int(sha, 16) >= 0
     assert photo.PHOTO_URL.startswith("https://huggingface.co/") and len(photo.PHOTO_REV) == 40
     assert winapi  # imported for the skip markers' module
+
+
+def test_a_filtered_photo_search_ranks_the_photos_that_fit(tmp_path):
+    """0.9.0: "dog in downloads" on a big PC. Hundreds of better dog photos elsewhere used to fill the photo
+    search's top few hundred before the Downloads filter was applied, leaving none from Downloads; now a filtered
+    photo search ranks only the photos that fit."""
+    import os
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    dl = os.path.join(os.path.expanduser("~"), "Downloads")
+    rows = [(f"C:\Pics\dog{i}.jpg", f"dog{i}.jpg", "C:\Pics", ".jpg", "image", 50_000, 1.0, 1.0, 1)
+            for i in range(400)]
+    rows.append((os.path.join(dl, "IMG_7.jpg"), "IMG_7.jpg", dl, ".jpg", "image", 50_000, 1.0, 1.0, 1))
+    s.upsert_files(rows)
+    ids = dict(s.q("SELECT name, id FROM files"))
+    vi = embed.VectorIndex(photo.PHOTO_DIM, ())
+
+    def at(dog):
+        v = np.zeros(photo.PHOTO_DIM, np.float32)
+        v[0], v[3] = dog, 1.0
+        return _unit(v)
+    strong, weak = at(3.0), at(1.0)
+    for name, fid in ids.items():
+        vec = weak if name == "IMG_7.jpg" else strong
+        s.set_photo_vector(fid, 1.0, vec.astype(np.float16).tobytes())
+    vi.add(list(ids.values()), np.stack([weak if n == "IMG_7.jpg" else strong for n in ids]))
+    r = search.search(s, "dog image in downloads", photo_text=_Text(), pindex=vi)["results"]
+    assert [x["name"] for x in r][:1] == ["IMG_7.jpg"]
+    s.close()
+
+
+def test_a_photo_search_says_what_it_needs(tmp_path, monkeypatch):
+    """0.9.0 `needs`: the photo model missing, switched off, or photos still being looked at."""
+    from nobadfind import api as api_mod, models, settings
+    s = _store(tmp_path)
+    st = settings.Settings(str(tmp_path / "s.json"))
+
+    class Ix:
+        embedder = None
+        photo_text = None
+        pindex = embed.VectorIndex(photo.PHOTO_DIM, ())
+        drive_list = []
+        photo_model = None
+
+        def roots(self, drives):
+            return []
+    a = api_mod.Api(s, st, Ix(), None)
+    ready = {"on": False}
+    monkeypatch.setattr(api_mod.models, "ready", lambda mid, d=None: ready["on"])
+    need = a.search("black shirt image")["needs"][0]
+    assert need["model"] == "photo" and need["state"] == "missing" and need["size_mb"] > 0
+    assert "photo model" in need["text"]
+    ready["on"] = True
+    st.update({"photo_meaning": False})
+    assert a.search("black shirt image")["needs"][0]["state"] == "off"
+    st.update({"photo_meaning": True})
+    a._totals = (0.0, None, {"photos": (8400, 8280)})
+    n = a.search("black shirt image")["needs"][0]
+    assert (n["state"], n["done"], n["total"]) == ("analyzing", 0, 8400)
+    assert "needs" not in a.search("lease.pdf")                     # nothing photo about it, and it's found
+    a._totals = (0.0, None, {"photos": (8400, 0)})
+    Ix.pindex.add([1], np.stack([_unit(np.ones(photo.PHOTO_DIM))]))
+    assert "needs" not in a.search("black shirt image")             # every photo looked at: nothing to say
+    assert models.size_mb(models.get(models.DEFAULT_PHOTO)) > 0
+    s.close()

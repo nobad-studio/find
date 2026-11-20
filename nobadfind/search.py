@@ -284,6 +284,7 @@ PHOTO_RATIO = 0.6
 PHOTO_SURE = 0.85
 W_PHOTO = 1.0
 W_PHOTO_ASKED = 1.8
+PHOTO_FILTER_MAX = 200_000         # photos ranked one by one in a filtered photo search
 
 
 def _photo_hits(store, q, photo_text, pindex, limit):
@@ -295,14 +296,23 @@ def _photo_hits(store, q, photo_text, pindex, limit):
     if q.kinds and "image" not in q.kinds:
         return [], {}                                 # "pdf ..." isn't asking about photos
     # the description in the user's own order ("2 boys", "dog on the beach"), not the bag of keywords
-    hits = pindex.search(photo_text.encode(q.meaning or q.text), k=limit * 3)
+    qvec = photo_text.encode(q.meaning or q.text)
+    where, args = _filters(q)
+    among = getattr(pindex, "search_among", None)
+    if where and among is not None:
+        # filtered ("in downloads", "from march"): rank only the photos that fit, so the PC's best few hundred
+        # elsewhere can't push every one of them out before the filter is even looked at
+        fit = [r[0] for r in store.q(f"SELECT f.id FROM files f JOIN pvecs p ON p.file_id = f.id "
+                                     f"WHERE length(p.v) > 0{where} LIMIT {PHOTO_FILTER_MAX}", tuple(args))]
+        hits = among(qvec, fit, k=limit * 3)
+    else:
+        hits = pindex.search(qvec, k=limit * 3)
     if not hits:
         return [], {}
     floor = max(PHOTO_MIN, hits[0][1] - PHOTO_SPREAD, hits[0][1] * PHOTO_RATIO)
     hits = [(fid, s) for fid, s in hits if s >= floor]
     if not hits:
         return [], {}
-    where, args = _filters(q)
     marks = ",".join("?" * len(hits))
     ok = {r[0] for r in store.q(f"SELECT f.id FROM files f WHERE f.id IN ({marks}){where}",
                                 (*[h[0] for h in hits], *args))}
@@ -405,8 +415,18 @@ class Cancelled(Exception):
     """A newer keystroke from the same client: this search's answer would be thrown away."""
 
 
+def _asks(q):
+    """What the question wants beyond names and words: what is in a photo (a description with a picture kind),
+    or what a file is about (a description at all). Api.search turns it into `needs`."""
+    words = (q.meaning or "").split()
+    described = bool(words)
+    # a description, not a file name: "lease.pdf" or "budget" alone are looked up, not described
+    sentence = len(words) >= 2 and not any("." in w or "\\" in w or "/" in w for w in words)
+    return {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+
+
 def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=None, here="", filters=None,
-           is_dir=None, roots=(), photo_text=None, pindex=None, cancelled=None, romanized=False):
+           is_dir=None, roots=(), photo_text=None, pindex=None, cancelled=None, romanized=False, asks=None):
     """drives: every drive the index knows, [{'root', 'type', 'label', 'present'}] (indexer.known_drives).
     here: the File Explorer folder NOBAD Find was opened from ("" if none). filters: the filter bar.
 
@@ -446,6 +466,9 @@ def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=N
             db.set_progress_handler(None, 0)
     r.pop("_time_from_text", None)
     r.pop("_soft", None)
+    got = r.pop("_asks", None)
+    if asks is not None and got:
+        asks.update(got)
     r["ms"] = round((time.perf_counter() - t_start) * 1000)
     return r
 
@@ -522,7 +545,7 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         return {"results": [], "understood": q.understood(), "terms": q.terms + q.phrases, "notes": q.notes,
                 "parts": chips, "best": None,
                 "ms": round((time.perf_counter() - t_start) * 1000), "_time_from_text": time_from_text,
-                "_soft": " ".join(q.soft)}
+                "_soft": " ".join(q.soft), "_asks": _asks(q)}
     # with an order asked for, the best matches are put in that order (weak matches don't jump ahead)
     pool = ranked[:max(limit + 1, SORT_POOL)] if (q.sort and not listing) else ranked[:limit + 1]
     info = {}
@@ -582,4 +605,4 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         best = {"id": gid, "reason": reason}
     return {"results": out, "understood": q.understood(), "terms": q.terms + q.phrases, "notes": q.notes,
             "parts": chips, "best": best, "more": more, "ms": round((time.perf_counter() - t_start) * 1000), "_time_from_text": time_from_text,
-            "_soft": " ".join(q.soft)}
+            "_soft": " ".join(q.soft), "_asks": _asks(q)}

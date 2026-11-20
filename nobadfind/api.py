@@ -77,13 +77,62 @@ class Api:
         if not text and not listing:
             return empty
         try:
-            return search(self._store, text, self._indexer.embedder, self._vindex, drives=self._indexer.drive_list,
-                          here=self.here, filters=filters, roots=self._indexer.roots(self._indexer.drive_list),
-                          photo_text=self._indexer.photo_text, pindex=self._indexer.pindex, cancelled=cancelled,
-                          romanized=self._romanized())
+            asks = {}
+            r = search(self._store, text, self._indexer.embedder, self._vindex, drives=self._indexer.drive_list,
+                       here=self.here, filters=filters, roots=self._indexer.roots(self._indexer.drive_list),
+                       photo_text=self._indexer.photo_text, pindex=self._indexer.pindex, cancelled=cancelled,
+                       romanized=self._romanized(), asks=asks)
+            if not r.get("cancelled"):
+                needs = self._needs(asks, len(r.get("results") or ()))
+                if needs:
+                    r["needs"] = needs
+            return r
         except Exception as e:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
+
+    def _needs(self, asks, found):
+        """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
+        counts come from the Index page's cached totals, never a count over the index per keystroke.
+        photo: the model is missing (offer the download), off (offer to switch it on), or still looking at photos.
+        meaning: only when a description found little and meaning search is missing or off."""
+        out, s = [], self._settings
+        if asks.get("photo"):
+            pid = self._photo_in_use()
+            spec = models.get(pid) or {}
+            mb = models.size_mb(spec) if spec else 0
+            pindex = getattr(self._indexer, "pindex", None)
+            ready_n = int(getattr(pindex, "n", 0) or 0)
+            if not models.ready(pid, self._mdir()):
+                out.append({"model": "photo", "state": "missing", "id": pid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": f"To find what is in your photos, NOBAD Find needs its photo model ({mb} MB, "
+                                    "downloaded once). Until then it only matches names and words in pictures."})
+            elif not s.get("photo_meaning"):
+                out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": "Photo search is off, so only names and words in pictures are matched. "
+                                    "Turn it on to search what is in them."})
+            else:
+                total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
+                if todo > 0 or ready_n == 0:
+                    shown = max(int(total), ready_n)
+                    text = (f"Still looking at your photos: {ready_n:,} of {shown:,} done. "
+                            "Photo results get better as it goes." if shown
+                            else "NOBAD Find hasn't looked at your photos yet. Photo results come as it does.")
+                    out.append({"model": "photo", "state": "analyzing", "id": pid, "size_mb": mb,
+                                "done": ready_n, "total": shown, "text": text})
+        if asks.get("meaning") and not asks.get("photo") and found < 5:
+            mid = self._text_in_use()
+            spec = models.get(mid) or {}
+            mb = models.size_mb(spec) if spec else 0
+            if not models.ready(mid, self._mdir()):
+                out.append({"model": "meaning", "state": "missing", "id": mid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": f"Search by meaning finds files by what they are about (\u201crent\u201d finds "
+                                    f"\u201clease\u201d). It needs a {mb} MB model, downloaded once."})
+            elif not s.get("semantic"):
+                out.append({"model": "meaning", "state": "off", "id": mid, "size_mb": mb, "done": 0, "total": 0,
+                            "text": "Search by meaning is off, so only names and words are matched. Turn it on to "
+                                    "find files by what they are about."})
+        return out
 
     # ---------- smart search (0.8.5): suggestions while typing, your own search history ----------
     def suggest(self, text, channel="main"):

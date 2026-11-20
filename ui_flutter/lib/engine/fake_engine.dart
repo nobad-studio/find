@@ -164,8 +164,12 @@ class FakeEngine implements EngineApi {
             for (final w in t.split(RegExp(r'\s+')))
               if (w.isNotEmpty && !_stop.contains(w)) w,
           ],
+          needs: searchNeeds,
         );
       });
+
+  /// What every search says it needs (0.9.0 `needs`); tests and the demo set it.
+  List<SearchNeed> searchNeeds = const [];
 
   static const _stop = {'from', 'in', 'my', 'the', 'last', 'week', 'photos', 'photo', 'pdf'};
 

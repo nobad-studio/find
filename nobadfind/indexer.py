@@ -25,6 +25,7 @@ RESCAN_EVERY = 6 * 3600
 NAMES_ONLY = "names only"         # text_err / photo err of a secret: its content is never read (scope.Rules)
 DEBOUNCE = 2.0
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
+ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
 MEANING_BACKOFF = (30, 1800)     # seconds before trying a failed meaning worker again: doubling, capped
 MEANING_TIMEOUT = 120           # seconds one batch of meaning vectors may take before its worker is replaced
 JOB_TIMEOUT = 300                # seconds one file may take before its reader is stopped
@@ -344,16 +345,26 @@ class Indexer:
                     self._start_watcher(restart=True)
                 else:
                     self._new_drives()
-                for step in (self._read_texts, lambda: self._read_texts(images=True), self._make_vectors,
-                             self._photo_vectors):
+                # Each step works for at most ROUND_S, then the next gets its turn; a step with work left asks for
+                # another round at once. So photos are looked at while a big index is still being read, not
+                # only after every text, scan and meaning vector of a million files is done (0.9.0).
+                self._more = False
+                for step in (self._photo_vectors, self._read_texts, lambda: self._read_texts(images=True),
+                             self._make_vectors):
                     if self._recycled:
                         break
+                    self._round_end = self._clock() + ROUND_S
+                    self._round_checks = 0
                     step()
+                self._round_end = None
                 if self._recycled:
                     # a long pause ended the workers: wait it out with none running, then start from the top
                     self._recycled = False
                     self._wait_while_paused()
                     continue
+                if self._more and not self.stop_ev.is_set():
+                    self._refresh_stats()
+                    continue                        # work left in a step: the next round now, no waiting
                 self.status["phase"] = "watching"
                 self._refresh_stats()
                 self._tidy_vectors()
@@ -366,6 +377,22 @@ class Indexer:
             log(f"indexer stopped: {type(e).__name__}: {e}", "error")
             self.status["phase"] = "error"
             self.status["error"] = f"{type(e).__name__}"
+
+    _round_end = None
+    _more = False
+
+    _round_checks = 0
+
+    def _round_over(self):
+        """This step's turn is up (ROUND_S): it stops after the batch in hand and the round goes on. A step always
+        gets its first batch of a turn, so every round moves the work on (never a round that does nothing)."""
+        if self._round_end is None:
+            return False
+        self._round_checks += 1
+        if self._round_checks > 1 and self._clock() >= self._round_end:
+            self._more = True
+            return True
+        return False
 
     def _refresh_stats(self):
         """The index counts for the status (six COUNTs over every row: about a second at a million entries), at
@@ -487,6 +514,8 @@ class Indexer:
                 if go is RECYCLE:
                     self._recycle(pool, "text readers")
                     return                          # the files in flight are read again, not marked
+                if self._round_over():
+                    return                          # the other steps' turn; the files in flight are read again
                 if self.paused_s:                   # paused time isn't reading time (JOB_TIMEOUT)
                     inflight = {f: (j, t + self.paused_s) for f, (j, t) in inflight.items()}
                 away = self._away()
@@ -680,6 +709,8 @@ class Indexer:
         while not self.stop_ev.is_set():
             if not self._meaning_pause():
                 return
+            if self._round_over():
+                return
             rows = self.store.chunks_without_vectors(128, next=bool(next))
             if not rows:
                 return
@@ -697,6 +728,8 @@ class Indexer:
     def _name_vectors(self, next=None):
         while not self.stop_ev.is_set():
             if not self._meaning_pause():
+                return
+            if self._round_over():
                 return
             rows = self.store.names_without_vectors(NAME_KINDS, 512, next=bool(next))
             if not rows:
@@ -782,6 +815,8 @@ class Indexer:
         starts them again (SigLIP and SigLIP 2 vectors are never compared)."""
         pid = models.selected(self.settings, "photo")
         if not pid or not models.ready(pid):
+            if self.settings.get("photo_meaning"):
+                log(f"photo meaning waits: the photo model {pid or '(none chosen)'} isn't fully on this PC")
             return
         try:
             had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
@@ -802,6 +837,8 @@ class Indexer:
             log(f"photo meaning unavailable: {type(e).__name__}", "warn")
             self.photo_text = None
 
+    _photos_logged = False
+
     def _photo_vectors(self):
         """What's in each photo, made in one separate low-priority process (photos are decoded there)."""
         if not self.photo_text or not self.settings.get("photo_meaning"):
@@ -821,12 +858,23 @@ class Indexer:
                 if go is RECYCLE:
                     self._recycle(pool, "photo reader")
                     return
+                if self._round_over():
+                    return                          # the other steps' turn; photos go on next round
                 rows = self._skip_secrets(
                     self.store.photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
                                               limit=PHOTO_BATCH if self._photo_one_by_one else 64),
                     lambda r: self.store.set_photo_vector(r[0], r[2], b"", NAMES_ONLY))
                 if not rows:
+                    if self._photos_logged:
+                        log(f"photos: all looked at ({self.pindex.n} ready)")
+                        self._photos_logged = False
                     return
+                if not self._photos_logged:
+                    left = self.store.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES,
+                                                           photo.MAX_PHOTO_BYTES) \
+                        if hasattr(self.store, "count_photos_to_read") else len(rows)
+                    log(f"photos: looking at {left} photos with {made_with} ({self.pindex.n} ready)")
+                    self._photos_logged = True
                 self.status["phase"] = "photos"
                 step = 1 if self._photo_one_by_one else PHOTO_BATCH
                 for i in range(0, len(rows), step):
