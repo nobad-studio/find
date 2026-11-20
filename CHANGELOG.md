@@ -1,5 +1,39 @@
 # NOBAD Find changelog
 
+## 0.9.1 · 2026-11-20
+
+### Fixed
+- Indexing stopped with the turbo index on: its helper read nothing and NOBAD Find waited for it for good (no
+  text, scans, photos or meaning, and file changes weren't followed). The helper's connection could not send
+  while it waited to receive; it now can, and a drive the helper stops answering for is read the normal way
+  after 2 minutes. Every step of the turbo index is in the log now.
+- NOBAD Find worked on one worker all day when Windows wrongly said a full-screen game was running (seen with
+  File Explorer in front). A game only counts when its window really fills the screen.
+- Pause and Resume take effect at once, and the Index page shows it the moment you press the button.
+- Recent decisions on the Index page stay in a fixed box instead of pushing the page down.
+- The Index page asks for its first numbers sooner.
+
+### Search
+- Your own folders first: Downloads, Desktop, Documents, Pictures, Videos, Music and OneDrive are read, looked at
+  and understood before the rest of the PC.
+- A photo search in a folder ("in downloads black shirt image") looks at that folder's photos first and right
+  away, says how many are done there, and shows new matches by itself as they come.
+- Programming languages: "python", "c# code", "rust project", "sql scripts" and about 60 more find files in that
+  language. Words that are also ordinary words (python, go, java, swift, ...) count when typed alone or with
+  "code", "files", "project"; "python flask" tries Python files first.
+- Keys, tokens and long random strings ("sk-proj-...", an ID, a hash) are found inside files, even as part of a
+  longer string (up to 3 seconds of looking, your folders first).
+
+### Open settings and apps
+- Type "open bluetooth", "turn off wifi", "display settings", "brightness", "dark mode", "device manager",
+  "open chrome" or an app's name: the Windows Settings page, Windows tool or app shows above the results, with
+  Open; Enter opens it when you typed "open ...". Apps come from Windows' own Start list (with their version,
+  publisher and install folder), read in the background.
+
+### Changed
+- One NOBAD Find window with everything: the quick find bar is off (and no longer in Settings or the tray menu).
+- Shortcuts can be cleared (Settings > Shortcuts > Clear); the Start menu and the icon still open NOBAD Find.
+
 ## 0.9.0 · 2026-11-20
 
 ### Shortcuts and closing
