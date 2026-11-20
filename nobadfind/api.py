@@ -3,6 +3,7 @@
 The UI never hands the engine a path to open: it sends a result id, and the path comes from the index.
 """
 import ctypes
+import json
 import os
 import subprocess
 import sys
@@ -531,21 +532,32 @@ class Api:
         changed = self._settings.update(changes)
         if "autostart" in changed:
             set_autostart(self._settings.get("autostart"))
+        # 0.9.3: work on the index waits for its write lock (an indexing batch can hold it for seconds), so it
+        # runs after the answer: the switch takes at once and the work follows in order (self._later).
         if "search_history" in changed and not self._settings.get("search_history"):
-            self.history_clear()                     # off: what was kept goes now, not later
+            self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):
-            self._remove_secrets()                   # off: their names leave the index now, not at the next walk
+            self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
         if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets"}:
             self._indexer.rescan()
         for key, kind in (("index_removable", "removable"), ("index_network", "network")):
             if key in changed:
                 if not self._settings.get(key):          # turned off: those drives leave the index
-                    self._store.remove_paths([d["root"].rstrip("\\") for d in self._indexer.drive_list
-                                              if d.get("type") == kind])
+                    roots = [d["root"].rstrip("\\") for d in self._indexer.drive_list if d.get("type") == kind]
+                    self._later(lambda r=roots: self._store.remove_paths(r))
                 self._indexer.wake.set()
         if "photo_model" in changed and self._settings.get("photo_meaning") and "photo_meaning" not in changed:
             threading.Thread(target=self._indexer._load_photo, daemon=True).start()
             self._indexer.wake.set()
+        if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
+            self._indexer.replan()                     # 0.9.3: the new workers now, no restart
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call"}:
+            g = getattr(self._indexer, "governor", None)
+            if g is not None and hasattr(g, "now"):
+                g.now()
+        if "models_stay_loaded" in changed and self._settings.get("models_stay_loaded") \
+                and hasattr(self._indexer, "warm_models"):
+            threading.Thread(target=self._indexer.warm_models, daemon=True, name="warm").start()
         if "tray" in changed and getattr(self, "_on_tray", None) is not None:
             self._on_tray(bool(self._settings.get("tray")))
         hotkeys = None
@@ -563,7 +575,7 @@ class Api:
             self._indexer.wake.set()
         if "ocr" in changed:
             if not self._settings.get("ocr"):
-                self._store.set_meta("ocr_pass", "0")    # turned on again later: re-read the scans then
+                self._later(lambda: self._store.set_meta("ocr_pass", "0"))   # on again later: re-read the scans
             self._indexer.wake.set()
         if "semantic" in changed and self._settings.get("semantic"):
             threading.Thread(target=self._indexer._load_embedder, daemon=True).start()
@@ -572,6 +584,13 @@ class Api:
         if hotkeys is not None:
             out["hotkeys"] = hotkeys
         return out
+
+    def _later(self, fn):
+        """Settings work on the index, after the answer, one at a time in order (tests: at once)."""
+        run = getattr(self, "_settings_worker", None)
+        if run is None:
+            return fn()
+        run(fn)
 
     def hotkey_state(self):
         """{hotkey, bar_hotkey: {spec, state}}: state ok | taken | reserved | invalid | off."""
@@ -613,9 +632,49 @@ class Api:
             self._store.remove_paths(gone)
         return len(gone)
 
+    SCOPE_FRESH_S = 300
+
+    def _scope_key(self, drives):
+        s = self._settings
+        return json.dumps([[s.get(k) for k in ("scope", "roots", "exclude", "include_system", "include_caches",
+                                               "include_secrets", "index_removable", "index_network")],
+                           [(d.get("root"), d.get("type")) for d in drives]], default=str)
+
     def scope_info(self):
-        """What is indexed: the scope, its folders and every category with what's in it (scope.info)."""
-        return scope.info(self._settings, winapi.drives(), self._store)
+        """What is indexed: the scope, its folders and every category with what's in it (scope.info).
+        0.9.3: the counts (a range count over the index, about 0.6 s on a whole-PC index) are kept for a few
+        minutes and refreshed in the background, so Settings > What to index opens at once. A changed setting or
+        drive counts again."""
+        drives = winapi.drives()
+        key = self._scope_key(drives)
+        got = getattr(self, "_scope_cache", None)
+        if got is not None and got[0] == key:
+            if time.time() - got[1] > self.SCOPE_FRESH_S:
+                self.warm_scope_info()                 # this answer now, fresh counts for the next one
+            return got[2]
+        return self._count_scope(drives, key)
+
+    def _count_scope(self, drives, key):
+        r = scope.info(self._settings, drives, self._store)
+        self._scope_cache = (key, time.time(), r)
+        return r
+
+    def warm_scope_info(self):
+        """Count in the background (after a scan, and every few minutes while the engine runs)."""
+        if getattr(self, "_scope_busy", False):
+            return False
+        self._scope_busy = True
+
+        def work():
+            try:
+                drives = winapi.drives()
+                self._count_scope(drives, self._scope_key(drives))
+            except Exception as e:
+                log(f"scope counts failed: {type(e).__name__}", "warn")
+            finally:
+                self._scope_busy = False
+        threading.Thread(target=work, daemon=True, name="scope-counts").start()
+        return True
 
     # ---------- turbo index ----------
     def turbo_state(self):

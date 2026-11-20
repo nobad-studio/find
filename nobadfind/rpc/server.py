@@ -18,11 +18,15 @@ import ctypes
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
 from ctypes import wintypes
 
 from ..log import log
 from .protocol import (INTERNAL_ERROR, INVALID_REQUEST, MAX_MESSAGE, LineBuffer, encode, error, handle_line, method_of,
                        run_after)
+
+SLOW_LOG_MS = 300                    # answers slower than this are logged (method name, time)
+
 
 MAX_CLIENTS = 8
 BUF = 64 * 1024
@@ -359,6 +363,10 @@ class Server:
         if reply is not None and conn.alive and not conn.send(reply):
             self.drop(conn)
         run_after(after)                                       # e.g. quit: only now may the engine stop
+        took = (time.perf_counter() - t0) * 1000
+        m = method_of(line)
+        if m != "search" and m not in self.slow and took >= SLOW_LOG_MS:   # 0.9.3: slow answers, by name only
+            log(f"rpc {str(m)[:40]} {took:.0f} ms")
         if method_of(line) == "search":                       # how long it took, never the words searched for
             r = reply.get("result") if isinstance(reply, dict) else None
             log(f"rpc search {(time.perf_counter() - t0) * 1000:.1f} ms "

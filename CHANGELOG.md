@@ -1,5 +1,45 @@
 # NOBAD Find changelog
 
+## 0.9.3 · 2026-11-20
+
+### Search bar
+- Like Spotlight: with NOBAD Find's window closed, Win+Shift+F opens a small search bar over any app; with the
+  window open, it goes to the window's search box. The bar shows Windows settings, tools and apps too ("open
+  bluetooth", "battery percentage"), with Open. Settings > Shortcuts > Search bar turns it off (the shortcut then
+  always opens the window). Updating turns the bar on once.
+
+### Speed
+- Settings > Performance > Speed: Balanced (as before) or Boost. Boost uses every processor thread for reading
+  files, photos and meaning, even while you use the PC.
+- Safety net (on by default): even at Boost, NOBAD Find works gently when other apps need the processor, uses one
+  worker when free memory drops under 3 GB, and pauses as before for an app that stops responding, a busy PC or
+  low memory. Off: only a frozen app and very low memory pause it.
+- Text reading workers, Boost and the Safety net take effect the moment you change them; the worker count used to
+  wait for a restart.
+- Keep models loaded: turning it on loads the models at once. When NOBAD Find uses a lot of memory it now
+  restarts its workers first and lets go of the models only if memory stays high (it used to drop them at once,
+  so they seemed to unload even with the setting on). The log says why a model was released.
+
+### New files first
+- A file you just downloaded, saved or changed is read, looked at (photos) and understood before everything
+  else. In your own folders NOBAD Find also moves on to it within moments instead of after the queue; changes
+  elsewhere (app caches change all the time) go to the front of the queue only.
+
+### Index page
+- A new look, like the Models page: each step is a card with a coloured tile, its state, a meter and its numbers
+  as chips; the numbers have icons and shorter labels.
+- Scan speed shows the last scan's speed instead of a dash (scans by the turbo index count too).
+- If the first numbers don't come within 3 seconds, the page asks again instead of waiting.
+
+### Settings
+- What to index opens at once: its counts (up to 4 seconds on a whole-PC index) are kept and refreshed in the
+  background.
+- Every switch answers at once: work it causes on the index (clearing search history, removing secret names or a
+  drive's files) runs right after, instead of waiting for an indexing batch first.
+
+### Fixed
+- Slow answers from the engine are written to the log by name, so a slow page can be traced.
+
 ## 0.9.2 · 2026-11-20
 
 ### Fixed

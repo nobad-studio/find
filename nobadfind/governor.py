@@ -26,6 +26,7 @@ LIMITS = {
     "HOT_GPU": 85,
     "HOT_FOR": 10,
     "LOW_FREE_MB": 1500,
+    "TIGHT_FREE_MB": 3000,   # safety net at Boost: below this, one worker (Light) before memory runs out
     "STEP_UP_AFTER": 30,
     "IDLE_AFTER": 120,
     "IDLE_CPU_MAX": 50,
@@ -127,10 +128,11 @@ class Brain:
             self._lag_recorded = False
             return PAUSED, early
 
+        net = self.settings.get("safety_net") is not False
         lag = None
         if s.hung:
             lag = f"Paused: {_app(s.foreground)} isn't responding"
-        elif hot_long:
+        elif hot_long and net:
             lag = f"Paused: the PC is busy (CPU {round(others)}%)" if (
                 others is not None and others >= LIMITS["HOT_CPU"]
             ) else f"Paused: the PC is busy (graphics {round(s.gpu)}%)"
@@ -145,6 +147,11 @@ class Brain:
                 self._lag_recorded = True
             return PAUSED, lag
         self._lag_recorded = False
+        boost = self.settings.get("power") == "boost"
+        if net and boost and s.free_mb < LIMITS["TIGHT_FREE_MB"]:
+            return LIGHT, f"Light: memory is getting tight ({s.free_mb} MB free), so NOBAD Find uses 1 worker"
+        if net and hot and boost:
+            return GENTLE, "Gentle: other apps need the processor, so Boost steps down"
 
         if s.game:
             mode = self._games_mode()
@@ -159,7 +166,9 @@ class Brain:
                                "so NOBAD Find uses 1 worker")
         if (s.idle_s >= LIMITS["IDLE_AFTER"] and others is not None
                 and others < LIMITS["IDLE_CPU_MAX"]):
-            return FULL, "Full: you're away"
+            return FULL, "Boost: every thread" if boost else "Full: you're away"
+        if boost:
+            return FULL, "Boost: every thread, even while you use the PC"
         return GENTLE, "Gentle: you're using the PC"
 
     def decide(self, s):
@@ -249,6 +258,10 @@ class Governor(threading.Thread):
         self.brain.pause_until = time.time() + max(0, int(seconds))
         self.activity.add("info", f"You paused NOBAD Find for {int(seconds) // 60} min")
         self._now.set()                             # decide again at once, not at the next tick
+
+    def now(self):
+        """Settings changed how hard to work: decide again at once, not at the next tick."""
+        self._now.set()
 
     def resume(self):
         self.brain.pause_until = 0.0

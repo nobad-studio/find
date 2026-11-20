@@ -16,6 +16,7 @@ One engine per index:
 import ctypes
 import hashlib
 import os
+import queue
 import threading
 
 from . import embed, jobs, winapi
@@ -48,9 +49,11 @@ def _single(name):
 
 
 def here_finder(api, events, ui_pids, foreground=winapi.foreground_window, window_pid=winapi.window_pid,
-                folder=winapi.foreground_folder, spawn=None):
+                folder=winapi.foreground_folder, spawn=None, bar_first=lambda: False, main_open=lambda: False):
     """The main hotkey: show the main window, and find "here" (the File Explorer folder in front) on a thread.
-    Pressed while a NOBAD Find window is in front, "here" stays what it was. A newer press wins."""
+    Pressed while a NOBAD Find window is in front, "here" stays what it was. A newer press wins.
+    0.9.3: with the bar on (bar_first) and the main window not open, it shows the search bar instead (like
+    Spotlight); with the main window open it goes to the window's search box."""
     state = {"n": 0}
     spawn = spawn or (lambda fn: threading.Thread(target=fn, daemon=True, name="here").start())
 
@@ -62,7 +65,7 @@ def here_finder(api, events, ui_pids, foreground=winapi.foreground_window, windo
         api.here = ""
         state["n"] += 1
         mine = state["n"]
-        events.show("main")
+        events.show("bar" if bar_first() and not main_open() else "main")
 
         def find():
             path = folder(front) if front else ""
@@ -290,7 +293,8 @@ class Wiring:
             make = hotkey.Hotkey
         hk_id = 1 if which == "hotkey" else 2
         if which == "hotkey":
-            cb = here_finder(self.api, self.ui, self.ui_pids)
+            cb = here_finder(self.api, self.ui, self.ui_pids, bar_first=lambda: bool(self.settings.get("bar")),
+                             main_open=lambda: bool(getattr(self.events, "showing", lambda w: False)("main")))
         else:
             def cb():
                 self.ui.show("bar")
@@ -448,7 +452,8 @@ def run(stop=None, open_ui=None, lock=None):
     activity = Activity()
     pieces = {}
     hooks = worker_hooks(pieces)
-    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")})
+    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")},
+                        keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
     governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
     measure = measure_overrides(os.environ)
@@ -492,6 +497,17 @@ def run(stop=None, open_ui=None, lock=None):
             tray_box["icon"].stop()
             tray_box["icon"] = None
     api._on_tray = on_tray
+    later = queue.Queue()
+
+    def settings_worker():                                 # Settings' index work, after the answer, in order
+        while True:
+            fn = later.get()
+            try:
+                fn()
+            except Exception as e:
+                log(f"settings work failed: {type(e).__name__}", "warn")
+    threading.Thread(target=settings_worker, daemon=True, name="settings-work").start()
+    api._settings_worker = later.put
     wiring.tray_ok = lambda: tray_box["icon"] is not None
     wiring.balloon = lambda title, text: bool(tray_box["icon"] and tray_box["icon"].balloon(title, text))
     log(f"engine ready (pid {os.getpid()})")
@@ -504,6 +520,8 @@ def run(stop=None, open_ui=None, lock=None):
                 updater.check_in_background()
             if n % 120 == 20:                                 # the Start list: at start, then every few hours
                 launcher.refresh_in_background()
+            if n % 600 == 30:                                 # What to index's counts, ready before it opens
+                api.warm_scope_info()
             icon = tray_box["icon"]
             if icon is not None and n % 10 == 0:          # the tooltip follows the level and the count (5 s)
                 now = icon.tip()

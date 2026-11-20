@@ -48,6 +48,8 @@ def coerce(key, value):
         return value if value in ("", "english", "multilingual", "hindi") else d
     if key == "games_mode":
         return value if value in ("smart", "always", "off") else d
+    if key == "power":
+        return value if value in ("balanced", "boost") else d
     if key == "settings_rev":
         return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1000 else d
     if key == "wsearch_prev":
@@ -86,7 +88,10 @@ class Settings:
     def _migrate(self):
         """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
         rev = self.data.get("settings_rev", 0)
+        if rev >= 3:
+            return
         if rev >= 2:
+            self._migrate_3()
             return
         if rev >= 1:
             self._migrate_2()
@@ -107,6 +112,13 @@ class Settings:
         """0.9.1 (maintainer, 2026-11-20): one NOBAD Find window with everything: the quick find bar goes off."""
         self.data["bar"] = False
         self.data["settings_rev"] = 2
+        self._migrate_3()
+
+    def _migrate_3(self):
+        """0.9.3 (maintainer, 2026-11-20): the shortcut opens the search bar when the window isn't open (like
+        Spotlight), so the bar is on again."""
+        self.data["bar"] = True
+        self.data["settings_rev"] = 3
         try:
             self._save()
         except OSError:

@@ -2459,6 +2459,17 @@
           "maximum": 64,
           "description": "0 = picked from the CPU."
         },
+        "power": {
+          "enum": [
+            "balanced",
+            "boost"
+          ],
+          "description": "0.9.3: balanced leaves you room; boost uses every thread, even while you use the PC."
+        },
+        "safety_net": {
+          "type": "boolean",
+          "description": "0.9.3: even at Boost, step down and free memory before the PC struggles."
+        },
         "hotkey": {
           "$ref": "#/$defs/hotkey"
         },
@@ -2575,6 +2586,8 @@
         "bar_hotkey",
         "pause_on_call",
         "workers",
+        "power",
+        "safety_net",
         "hotkey",
         "autostart",
         "hide_after_open",
@@ -2673,6 +2686,15 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 64
+        },
+        "power": {
+          "enum": [
+            "balanced",
+            "boost"
+          ]
+        },
+        "safety_net": {
+          "type": "boolean"
         },
         "hotkey": {
           "$ref": "#/$defs/hotkey"

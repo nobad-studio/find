@@ -26,6 +26,30 @@ class PerformancePage extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SettingsGroup(
+          'Speed',
+          rows: [
+            ChoiceSetting(
+              'power',
+              'How hard NOBAD Find works',
+              'Balanced leaves threads free for you. Boost uses every thread for reading, photos and meaning, even '
+                  'while you use the PC. Changes apply at once.',
+              [('balanced', 'Balanced (recommended)'), ('boost', 'Boost: every thread')],
+            ),
+            SwitchSetting(
+              'safety_net',
+              'Safety net',
+              'Even at Boost, NOBAD Find steps down when other apps need the processor or memory gets tight, and '
+                  'pauses before the PC struggles. Off: only a frozen app or very low memory pause it.',
+            ),
+            TextSetting(
+              'workers',
+              'Text reading workers',
+              "0 = choose from your CPU (Balanced keeps threads free, Boost uses them all). Applies at once.",
+              number: true,
+            ),
+          ],
+        ),
+        const SettingsGroup(
           'Staying out of your way',
           rows: [
             ChoiceSetting(
@@ -54,12 +78,6 @@ class PerformancePage extends StatelessWidget {
               'tray',
               'Show NOBAD Find in the notification area',
               'The icon works with the window closed: open NOBAD Find, pause and quit.',
-            ),
-            TextSetting(
-              'workers',
-              'Text reading workers',
-              "0 = choose from your CPU: two threads stay free while you use the PC, one when you're away.",
-              number: true,
             ),
           ],
         ),

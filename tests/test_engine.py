@@ -226,7 +226,23 @@ def test_hotkeys_with_no_ui_go_through_the_launcher(tmp_path):
     keys = w.start()
     keys[1].callback()
     keys[0].callback()
-    assert ui.asked == ["bar", "main"]
+    assert ui.asked == ["bar", "bar"]      # 0.9.3: no window open, the bar on: the shortcut opens the bar
+    st.update({"bar": False})
+    w._bind_all(False)
+    w.keys[0].callback()
+    assert ui.asked[-1] == "main"          # the bar off: the window, as before
+
+
+def test_the_shortcut_goes_to_the_open_window(tmp_path):
+    """0.9.3: with the main window open, the shortcut brings it up (its search box), not the bar."""
+    api = type("A", (), {"here": ""})()
+    shown = []
+    ev = type("U", (), {"show": lambda self, w: shown.append(w), "here": lambda self, p: None})()
+    press = engine.here_finder(api, ev, lambda: set(), foreground=lambda: 0, window_pid=lambda h: 0,
+                               folder=lambda h: "", spawn=lambda fn: fn(), bar_first=lambda: True,
+                               main_open=lambda: True)
+    press()
+    assert shown == ["main"]
 
 
 def test_tray_actions(tmp_path):

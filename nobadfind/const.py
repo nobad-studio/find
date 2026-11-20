@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "0.9.2"
+APP_VER = "0.9.3"
 
 # NOBAD Find runs as the normal user, so its data lives in the user's own profile (not readable by other users).
 DATA_DIR = os.environ.get("NOBAD_FIND_DATA_DIR") or os.path.join(
@@ -79,14 +79,17 @@ DEFAULTS = {
     "keep_background": False,
     "stay_running": True,           # on (0.9.0): closing the window keeps NOBAD Find in the notification area so the
                                     # hotkeys work; off: closing the last window quits it completely (no process left)
-    "bar": False,                   # 0.9.1 (maintainer): one window with everything; the quick find bar is off
+    "bar": True,                    # 0.9.3 (maintainer): the shortcut opens the search bar (like Spotlight) when the
+                                    # window isn't open; with the window open it goes to the window's search box
     "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
+    "power": "balanced",            # 0.9.3: balanced (leaves you room) | boost (every thread, even while you use the PC)
+    "safety_net": True,             # 0.9.3: even at Boost, step down and free memory before the PC struggles
     "hotkey": "win+shift+f",
     "autostart": False,
     "hide_after_open": False,       # Enter opens the file and keeps the window up (on: hide it, like a launcher)
-    "settings_rev": 2,              # which one-time settings changes (Settings.MIGRATIONS) have run; engine-only
+    "settings_rev": 3,              # which one-time settings changes (Settings.MIGRATIONS) have run; engine-only
     "wsearch_prev": "",             # Windows Search start type saved before NOBAD Find turned it off
     "theme": "dark",
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)

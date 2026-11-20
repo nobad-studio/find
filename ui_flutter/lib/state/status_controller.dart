@@ -123,11 +123,23 @@ class StatusController extends ChangeNotifier {
     }
   }
 
+  /// How long the Indexing page waits for its first full status before asking again (0.9.3).
+  static const firstDetailsWait = Duration(seconds: 3);
+
   Future<void> _refreshDetails({bool subscribe = false}) async {
     try {
       // 0.9.1: the subscription and the first full status together, not one after the other
       final sub = subscribe ? engine.watchDetails(true) : Future<void>.value();
-      _takeFull(await engine.statusFull());
+      // 0.9.3: a first answer that doesn't come quickly is asked for again (up to three times), so the page
+      // never sits on its placeholder; a status_full event that comes first fills it too.
+      for (var i = 0; i < 3; i++) {
+        try {
+          _takeFull(await engine.statusFull().timeout(firstDetailsWait));
+          break;
+        } on TimeoutException {
+          if (_details != null || _watchers == 0) break;
+        }
+      }
       _changed();
       await sub;
       try {

@@ -91,6 +91,8 @@ void main() {
       await tester.tap(find.text('Performance'));
       await tester.pumpAndSettle();
       expect(find.text('Cyberpunk2077'), findsOneWidget);
+      await tester.ensureVisible(find.text('Forget').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Forget').first);
       await tester.pumpAndSettle();
       expect(find.text('Cyberpunk2077'), findsNothing);

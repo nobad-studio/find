@@ -63,11 +63,12 @@ class Welcome extends StatelessWidget {
                 ),
                 const SizedBox(height: NbSpace.x6),
                 if (st.text('hotkey').isNotEmpty)
-                  _Fact(keys: keysOf(st.text('hotkey')), text: 'Opens this window from anywhere.'),
-                if (st.flag('bar'))
                   _Fact(
-                    keys: keysOf(st.text('bar_hotkey')),
-                    text: 'The quick find bar: a small search box over whatever you are doing.',
+                    keys: keysOf(st.text('hotkey')),
+                    text: st.flag('bar')
+                        ? 'Search from anywhere: a small search bar over whatever you are doing, or this window '
+                              'when it is open.'
+                        : 'Opens this window from anywhere.',
                   ),
                 const _Fact(
                   text:

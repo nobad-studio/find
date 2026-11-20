@@ -87,3 +87,38 @@ def test_a_photo_search_in_a_folder_looks_at_that_folder_now(tmp_path, monkeypat
     a.search("black shirt image")                                                  # no folder: nothing to hurry
     assert hurried == []
     s.close()
+
+
+def test_new_files_jump_every_queue(tmp_path):
+    """0.9.3: a file that just appeared (the live watcher) is read before your folders and the rest."""
+    from nobadfind.store import Store
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    dl, other = r"C:\Users\me\Downloads", r"C:\Program Files\App"
+    s.upsert_files([(other + r"\a.txt", "a.txt", other, ".txt", "text", 10, 3.0, 1.0, 1),
+                    (dl + r"\b.txt", "b.txt", dl, ".txt", "text", 10, 2.0, 1.0, 1),
+                    (other + r"\new.txt", "new.txt", other, ".txt", "text", 10, 1.0, 1.0, 1)])
+    s.prefer_roots = (dl,)
+    assert [r[1] for r in s.needs_text({".txt"}, 100, limit=3)][0].endswith("b.txt")
+    s.mark_fresh([other + r"\new.txt"])
+    got = [r[1] for r in s.needs_text({".txt"}, 100, limit=3)]
+    assert got[0].endswith("new.txt") and got[1].endswith("b.txt") and len(got) == 3
+    s.mark_fresh([other + r"\new.txt"], now=0)                     # long ago: no longer first
+    assert [r[1] for r in s.needs_text({".txt"}, 100, limit=3)][0].endswith("b.txt")
+    s.close()
+
+
+def test_a_new_file_in_your_folders_cuts_the_turn_short(tmp_path):
+    from nobadfind import indexer
+    ix = indexer.Indexer.__new__(indexer.Indexer)
+    marked = []
+    ix.store = type("St", (), {"prefer_roots": (r"C:\Users\me\Downloads",), "mark_fresh": lambda self, p: marked.extend(p)})()
+    ix._clock = lambda: 100.0
+    ix._round_end = 999.0
+    ix.wake = type("E", (), {"set": lambda self: None})()
+    ix._fresh_files([r"C:\Program Files\App\cache.bin"])
+    assert ix._round_end == 999.0 and marked                         # elsewhere: front of the queue only
+    ix._fresh_files([r"C:\Users\me\Downloads\photo.jpg"])
+    assert ix._round_end == 0.0                                      # your folder: the turn ends now
+    ix._round_end = 999.0
+    ix._fresh_files([r"C:\Users\me\Downloads\photo2.jpg"])
+    assert ix._round_end == 999.0                                    # not again within 30 s

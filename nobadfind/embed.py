@@ -250,7 +250,8 @@ class Lazy:
             if self._model is not None and time.monotonic() - self._used > (self.IDLE if idle is None else idle):
                 self._model = None
                 gc.collect()
-                log(f"{self.name} model released (not used for a while)")
+                log(f"{self.name} model released " + ("(not used for a while)" if idle is None
+                                                       else "(NOBAD Find needed the memory)"))
                 return True
         finally:
             self._lock.release()
