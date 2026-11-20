@@ -57,7 +57,12 @@ class _ModelsPageState extends State<ModelsPage> {
     builder: (context, _) {
       final m = _m!;
       return switch (m.load) {
-        ModelsLoad.loading => const SizedBox(height: 200),
+        ModelsLoad.loading => SizedBox(
+          height: 120,
+          child: Center(
+            child: Text('Loading the models…', style: NbType.text(13, NbColors.of(context).muted)),
+          ),
+        ),
         ModelsLoad.ready => _Catalogue(m),
         ModelsLoad.needsNewer => _Legacy(note: 'Choosing between models needs a newer engine. ${m.why}'.trim()),
         ModelsLoad.offline => const _Legacy(),

@@ -331,10 +331,11 @@ class Api:
         """(total, still to do) for each phase that counts files (cached TOTALS_TTL seconds)."""
         key = (self._settings.get("content_max_mb"), self._settings.get("src_mail"))
         at, k, counts = self._totals
-        if not counts:
-            return self._refresh(now, key)                  # the very first call computes inline
         ttl = max(TOTALS_TTL, COUNT_SHARE * getattr(self, "_totals_took", 0.0))
-        if (k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
+        # Never inline, not even the first time (0.9.0): on a million-entry index the counts take seconds, and every
+        # status poll that waited for them held one of the pipe's few request threads, so the Index page and then
+        # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
+        if (not counts or k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")
             self._refresher.start()                         # the COUNT queries never hold up a status poll
         return counts
@@ -377,6 +378,7 @@ class Api:
               "watching": True,
               "rebuild": cur == "rebuild" or "rebuild" in counts}
         counter = {"text": "texts", "ocr": "texts", "meaning": "vectors", "photos": "photos", "rebuild": "rebuilt"}
+        counting = not counts                     # the first count is still running: nothing is known to be done
         out = []
         for pid, label in PHASES:
             total = remaining = None
@@ -391,6 +393,8 @@ class Api:
             elif pid == "names":
                 state = "waiting" if cur in ("starting", "error", None) else "done"
             elif pid == "watching":
+                state = "waiting"
+            elif counting and pid in counter:
                 state = "waiting"
             else:
                 state = "done" if not remaining else "waiting"
