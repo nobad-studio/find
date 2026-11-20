@@ -15,6 +15,7 @@ import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../engine/models/format.dart';
 import '../../engine/models/status.dart';
+import '../../widgets/badges.dart';
 import '../../widgets/smooth_scroll.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/icons.dart';
@@ -153,34 +154,26 @@ class _IndexingScreenState extends State<IndexingScreen> {
   }
 
   List<Widget> _details(BuildContext context, AppScope s, IndexDetails d) {
-    final c = NbColors.of(context);
     final r = d.resources;
     final phaseLabel = s.status.status?.phaseLabel ?? '';
     return [
       const SectionTitle('What it is doing', top: NbSpace.x4),
-      NbPanel(
-        padding: EdgeInsets.zero,
-        clip: true,
-        child: Column(
-          children: [
-            for (var i = 0; i < d.phases.length; i++) ...[
-              if (i > 0) Container(height: 1, color: c.line),
-              _PhaseRowView(d.phases[i]),
-            ],
-          ],
-        ),
-      ),
+      TileGrid(min: 270, children: [for (final p in d.phases) _PhaseCard(p)]),
       const SectionTitle('What NOBAD Find uses'),
       TileGrid(
         min: 150,
         children: [
-          StatTile(value: pct(r.cpu), label: 'Processor'),
-          StatTile(value: r.memoryMb != null ? mb(r.memoryMb) : '–', label: 'Memory'),
-          StatTile(
+          NbStat(hue: NbHue.use, glyph: NbGlyph.gauge, value: pct(r.cpu), label: 'Processor'),
+          NbStat(hue: NbHue.use, glyph: NbGlyph.chip, value: r.memoryMb != null ? mb(r.memoryMb) : '–',
+              label: 'Memory'),
+          NbStat(
+            hue: NbHue.use,
+            glyph: NbGlyph.drive,
             value: r.readMbS != null ? '${r.readMbS!.toStringAsFixed(r.readMbS! < 10 ? 1 : 0)} MB/s' : '–',
             label: 'Disk reading',
           ),
-          StatTile(value: r.gpu == null ? 'Not used' : pct(r.gpu), label: 'Graphics card'),
+          NbStat(hue: NbHue.use, glyph: NbGlyph.media, value: r.gpu == null ? 'Not used' : pct(r.gpu),
+              label: 'Graphics card'),
         ],
       ),
       const SizedBox(height: 10),
@@ -195,36 +188,45 @@ class _IndexingScreenState extends State<IndexingScreen> {
       _Activity(s.status.activity),
       const SectionTitle('Index at a glance'),
       TileGrid(
-        min: 170,
+        min: 200,
         children: [
-          StatTile(value: phaseLabel, label: 'Status', live: s.status.status?.phase != 'watching'),
-          StatTile(value: groupDigits(s.status.status?.files ?? 0), label: 'Files and folders'),
-          StatTile(value: groupDigits(d.withText), label: 'Files with readable text'),
-          StatTile(value: groupDigits(d.vectors + d.nameVectors), label: 'Meaning vectors (text + names)'),
-          StatTile(value: groupDigits(d.photoVectors), label: 'Photos understood'),
-          StatTile(
+          NbStat(hue: NbHue.library, glyph: NbGlyph.rings, value: phaseLabel, label: 'Status',
+              live: s.status.status?.phase != 'watching'),
+          NbStat(hue: NbHue.folder, glyph: NbGlyph.folder, value: groupDigits(s.status.status?.files ?? 0),
+              label: 'Files and folders'),
+          NbStat(hue: NbHue.text, glyph: NbGlyph.doc, value: groupDigits(d.withText), label: 'With readable text'),
+          NbStat(hue: NbHue.meaning, glyph: NbGlyph.search, value: groupDigits(d.vectors + d.nameVectors),
+              label: 'Understood by meaning'),
+          NbStat(hue: NbHue.photo, glyph: NbGlyph.image, value: groupDigits(d.photoVectors),
+              label: 'Photos understood'),
+          NbStat(
+            hue: NbHue.use,
+            glyph: NbGlyph.chip,
             value: d.memoryMb != null ? '${d.memoryMb!.round()} MB' : '–',
-            label: d.modelsLoaded.isNotEmpty
-                ? 'Memory now · models in use: ${d.modelsLoaded.join(', ')}'
-                : 'Memory now · no models loaded (they load when you search)',
+            label: d.modelsLoaded.isNotEmpty ? 'Memory · ${d.modelsLoaded.join(', ')} loaded' : 'Memory · no models loaded',
           ),
-          StatTile(
+          NbStat(
+            hue: NbHue.folder,
+            glyph: NbGlyph.clock,
             value: d.rate > 0 ? '${groupDigits(d.rate.round())}/s' : 'Not yet',
-            label: s.status.status?.phase == 'names' ? 'Scan speed (files and folders a second)' : 'Last scan speed',
+            label: s.status.status?.phase == 'names' ? 'Scan speed' : 'Last scan speed',
           ),
-          StatTile(value: '${(d.dbBytes / 1048576).toStringAsFixed(0)} MB', label: 'Index size'),
-          StatTile(
+          NbStat(hue: NbHue.library, glyph: NbGlyph.drive, value: '${(d.dbBytes / 1048576).toStringAsFixed(0)} MB',
+              label: 'Index size'),
+          NbStat(
+            hue: NbHue.use,
+            glyph: NbGlyph.sliders,
             value: d.plan != null && d.plan!.cpu > 0
                 ? '${d.plan!.textWorkers}–${d.plan!.textWorkersIdle} of ${d.plan!.cpu}'
                 : '–',
-            label: 'Text workers / CPU threads',
+            label: 'Workers / CPU threads',
           ),
-          StatTile(value: d.speed.isNotEmpty ? d.speedLabel : '–', label: d.speedHelp),
-          StatTile(
-            value: d.ocrOn ? 'On' : 'Off',
-            label: d.ocrOn ? 'OCR (Windows, offline)' : 'OCR: ${d.ocrWhy.isNotEmpty ? d.ocrWhy : 'not available'}',
-          ),
-          StatTile(value: d.plan?.ssd == null ? '–' : (d.plan!.ssd! ? 'SSD' : 'Hard disk'), label: 'Drive type'),
+          NbStat(hue: NbHue.library, glyph: NbGlyph.gauge, value: d.speed.isNotEmpty ? d.speedLabel : '–',
+              label: d.speedHelp),
+          NbStat(hue: NbHue.page, glyph: NbGlyph.doc, value: d.ocrOn ? 'On' : 'Off',
+              label: d.ocrOn ? 'Words in pictures (OCR)' : 'OCR: ${d.ocrWhy.isNotEmpty ? d.ocrWhy : 'not available'}'),
+          NbStat(hue: NbHue.use, glyph: NbGlyph.drive,
+              value: d.plan?.ssd == null ? '–' : (d.plan!.ssd! ? 'SSD' : 'Hard disk'), label: 'Drive type'),
         ],
       ),
       const SectionTitle('Folders being searched'),
@@ -293,66 +295,68 @@ class _Now extends StatelessWidget {
   }
 }
 
-class _PhaseRowView extends StatelessWidget {
-  const _PhaseRowView(this.p);
+/// One step of indexing as a card: what it is (a coloured tile), its state, a meter and its numbers as chips.
+class _PhaseCard extends StatelessWidget {
+  const _PhaseCard(this.p);
   final PhaseRow p;
+
+  static (NbHue, NbGlyph, String?) look(String id) => switch (id) {
+    'names' => (NbHue.folder, NbGlyph.folder, null),
+    'text' => (NbHue.text, NbGlyph.doc, null),
+    'ocr' => (NbHue.page, NbGlyph.doc, null),
+    'meaning' || 'names_meaning' => (NbHue.meaning, NbGlyph.search, 'Aa'),
+    'rebuild' => (NbHue.library, NbGlyph.rings, null),
+    'photos' => (NbHue.photo, NbGlyph.image, null),
+    _ => (NbHue.library, NbGlyph.info, null),
+  };
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     final off = p.state == PhaseState.off;
     final run = p.state == PhaseState.running;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-      child: Row(
+    final done = p.state == PhaseState.done;
+    final (hue, glyph, text) = look(p.id);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
+      decoration: BoxDecoration(
+        color: run ? c.orange.withValues(alpha: .06) : c.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: run ? c.orange.withValues(alpha: .45) : c.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            flex: 14,
-            child: Text(
-              p.label,
-              style: NbType.text(13.5, off ? c.dim : c.text, weight: off ? FontWeight.w400 : FontWeight.w600),
-            ),
-          ),
-          SizedBox(
-            width: 84,
-            child: Row(
-              children: [
-                if (p.state == PhaseState.done) ...[
-                  NbIcon(NbGlyph.check, size: 13, color: c.orange),
-                  const SizedBox(width: 3),
-                ],
-                Flexible(
-                  child: Text(
-                    p.stateLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: NbType.text(
-                      NbSize.small,
-                      run ? c.orange : c.dim,
-                      weight: run ? FontWeight.w600 : FontWeight.w400,
-                    ),
-                  ),
+          Row(
+            children: [
+              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: off),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  p.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: NbType.text(13.5, off ? c.dim : c.text, weight: FontWeight.w600, height: 1.3),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              NbFact(done ? NbGlyph.check : (run ? NbGlyph.play : NbGlyph.clock), p.stateLabel, strong: run),
+            ],
           ),
-          Expanded(
-            flex: 20,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+          const SizedBox(height: 10),
+          NbMeter(fraction: p.fraction, busy: p.busy, muted: p.state == PhaseState.waiting || off),
+          if (p.count.isNotEmpty || p.extra.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                NbMeter(fraction: p.fraction, busy: p.busy, muted: p.state == PhaseState.waiting || off),
-                if (p.extra.isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text(p.extra, textAlign: TextAlign.right, style: NbType.text(NbSize.small - .5, c.dim)),
-                ],
+                if (p.count.isNotEmpty) NbFact(NbGlyph.rings, p.count),
+                if (p.extra.isNotEmpty) NbFact(NbGlyph.clock, p.extra),
               ],
             ),
-          ),
-          SizedBox(
-            width: 140,
-            child: Text(p.count, textAlign: TextAlign.right, style: NbType.data(NbSize.caption, off ? c.dim : c.muted)),
-          ),
+          ],
         ],
       ),
     );
@@ -427,17 +431,41 @@ class _ModelCardView extends StatelessWidget {
               '${live.mbS > 0 ? ' at ${live.mbS.toStringAsFixed(1)} MB/s' : ''}'
         : m.stateLine;
     final canGet = m.id != 'ocr' && !m.onDisk && !downloading && !(live?.ready ?? false);
-    return NbPanel(
-      live: m.loaded,
-      padding: const EdgeInsets.fromLTRB(15, 13, 15, 13),
+    final (hue, glyph, text) = switch (m.id) {
+      'photo' => (NbHue.photo, NbGlyph.image, null),
+      'ocr' => (NbHue.page, NbGlyph.doc, null),
+      _ => (NbHue.text, NbGlyph.doc, 'Aa'),
+    };
+    final facts = [for (final f in m.facts.split('·')) if (f.trim().isNotEmpty) f.trim()];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: m.loaded ? c.orange.withValues(alpha: .06) : c.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: m.loaded ? c.orange.withValues(alpha: .45) : c.line),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(m.name, style: NbType.text(14, c.text, weight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(state, style: NbType.text(NbSize.small, m.loaded || downloading ? c.orange : c.muted)),
-          const SizedBox(height: 8),
-          Text(m.facts, style: NbType.data(NbSize.micro + .5, c.dim, height: 1.6)),
+          Row(
+            children: [
+              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: !m.onDisk && m.id != 'ocr'),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(m.name, style: NbType.text(13.5, c.text, weight: FontWeight.w600, height: 1.3)),
+                    Text(state, style: NbType.text(12, m.loaded || downloading ? c.orange : c.muted, height: 1.35)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (facts.isNotEmpty) ...[
+            const SizedBox(height: 9),
+            Wrap(spacing: 6, runSpacing: 6, children: [for (final f in facts) NbFact(NbGlyph.info, f)]),
+          ],
           if (downloading && live != null) ...[
             const SizedBox(height: 10),
             NbMeter(fraction: live.size > 0 ? live.got / live.size : (m.download?.fraction ?? 0)),
