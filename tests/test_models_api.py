@@ -106,3 +106,47 @@ def test_status_shows_the_rebuild_as_its_own_phase(a):
     a._indexer.status["phase"] = "rebuild"
     ph = {p["id"]: p for p in a.status()["phases"]}
     assert ph["rebuild"]["state"] == "running" and ph["rebuild"]["label"].startswith("Rebuilding")
+
+
+def test_model_folder_opens_only_a_catalog_models_folder(tmp_path, monkeypatch):
+    """0.9.0: Settings > Models shows where each model is downloaded and opens that folder; an id, never a path."""
+    from nobadfind import api as api_mod, models, settings
+    opened = []
+    monkeypatch.setattr(api_mod, "open_folder", lambda p: opened.append(p) or True)
+    st = settings.Settings(str(tmp_path / "s.json"))
+    a = api_mod.Api(None, st, type("Ix", (), {"embedder": None, "photo_text": None})(), None)
+    a._models_dir = str(tmp_path)
+    assert a.model_folder("windows-ocr")["ok"] is False                       # built into Windows: no folder
+    assert a.model_folder("..\..\Windows")["ok"] is False
+    assert opened == []
+    assert a.model_folder("siglip-base")["ok"] is True                        # not downloaded: the data folder
+    assert opened == [str(tmp_path)]
+    d = models.model_dir("siglip-base", str(tmp_path))
+    import os
+    os.makedirs(d)
+    assert a.model_folder("siglip-base")["ok"] and opened[-1] == d            # downloaded: its own folder
+    rows = {m["id"]: m for m in a.models()["models"]}
+    assert rows["siglip-base"]["dir"] == d and rows["windows-ocr"]["dir"] == ""
+
+
+def test_keep_models_loaded_skips_the_idle_release(tmp_path):
+    from nobadfind import embed, indexer, settings
+    st = settings.Settings(str(tmp_path / "s.json"))
+    ix = indexer.Indexer.__new__(indexer.Indexer)
+    ix.settings = st
+    freed = []
+
+    class L(embed.Lazy):
+        def __init__(self):
+            pass
+
+        def release_if_idle(self, idle=None):
+            freed.append(idle)
+    ix.embedder, ix.photo_text = L(), None
+    ix.release_idle_models()
+    assert freed == [None]
+    st.update({"models_stay_loaded": True})
+    ix.release_idle_models()
+    assert freed == [None]                     # kept loaded
+    ix.release_models()                        # the window closed: always freed
+    assert freed == [None, 0]

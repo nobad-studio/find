@@ -397,6 +397,7 @@ class EngineClient {
       ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id}));
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});
   Future<ActionResult> modelRemove(String id) => _ok('model_remove', {'id': id});
+  Future<ActionResult> modelFolder(String id) => _ok('model_folder', {'id': id});
   Future<AutoConfig> autoConfigure() async => AutoConfig.fromJson(await call('auto_configure'));
   Future<ActionResult> modelLanguage(String focus) => _ok('model_language', {'focus': focus});
   Future<ActionResult> openWith(int id) => _ok('open_with', {'id': id}, false);

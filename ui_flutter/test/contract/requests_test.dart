@@ -113,6 +113,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.modelDownload(p['id'] as String);
     case 'model_remove' when p['id'] is String:
       return c.modelRemove(p['id'] as String);
+    case 'model_folder' when p['id'] is String:
+      return c.modelFolder(p['id'] as String);
     case 'auto_configure':
       return c.autoConfigure();
     case 'model_language' when p['focus'] is String:

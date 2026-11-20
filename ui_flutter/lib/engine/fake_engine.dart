@@ -633,6 +633,12 @@ class FakeEngine implements EngineApi {
   });
 
   @override
+  Future<ActionResult> modelFolder(String id) => _new('model_folder', () {
+    final m = modelsInfo.models.where((x) => x.id == id).firstOrNull;
+    return m == null || m.builtin ? const ActionResult(false, 'That model is part of Windows.') : _ok;
+  });
+
+  @override
   Future<ActionResult> modelRemove(String id) => _new('model_remove', () {
     _setModels((x) => x.id == id && !x.builtin ? x.withState(ModelUseState.notDownloaded) : x);
     return _ok;
@@ -1183,6 +1189,7 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       sizeMb: 211,
       languages: ['en'],
       improves: "Finds photos by what's in them (English questions)",
+      dir: r'C:\Users\me\AppData\Local\NOBAD\Find\photo-model',
     ),
     const ModelInfo(
       id: 'siglip2-base',

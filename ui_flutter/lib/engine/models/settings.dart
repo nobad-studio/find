@@ -43,6 +43,7 @@ class Settings {
     'bg_notice_seen': false,
     'welcome_seen': false,
     'search_history': true,
+    'models_stay_loaded': false,
   };
 
   static const initial = Settings(defaults);

@@ -718,7 +718,8 @@ class Api:
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
                         "builtin": bool(m["builtin"]), "state": self._model_state(m), "capable": ok,
                         "capable_reason": why, "recommended": choice.get(m["feature"]) == m["id"],
-                        "quality": dict(m["quality"]) if m.get("quality") else None})
+                        "quality": dict(m["quality"]) if m.get("quality") else None,
+                        "dir": "" if m["builtin"] else models.model_dir(m["id"], self._mdir())})
         return {"pc": pc, "tier_recommended": rec, "tier_current": models.tier_current(self._settings, focus),
                 "language_focus": focus, "models": out}
 
@@ -779,6 +780,20 @@ class Api:
         self._mdl_thread = threading.Thread(target=run, daemon=True, name="model-download")
         self._mdl_thread.start()
         return {"ok": True, "error": ""}
+
+    def model_folder(self, mid):
+        """Open the folder a model is (or will be) downloaded to in File Explorer: a catalog id only, never a path
+        from the UI. The models folder itself when that model's folder isn't there yet."""
+        m = models.get(mid) if isinstance(mid, str) else None
+        if m is None or m["builtin"]:
+            return {"ok": False, "error": "That model is part of Windows: it has no folder of its own."}
+        d = models.model_dir(mid, self._mdir())
+        target = d if os.path.isdir(d) else os.path.join(self._mdir(), "models")
+        if not os.path.isdir(target):
+            target = self._mdir()
+        if not os.path.isdir(target) or not open_folder(target):
+            return {"ok": False, "error": "Couldn't open the folder."}
+        return {"ok": True}
 
     def model_remove(self, mid):
         m = models.get(mid) if isinstance(mid, str) else None
@@ -925,6 +940,17 @@ def reveal_in_explorer(path):
         return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0
     finally:
         shell32.ILFree(pidl)
+
+
+def open_folder(path):
+    """File Explorer on a folder (ShellExecute "open", no command line is built)."""
+    if not winapi.WIN:
+        return False
+    shell32 = ctypes.WinDLL("shell32")
+    shell32.ShellExecuteW.restype = ctypes.c_void_p
+    shell32.ShellExecuteW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                      ctypes.c_wchar_p, ctypes.c_int]
+    return (shell32.ShellExecuteW(None, "open", path, None, None, 1) or 0) > 32
 
 
 def set_autostart(on):

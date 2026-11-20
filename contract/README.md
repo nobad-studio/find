@@ -178,6 +178,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`model_download`** `{id, consent}` → `Ok`: download a model, only with `consent: "DOWNLOAD"` (the consent dialog's
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
+- **`model_folder`** `{id}` → `{ok, error}`: opens the folder that model is downloaded to in File Explorer (the models folder when it isn't there yet). Only a catalog id, never a path; each model in `models` also sends its `dir` ("" when built into Windows).
 - **`model_remove`** `{id}` → `Ok`: delete a downloaded model's files; not for built-in models or the one in use.
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
   and language focus. Everything that needs no download is applied at once; for each step with `needs_download`, the

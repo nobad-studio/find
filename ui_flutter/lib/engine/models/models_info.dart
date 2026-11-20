@@ -77,7 +77,11 @@ class ModelInfo {
     this.recommended = false,
     this.focusSent,
     this.quality,
+    this.dir = '',
   });
+
+  /// 0.9.0: the folder its files are (or will be) downloaded to; '' when built into Windows or an older engine.
+  final String dir;
   final String id;
   final String feature;
   final String name;
@@ -129,6 +133,7 @@ class ModelInfo {
     recommended: recommended ?? this.recommended,
     focusSent: focusSent,
     quality: quality,
+    dir: dir,
   );
 
   bool get onDisk => builtin || state == ModelUseState.ready || state == ModelUseState.active;
@@ -155,6 +160,7 @@ class ModelInfo {
       recommended: jBool(m['recommended']),
       focusSent: LanguageFocus.parse(m['focus']),
       quality: ModelQuality.fromJson(m['quality']),
+      dir: jStr(m['dir']),
     );
   }
 }

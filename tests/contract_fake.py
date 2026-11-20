@@ -224,7 +224,9 @@ class FakeApi:
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
                         "builtin": bool(m["builtin"]), "state": state, "capable": ok, "capable_reason": why,
                         "recommended": choice.get(m["feature"]) == m["id"],
-                        "quality": dict(m["quality"]) if m.get("quality") else None})
+                        "quality": dict(m["quality"]) if m.get("quality") else None,
+                        "dir": "" if m["builtin"] else "C:\\Users\\me\\AppData\\Local\\NOBAD\\Find\\"
+                               + (m.get("dir") or "models\\" + m["id"])})
         return {"pc": pc, "tier_recommended": rec, "tier_current": cat.tier_current(self.settings, focus),
                 "language_focus": focus, "models": out}
 
@@ -245,6 +247,14 @@ class FakeApi:
         if consent != "DOWNLOAD":
             return {"ok": False, "error": "A model is only downloaded when you say Download."}
         self.dl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()), "error": ""}
+        return {"ok": True}
+
+    def model_folder(self, mid):
+        """Like Api.model_folder: an id only; a built-in model has no folder (no Explorer here)."""
+        from nobadfind import models as cat
+        m = cat.get(mid)
+        if m is None or m["builtin"]:
+            return {"ok": False, "error": "That model is part of Windows: it has no folder of its own."}
         return {"ok": True}
 
     def model_remove(self, mid):

@@ -883,6 +883,15 @@
         ],
         "additionalProperties": false
       }
+    },
+    "model_folder": {
+      "description": "Open the folder a model is downloaded to in File Explorer (the models folder if it isn't there yet). A catalog id, never a path.",
+      "params": {
+        "$ref": "#/$defs/model_id_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
     }
   },
   "$defs": {
@@ -2457,6 +2466,9 @@
           "minimum": 0,
           "maximum": 1000,
           "description": "Which one-time settings changes have run (engine only; set_settings ignores it)."
+        },
+        "models_stay_loaded": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2499,7 +2511,8 @@
         "photo_model",
         "language_focus",
         "search_history",
-        "settings_rev"
+        "settings_rev",
+        "models_stay_loaded"
       ],
       "additionalProperties": false
     },
@@ -2639,6 +2652,9 @@
         },
         "search_history": {
           "type": "boolean"
+        },
+        "models_stay_loaded": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -2745,6 +2761,10 @@
             "hindi"
           ],
           "additionalProperties": false
+        },
+        "dir": {
+          "type": "string",
+          "description": "The folder its files are (or will be) downloaded to; \"\" for one built into Windows."
         }
       },
       "required": [

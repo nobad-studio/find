@@ -137,6 +137,9 @@ abstract class EngineApi {
   /// Download [id]. Only call after the consent dialog said yes: it sends the consent word.
   Future<ActionResult> modelDownload(String id);
   Future<ActionResult> modelRemove(String id);
+
+  /// Open the folder model [id] is downloaded to in File Explorer (`model_folder`).
+  Future<ActionResult> modelFolder(String id);
   Future<AutoConfig> autoConfigure();
 
   /// "English first", "Many languages" or "Hindi + English": changes the recommendation only.

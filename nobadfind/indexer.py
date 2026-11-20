@@ -946,7 +946,11 @@ class Indexer:
         return [m.name for m in (self.embedder, self.photo_text) if isinstance(m, embed.Lazy) and m.loaded]
 
     def release_idle_models(self, idle=None):
-        """Light when idle: models leave memory a few minutes after the last search or indexing work."""
+        """Light when idle: models leave memory a few minutes after the last search or indexing work, unless
+        "Keep models loaded" (models_stay_loaded) is on. release_models (idle=0: the window closed, or NOBAD Find
+        uses too much) always frees them."""
+        if idle is None and self.settings is not None and self.settings.get("models_stay_loaded"):
+            return
         for m in (self.embedder, self.photo_text):
             if isinstance(m, embed.Lazy):
                 m.release_if_idle(idle)
