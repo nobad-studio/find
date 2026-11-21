@@ -34,12 +34,12 @@ def models_json():
 
 # ---------- the child ----------
 
-def run_one(candidate, device, items, models_dir, tools_dir, adapters=ADAPTERS):
+def run_one(candidate, device, items, models_dir, tools_dir, adapters=ADAPTERS, variant=None):
     """Every item through one candidate on one device -> the result dict (see the plan's Task 5)."""
     """Scoring: a photo that can't be decoded and a task the candidate can't do are left out; a model error or a
     per-photo timeout counts as a wrong answer (0), so a model can't score better by failing on hard photos."""
-    a = adapters[candidate](tools_dir=tools_dir)
-    base = {"candidate": candidate, "device": device}
+    a = adapters[candidate](tools_dir=tools_dir, **({"variant": variant} if variant else {}))
+    base = {"candidate": candidate, "device": device, "variant": variant or "base"}
     rows, scores, ms = [], [], []
     try:
         t0 = time.perf_counter()
@@ -338,7 +338,8 @@ def child_main(cfg_path):
     items = load_set(cfg["set"])
     if cfg.get("tasks"):
         items = [i for i in items if i["task"] in cfg["tasks"]]
-    res = run_one(cfg["candidate"], cfg["device"], items, cfg["models_dir"], cfg["tools_dir"])
+    res = run_one(cfg["candidate"], cfg["device"], items, cfg["models_dir"], cfg["tools_dir"],
+                  variant=cfg.get("variant"))
     sys.stdout.write(result_line(res))
 
 

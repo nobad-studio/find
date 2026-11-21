@@ -175,3 +175,22 @@ def test_merge_cache_keeps_encoder_cache_when_graph_returns_an_empty_one():
     assert out["past_key_values.0.encoder.key"] is full
     assert out["past_key_values.0.decoder.key"].shape == (1, 12, 2, 64)
     assert adapters.merge_cache(None, new) is new
+
+
+def test_variants_change_only_the_flags_they_name():
+    base = llama_argv("C:/t/llama-vulkan", "m", "p", ["a"], "x", gpu=True)
+    v = adapters.VARIANTS["fast"]
+    argv = llama_argv("C:/t/llama-vulkan", "m", "p", ["a"], "x", gpu=True, variant=v, task="ask")
+    assert argv[argv.index("-n") + 1] == str(v["max_tokens"]["ask"])
+    assert argv[argv.index("--image-max-tokens") + 1] == str(v["image_max_tokens"])
+    assert "--image-max-tokens" not in base and base[base.index("-n") + 1] == "256"
+    for flag in v.get("flags", []):
+        assert flag in argv
+    assert "-v" in argv and "--port" not in argv
+
+
+def test_every_variant_is_known_and_well_formed():
+    assert "base" in adapters.VARIANTS
+    for name, v in adapters.VARIANTS.items():
+        assert set(v) <= {"max_side", "max_tokens", "image_max_tokens", "flags", "about"}, name
+        assert all(t in ("detect", "ocr", "caption", "ask", "compare") for t in v.get("max_tokens", {})), name

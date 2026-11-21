@@ -35,6 +35,7 @@ def main(argv=None):
     ap.add_argument("--only", default=",".join(run.ADAPTERS))
     ap.add_argument("--devices", default="cpu,directml,vulkan,cuda")
     ap.add_argument("--tasks", default="")
+    ap.add_argument("--variant", default="", help="a speed-up from adapters.VARIANTS (llama.cpp candidates)")
     a = ap.parse_args(argv)
     if a.child:
         return run.child_main(a.child)
@@ -61,7 +62,8 @@ def main(argv=None):
         p = os.path.join(cfg_dir, f"{cand}-{device}.json")
         with open(p, "w", encoding="utf-8") as f:
             json.dump({"set": os.path.join(a.set, "set.json"), "candidate": cand, "device": device,
-                       "models_dir": a.models_dir, "tools_dir": a.tools_dir, "tasks": tasks}, f)
+                       "models_dir": a.models_dir, "tools_dir": a.tools_dir, "tasks": tasks,
+                       "variant": a.variant or None}, f)
         return [sys.executable, "-m", "tools.vision_bench", "--child", p]
     try:
         results = run.bench([i for i in items if not tasks or i["task"] in tasks], pairs(cands, devices, models),

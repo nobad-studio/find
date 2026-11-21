@@ -80,12 +80,32 @@ def decode(path, max_side):
     return out
 
 
-def llama_argv(build_dir, model, mmproj, images, prompt, gpu, threads=None, max_tokens=256):
+# Named speed-ups, each measured on speed AND quality (--variant). Only what a variant names changes.
+_SHORT = {"detect": 64, "ocr": 160, "caption": 160, "ask": 32, "compare": 24}
+VARIANTS = {
+    "base": {"about": "768 px (SmolVLM2: 512 px), 256 new tokens, llama.cpp defaults"},
+    "res768": {"about": "768 px images, like Florence-2 (for a like-for-like comparison)", "max_side": 768},
+    "short": {"about": "answer length per task", "max_tokens": _SHORT},
+    "fewtok": {"about": "short + at most 256 image tokens", "max_tokens": _SHORT, "image_max_tokens": 256},
+    "fast": {"about": "fewtok + flash attention + 8-bit KV cache", "max_tokens": _SHORT, "image_max_tokens": 256,
+             "flags": ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"]},
+    "fastest": {"about": "fast with at most 160 image tokens and 512 px", "max_side": 512, "max_tokens": _SHORT,
+                "image_max_tokens": 160, "flags": ["-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0"]},
+}
+
+
+def llama_argv(build_dir, model, mmproj, images, prompt, gpu, threads=None, max_tokens=256, variant=None,
+               task=None):
+    v = variant or {}
+    max_tokens = v.get("max_tokens", {}).get(task, max_tokens)
     argv = [os.path.join(build_dir, "llama-mtmd-cli.exe"), "-m", model, "--mmproj", mmproj]
     for im in images:
         argv += ["--image", im]
     # -v: b12602 prints its timing ("llama_perf_context_print") and device ("using device ...") lines only then
     argv += ["-p", prompt, "--temp", "0", "-n", str(max_tokens), "-c", "4096", "-ngl", "99" if gpu else "0", "-v"]
+    if v.get("image_max_tokens"):
+        argv += ["--image-max-tokens", str(v["image_max_tokens"])]
+    argv += list(v.get("flags", []))
     if threads:
         argv += ["-t", str(threads)]
     return argv
@@ -160,8 +180,9 @@ class LlamaAdapter(Adapter):
     model_file = mmproj_file = ""
     max_side = 768
 
-    def __init__(self, tools_dir=None):
+    def __init__(self, tools_dir=None, variant=None):
         self.tools_dir = tools_dir
+        self.variant = VARIANTS.get(variant or "base", VARIANTS["base"])
 
     def load(self, models_dir, device):
         self.dir = os.path.join(models_dir, self.candidate)
@@ -171,12 +192,13 @@ class LlamaAdapter(Adapter):
 
     def run(self, task, image, image2, question):
         paths = []
+        side = self.variant.get("max_side", self.max_side)
         for i, p in enumerate([image] + ([image2] if image2 else [])):
             q = os.path.join(self.tmp, f"in{i}.png")
-            decode(p, self.max_side).save(q)
+            decode(p, side).save(q)
             paths.append(q)
         argv = llama_argv(self.build, os.path.join(self.dir, self.model_file), os.path.join(self.dir, self.mmproj_file),
-                          paths, prompt_for(task, question, self.candidate), self.gpu)
+                          paths, prompt_for(task, question, self.candidate), self.gpu, variant=self.variant, task=task)
         r = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=ITEM_TIMEOUT,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         err = r.stderr.decode("utf-8", "replace")
@@ -216,7 +238,7 @@ class Florence2(Adapter):
     SIZE = 768
     MEAN, STD = np.array([0.485, 0.456, 0.406], np.float32), np.array([0.229, 0.224, 0.225], np.float32)
 
-    def __init__(self, tools_dir=None):
+    def __init__(self, tools_dir=None, variant=None):
         pass
 
     @staticmethod

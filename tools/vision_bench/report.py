@@ -13,12 +13,17 @@ def _num(v, fmt="{:.0f}"):
     return "-" if v is None else fmt.format(v)
 
 
+def _name(r):
+    v = r.get("variant")
+    return r["candidate"] + (f" [{v}]" if v and v != "base" else "")
+
+
 def _row(r):
     if r["status"] != "ok":
-        return f"| {r['candidate']} | {r['device']} | {r['status']}: {r.get('why', '')} |" + " - |" * 8
+        return f"| {_name(r)} | {r['device']} | {r['status']}: {r.get('why', '')} |" + " - |" * 8
     sc = r.get("scores", {})
     kinds = ", ".join(f"{k} {sc[k]:.2f}" for k in KIND_ORDER if k in sc) or "-"
-    return (f"| {r['candidate']} | {r['device']} | ok | {_num(r.get('load_s'), '{:.1f}')} | "
+    return (f"| {_name(r)} | {r['device']} | ok | {_num(r.get('load_s'), '{:.1f}')} | "
             f"{_num(r.get('ms_per_item'))} | {_num(r.get('peak_private_mb'))} | {_num(r.get('peak_gpu_mb'))} | "
             f"{r.get('errors', 0)} | {kinds} | {sc.get('all', 0):.2f} | {deep_pass_hours(r.get('ms_per_item'))} |")
 
