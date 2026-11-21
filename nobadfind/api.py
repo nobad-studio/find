@@ -707,16 +707,29 @@ class Api:
         if self._turbo is not None:
             return self._turbo.state()
         return {"available": False, "enabled": bool(self._settings.get("turbo")), "running": False, "volumes": [],
-                "error": "The turbo index runs with the NOBAD Find engine only."}
+                "error": "The turbo index runs with the NOBAD Find engine only.", "helper": "not_installed"}
 
     def turbo_set(self, on):
-        """On: Windows asks for permission (once per run), the helper starts. Off: it ends."""
+        """On: Windows asks for permission once if the helper isn't set up yet, then it starts (no prompt after
+        that). Off: it ends and Windows asks once to remove its helper."""
         if self._turbo is None:
             return {"ok": False, "error": "The turbo index runs with the NOBAD Find engine only.",
                     "state": self.turbo_state()}
         r = self._turbo.turn_on() if on else self._turbo.turn_off()
         if r.get("ok") and on:
             self._indexer.rescan()                  # read the drives with turbo now
+        return dict(r, state=self._turbo.state())
+
+    def turbo_helper(self, action):
+        """"update": Windows asks once to update the protected helper (then turbo starts if it's on); "remove":
+        turbo off and the helper removed (one prompt)."""
+        if self._turbo is None:
+            return {"ok": False, "error": "The turbo index runs with the NOBAD Find engine only.",
+                    "state": self.turbo_state()}
+        was = self._turbo.running()
+        r = self._turbo.helper_action(action)
+        if r.get("ok") and action == "update" and self._turbo.running() and not was:
+            self._indexer.rescan()
         return dict(r, state=self._turbo.state())
 
     def pick_folder(self):

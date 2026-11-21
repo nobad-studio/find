@@ -1,8 +1,9 @@
 # PyInstaller spec for NOBAD Find's engine - onedir, windowed (the installer wraps the folder). build.ps1 runs it from
 # the repository root, then copies the Flutter UI (nobad_find.exe and its files) into the same folder:
 #   python -m PyInstaller --noconfirm --clean --distpath dist --workpath build packaging\nobadfind.spec
-# No uac_admin: NOBAD Find runs as the normal user and refuses to start elevated. The one elevated step (the Windows
-# Search switch) asks for it itself, through `NobadFind.exe --wsearch <word>`.
+# No uac_admin: NOBAD Find runs as the normal user and refuses to start elevated. The elevated steps ask for it
+# themselves: the Windows Search switch (`NobadFind.exe --wsearch <word>`) and the turbo index's one-time setup and
+# removal (`turbo\NobadFindTurbo.exe --turbo install|remove`, the second program below).
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
@@ -52,3 +53,16 @@ pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="NobadFind", console=False, disable_windowed_traceback=False,
           icon=ICON, version=VERSION if os.path.exists(VERSION) else None)
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="NobadFind")
+
+# The turbo index's helper (nobadfind/turbosvc.py): its own small program in dist\NobadFindTurbo, which build.ps1
+# copies to dist\NobadFind\turbo. The elevated setup step copies ONLY this folder into Program Files and runs it as a
+# service, so it must stay small: the standard library and nobadfind's ntfs, turbosvc, scope, winapi and const.
+TURBO_EXCLUDES = EXCLUDES + ["numpy", "onnxruntime", "tokenizers", "sqlcipher3", "pypdf", "winrt", "PIL", "System",
+                             "clr", "clr_loader", "unittest", "pydoc", "xmlrpc", "email",
+                             "http", "urllib3", "ssl", "_ssl", "sqlite3", "asyncio", "concurrent"]
+ta = Analysis([os.path.join(HERE, "turbo_launch.py")], pathex=[ROOT], binaries=[], datas=[], hiddenimports=[],
+              excludes=TURBO_EXCLUDES, noarchive=False)
+tpyz = PYZ(ta.pure)
+texe = EXE(tpyz, ta.scripts, [], exclude_binaries=True, name="NobadFindTurbo", console=False,
+           disable_windowed_traceback=True, icon=ICON, version=VERSION if os.path.exists(VERSION) else None)
+tcoll = COLLECT(texe, ta.binaries, ta.datas, strip=False, upx=False, name="NobadFindTurbo")

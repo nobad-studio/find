@@ -33,7 +33,7 @@ class FakeApi:
                    "photo": {"state": "missing", "got": 0, "size": 0, "error": ""}}
         self.ready = set()                       # model ids "downloaded" in this fake
         self.history = set()                     # questions kept for autocomplete (history_add)
-        self.turbo = {"available": True, "enabled": False, "running": False, "error": "",
+        self.turbo = {"available": True, "enabled": False, "running": False, "error": "", "helper": "not_installed",
                       "volumes": [{"drive": "C:\\", "ntfs": True, "files": 0, "usn_ok": False, "last_scan": None}]}
 
     def _note(self, *call):
@@ -341,9 +341,21 @@ class FakeApi:
             return {"ok": False, "error": self.turbo["error"], "state": self.turbo_state()}
         self.settings["turbo"] = False
         self.turbo.update(running=False, error="")
+        if self.turbo["helper"] != "not_installed":       # removing it asks too: answered No here
+            self.turbo["error"] = ("Turbo is off. Its helper is still installed because Windows didn't get "
+                                   "permission to remove it; use Remove when you want it gone.")
         for v in self.turbo["volumes"]:
             v["usn_ok"] = False
-        return {"ok": True, "error": "", "state": self.turbo_state()}
+        return {"ok": True, "error": self.turbo["error"], "state": self.turbo_state()}
+
+    def turbo_helper(self, action):
+        """update / remove: the permission prompt is answered No, like the real one in a test."""
+        self._note("turbo_helper", action)
+        if action == "remove":
+            return self.turbo_set(False)
+        self.turbo["error"] = ("Windows didn't get permission (the prompt was closed or answered No). NOBAD Find "
+                               "keeps using its normal folder walk.")
+        return {"ok": False, "error": self.turbo["error"], "state": self.turbo_state()}
 
     # window
     def ui_shown(self):
@@ -490,7 +502,7 @@ class Engine:
         elif do == "quitting":
             self.events.quitting()
         elif do == "turbo":
-            self.api.turbo.update({k: t[k] for k in ("running", "error") if k in t})
+            self.api.turbo.update({k: t[k] for k in ("running", "error", "helper") if k in t})
             if t.get("running"):
                 self.api.settings["turbo"] = True          # the user said yes at the prompt
             if "volume" in t:

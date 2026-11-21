@@ -105,6 +105,22 @@ class _IndexingPageState extends State<IndexingPage> {
     if (mounted) setState(() => _turboBusy = false);
   }
 
+  /// "Update helper" / "Remove": Windows asks once.
+  Future<void> _turboHelper(String action) async {
+    if (_turboBusy) return;
+    setState(() => _turboBusy = true);
+    try {
+      final r = await _s!.engine.turboHelper(action);
+      if (!r.ok || r.error.isNotEmpty) {
+        _s!.toasts.show(r.error.isNotEmpty ? r.error : "The turbo index's helper wasn't changed.");
+      }
+      if (mounted && r.state != null) setState(() => _turbo = r.state);
+    } on Object catch (e) {
+      _s!.toasts.show(errorText(e));
+    }
+    if (mounted) setState(() => _turboBusy = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return switch (_load) {
@@ -212,7 +228,12 @@ class _IndexingPageState extends State<IndexingPage> {
           SettingsGroup(
             'Turbo index',
             rows: [
-              _TurboCard(turbo, busy: _turboBusy, onSet: (v) => unawaited(_setTurbo(v))),
+              _TurboCard(
+                turbo,
+                busy: _turboBusy,
+                onSet: (v) => unawaited(_setTurbo(v)),
+                onHelper: (a) => unawaited(_turboHelper(a)),
+              ),
             ],
           ),
       ],
@@ -386,13 +407,14 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
-/// The turbo index as a card: what it reads, its switch (Windows asks first), its state and each drive as chips;
-/// the full explanation and the per-drive table under Details.
+/// The turbo index as a card: what it reads, its switch (Windows asks once to set it up), its state, the helper's
+/// "Update helper" / "Remove" and each drive as chips; the full explanation and the per-drive table under Details.
 class _TurboCard extends StatelessWidget {
-  const _TurboCard(this.t, {required this.busy, required this.onSet});
+  const _TurboCard(this.t, {required this.busy, required this.onSet, required this.onHelper});
   final TurboState t;
   final bool busy;
   final ValueChanged<bool> onSet;
+  final ValueChanged<String> onHelper;
 
   @override
   Widget build(BuildContext context) {
@@ -436,7 +458,11 @@ class _TurboCard extends StatelessWidget {
             runSpacing: 6,
             children: [
               const NbFact(NbGlyph.shield, 'Names, sizes and dates only'),
-              const NbFact(NbGlyph.info, 'Asks for administrator once per start'),
+              NbFact(NbGlyph.info, switch (t.helper) {
+                TurboHelper.installed => 'Helper set up: starts without asking',
+                TurboHelper.needsUpdate => 'Helper needs your OK once to update',
+                TurboHelper.notInstalled => 'Asks for administrator once, to set up',
+              }),
               for (final v in t.volumes)
                 NbFact(
                   NbGlyph.drive,
@@ -457,6 +483,31 @@ class _TurboCard extends StatelessWidget {
                 child: Text(t.line, style: NbType.text(12, t.running ? c.orange : c.muted, weight: FontWeight.w600)),
               ),
             ),
+          if (t.needsUpdate || (t.removable && !on))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (t.needsUpdate)
+                    NbButton(
+                      'Update helper',
+                      small: true,
+                      semanticLabel: "Update the turbo index's helper (Windows asks once)",
+                      onPressed: busy ? null : () => onHelper('update'),
+                    ),
+                  if (t.removable && !on)
+                    NbButton(
+                      'Remove',
+                      small: true,
+                      kind: NbButtonKind.ghost,
+                      semanticLabel: "Remove the turbo index's helper (Windows asks once)",
+                      onPressed: busy ? null : () => onHelper('remove'),
+                    ),
+                ],
+              ),
+            ),
           const SizedBox(height: 6),
           NbDetails(
             about: 'Turbo index',
@@ -471,8 +522,10 @@ class _TurboCard extends StatelessWidget {
                       context,
                       "Reads NTFS's own list of files and its change journal: file names, sizes and dates, so a whole "
                       'drive is listed in seconds and changes show up at once. Never file contents, and never other '
-                      "people's files. Windows asks for administrator permission (UAC) once each time NOBAD Find "
-                      'starts.',
+                      "people's files. Windows asks for administrator permission (UAC) once, when you turn it on: "
+                      'NOBAD Find then sets up a small helper in Program Files that only your account can start, '
+                      'and starts it without asking. When NOBAD Find is updated, the helper needs your OK once more. '
+                      'Turning turbo off removes the helper (Windows asks once).',
                     ),
                   ),
                   if (t.volumes.isNotEmpty) NbDetailLine('Drives', _TurboTable(t)),

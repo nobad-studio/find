@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "0.9.5"
+APP_VER = "0.9.6"
 
 # NOBAD Find runs as the normal user, so its data lives in the user's own profile (not readable by other users).
 DATA_DIR = os.environ.get("NOBAD_FIND_DATA_DIR") or os.path.join(
@@ -106,7 +106,7 @@ DEFAULTS = {
     "include_system": True,         # Windows, Program Files, ProgramData, Recovery, PerfLogs
     "include_caches": True,         # AppData, caches, temp, node_modules, .git, venv
     "include_secrets": False,       # key files, password stores, .ssh, wallets: NAMES ONLY, never their content
-    "turbo": False,                 # the optional elevated NTFS index helper (ntfs.py); one UAC prompt per session
+    "turbo": False,                 # the optional NTFS index helper (ntfs.py); asks for admin once (turbosvc.py)
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.
     "search_history": True,

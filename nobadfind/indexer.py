@@ -356,7 +356,7 @@ class Indexer:
             if self.photo_text is None:
                 self._load_photo()
             if self.turbo is not None:
-                self.turbo.ensure()                 # turbo on: one permission prompt per engine run
+                self.turbo.ensure()                 # turbo on: starts its helper (no prompt; turbosvc.py)
             self.known_drives()
             if time.time() - float(self.store.meta("last_scan", 0) or 0) <= RESCAN_EVERY:
                 self._start_watcher()               # a recent index: just keep it fresh from now on

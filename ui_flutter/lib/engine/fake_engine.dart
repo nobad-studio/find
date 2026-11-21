@@ -812,6 +812,7 @@ class FakeEngine implements EngineApi {
       available: true,
       enabled: on,
       running: on,
+      helper: on ? TurboHelper.installed : TurboHelper.notInstalled, // off removes it (the prompt said yes)
       volumes: [
         TurboVolume(drive: 'C:', ntfs: true, files: on ? 612408 : 0, usnOk: on, lastScan: on ? 1795500000 : null),
         TurboVolume(drive: 'D:', ntfs: true, files: on ? 88120 : 0, usnOk: on, lastScan: on ? 1795500000 : null),
@@ -819,6 +820,31 @@ class FakeEngine implements EngineApi {
       ],
     );
     _settings['turbo'] = on;
+    emit(TurboEvent(turbo));
+    return TurboSet(true, state: turbo);
+  });
+
+  /// The `turbo_helper` actions asked for (tests).
+  final List<String> turboHelperCalls = [];
+
+  @override
+  Future<TurboSet> turboHelper(String action) => _new('turbo_helper', () {
+    turboHelperCalls.add(action);
+    if (!turboPromptYes) {
+      return TurboSet(false, error: "Windows didn't give permission, so the normal folder walk is used.", state: turbo);
+    }
+    if (action == 'remove') {
+      turbo = TurboState(available: turbo.available, volumes: turbo.volumes);
+      _settings['turbo'] = false;
+    } else {
+      turbo = TurboState(
+        available: turbo.available,
+        enabled: turbo.enabled,
+        running: turbo.enabled,
+        helper: TurboHelper.installed,
+        volumes: turbo.volumes,
+      );
+    }
     emit(TurboEvent(turbo));
     return TurboSet(true, state: turbo);
   });

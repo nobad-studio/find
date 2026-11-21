@@ -1,5 +1,18 @@
 # NOBAD Find changelog
 
+## 0.9.6 · 2026-11-21
+
+### Turbo index
+- Windows asks for administrator permission once, when you turn turbo on, instead of every time NOBAD Find
+  starts. A small helper (NobadFindTurbo.exe, 16 MB, without the search engine's models or libraries) is copied into
+  `Program Files\NOBAD Find Turbo`, where only administrators can change it, and set up as a service that starts
+  only when NOBAD Find asks and that only your account can start. Every copied file is checked against its SHA-256.
+- The helper checks every connection: your account, your session, not elevated, the installed NobadFind.exe. It
+  still reads file names, sizes and dates only, never contents, and drops other people's files.
+- After an update that changes the helper, turbo asks for your OK once to update it; until then the normal folder
+  walk is used. Turning turbo off, "Remove" in Settings > What to index, or uninstalling removes the helper and its
+  service (Windows asks once).
+
 ## 0.9.5 · 2026-11-21
 
 ### Search bar

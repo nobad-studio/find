@@ -138,6 +138,25 @@ class TurboVolume {
   }
 }
 
+/// The turbo helper's one-time setup (2026-11-21: Windows asks once, when turbo is turned on).
+enum TurboHelper {
+  /// Nothing set up (always so from source, or an older engine).
+  notInstalled,
+
+  /// Set up for this account: turbo starts with no prompt.
+  installed,
+
+  /// NOBAD Find was updated (or it was set up for a NOBAD Find in another folder): the normal walk is used until the
+  /// user OKs the update once.
+  needsUpdate;
+
+  static TurboHelper parse(Object? v) => switch (v) {
+    'installed' => installed,
+    'needs_update' => needsUpdate,
+    _ => notInstalled,
+  };
+}
+
 class TurboState {
   const TurboState({
     this.available = false,
@@ -145,7 +164,17 @@ class TurboState {
     this.running = false,
     this.volumes = const [],
     this.error = '',
+    this.helper = TurboHelper.notInstalled,
   });
+
+  /// Whether the helper is set up and current (`installed`, `needs_update`, `not_installed`).
+  final TurboHelper helper;
+
+  /// "Update helper" is offered.
+  bool get needsUpdate => helper == TurboHelper.needsUpdate;
+
+  /// "Remove" is offered: something is set up.
+  bool get removable => helper != TurboHelper.notInstalled;
 
   /// An NTFS fixed drive is there.
   final bool available;
@@ -169,6 +198,7 @@ class TurboState {
       ];
       return 'Turbo: on${d.isEmpty ? '' : ' (${d.join(', ')} NTFS)'}';
     }
+    if (enabled && needsUpdate) return 'Turbo: needs your OK once to update its helper (Settings → What to index)';
     if (error.isNotEmpty) return 'Turbo: off. $error';
     if (!available) return 'Turbo: not available (no NTFS fixed drive)';
     if (enabled) return 'Turbo: starting';
@@ -183,11 +213,12 @@ class TurboState {
       running: jBool(m['running']),
       volumes: jList(m['volumes'], TurboVolume.fromJson),
       error: jStr(m['error']),
+      helper: TurboHelper.parse(m['helper']),
     );
   }
 }
 
-/// `turbo_set` answer.
+/// `turbo_set` and `turbo_helper` answer.
 class TurboSet {
   const TurboSet(this.ok, {this.error = '', this.state});
   final bool ok;

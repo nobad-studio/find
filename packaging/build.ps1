@@ -107,6 +107,14 @@ if ($LASTEXITCODE) { throw "PyInstaller failed" }
 # nobadfind/uilaunch.py looks for the UI.
 Copy-Item -Path "$uiBuild\*" -Destination "dist\NobadFind" -Recurse -Force
 if (-not (Test-Path "dist\NobadFind\nobad_find.exe")) { throw "nobad_find.exe was not copied into dist\NobadFind" }
+# The turbo index's helper (nobadfind/turbosvc.py): its own small program in the turbo\ folder. The elevated setup
+# copies only that folder into Program Files and runs it as a service, so nothing big may be in it.
+if (-not (Test-Path "dist\NobadFindTurbo\NobadFindTurbo.exe")) { throw "PyInstaller made no dist\NobadFindTurbo\NobadFindTurbo.exe" }
+$heavy = Get-ChildItem -Recurse "dist\NobadFindTurbo" | Where-Object { $_.Name -match 'numpy|onnxruntime|tokenizers|sqlcipher|pypdf|winrt' }
+if ($heavy) { throw ("The turbo helper carries more than it needs: " + (($heavy | ForEach-Object { $_.FullName }) -join ", ")) }
+if (Test-Path "dist\NobadFind\turbo") { Remove-Item -Recurse -Force "dist\NobadFind\turbo" }
+Copy-Item -Path "dist\NobadFindTurbo" -Destination "dist\NobadFind\turbo" -Recurse
+if (-not (Test-Path "dist\NobadFind\turbo\NobadFindTurbo.exe")) { throw "the turbo helper was not copied into dist\NobadFind\turbo" }
 # The old WebView window is gone: nothing of pywebview, pythonnet or WebView2 may be in the app folder.
 $web = Get-ChildItem -Recurse "dist\NobadFind" | Where-Object { $_.Name -match 'webview|pythonnet|clr_loader|Python\.Runtime' }
 if ($web) { throw ("WebView files in dist\NobadFind: " + (($web | ForEach-Object { $_.FullName }) -join ", ")) }
@@ -137,6 +145,7 @@ function Sign($file) {
 }
 Sign "dist\NobadFind\NobadFind.exe"
 Sign "dist\NobadFind\nobad_find.exe"
+Sign "dist\NobadFind\turbo\NobadFindTurbo.exe"
 if ($AppOnly) {
   Write-Host "App built: dist\NobadFind\NobadFind.exe + nobad_find.exe (no installer: -AppOnly)"
   exit 0

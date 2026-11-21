@@ -90,7 +90,7 @@ def test_off_by_default_and_state_shape(env):
     s = t.state()
     assert s == {"available": True, "enabled": False, "running": False,
                  "volumes": [{"drive": DRIVE, "ntfs": True, "files": 0, "usn_ok": False, "last_scan": None}],
-                 "error": ""}
+                 "error": "", "helper": "not_installed"}
 
 
 def test_turning_on_saves_the_setting_and_sends_the_scope(env):
@@ -368,106 +368,14 @@ def test_helper_command_line(monkeypatch):
     assert out.returncode == 0 and "NOBAD Find" in out.stdout
 
 
-# ---------- security review of #79: the real pipe (Windows, no elevation needed) ----------
-win = pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows named pipes")
-
-
-@pytest.fixture
-def pipe_pair():
-    import ctypes
-    from nobadfind import ntfs
-    from nobadfind.rpc import server as srv
-    sid = srv.user_sid()
-    name = ntfs.pipe_name(sid, os.getpid()) + f"-test-{threading.get_ident()}"
-    h = turbo.make_pipe(name, sid)
-    k = ntfs._k32()
-    c = k.CreateFileW(name, ntfs.GENERIC_READ | 0x40000000, 0, None, ntfs.OPEN_EXISTING, 0x00100000 | 0x00010000, None)
-    assert c and c != ntfs.INVALID_HANDLE, ctypes.get_last_error()
-    yield h, c, sid
-    k.CloseHandle(c)
-    k.CloseHandle(h)
-
-
-def _sid_of(trustee):
-    """A trustee from an SDDL string (a SID or an alias like LA) as a SID string."""
-    import ctypes
-    from ctypes import wintypes
-    a = ctypes.WinDLL("advapi32", use_last_error=True)
-    a.ConvertStringSidToSidW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
-    a.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
-    p = ctypes.c_void_p()
-    assert a.ConvertStringSidToSidW(trustee, ctypes.byref(p))
-    out = wintypes.LPWSTR()
-    assert a.ConvertSidToStringSidW(p, ctypes.byref(out))
-    value = out.value
-    ctypes.windll.kernel32.LocalFree(p)
-    ctypes.windll.kernel32.LocalFree(out)
-    return value
-
-
-@win
-def test_the_pipe_dacl_is_this_user_only(pipe_pair):
-    import ctypes
-    from ctypes import wintypes
-    h, _c, sid = pipe_pair
-    a = ctypes.WinDLL("advapi32", use_last_error=True)
-    a.GetSecurityInfo.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
-                                  ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-    a.GetSecurityInfo.restype = wintypes.DWORD
-    a.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
-        ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(wintypes.LPWSTR), ctypes.c_void_p]
-    dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
-    assert a.GetSecurityInfo(h, 6, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(sd)) == 0
-    text = wintypes.LPWSTR()
-    assert a.ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, 4, ctypes.byref(text), None)
-    d = text.value
-    ctypes.windll.kernel32.LocalFree(sd)
-    assert d.startswith("D:P")                                       # protected: nothing inherited
-    allows = [ace for ace in d[3:].strip("()").split(")(") if ace.startswith("A;")]
-    # SDDL writes some accounts as an alias (the built-in Administrator is "LA" on CI runners): compare SIDs
-    assert len(allows) == 1 and _sid_of(allows[0].rsplit(";", 1)[1]) == sid       # one allow: this user
-    assert any(ace.startswith("D;") and ace.endswith(";NU") for ace in d[3:].strip("()").split(")("))
-    for other in (";WD", ";BA", ";SY", ";AU", ";BU", ";AN"):
-        assert other not in d, other
-
-
-@win
-def test_the_engine_checks_the_clients_pid_and_session(pipe_pair):
-    from nobadfind import ntfs
-    h, _c, _sid = pipe_pair
-    me, sess = os.getpid(), ntfs.session_of(os.getpid())
-    assert turbo.client_ok(h, me, sess)
-    assert not turbo.client_ok(h, me + 4, sess)                     # not the process the engine started
-    assert not turbo.client_ok(h, me, sess + 1)                     # another session
-
-
-@win
-def test_the_helper_checks_the_servers_pid_and_session(pipe_pair):
-    from nobadfind import ntfs
-    _h, c, _sid = pipe_pair
-    me, sess = os.getpid(), ntfs.session_of(os.getpid())
-    assert ntfs.server_ok(c, me, sess)
-    assert not ntfs.server_ok(c, me + 4, sess)                      # not its parent
-    assert not ntfs.server_ok(c, me, sess + 1)
-
-
-@win
-def test_only_one_pipe_of_that_name(pipe_pair):
-    """FILE_FLAG_FIRST_PIPE_INSTANCE and one instance: nobody can take the name next to the engine."""
-    from nobadfind import ntfs
-    h, _c, sid = pipe_pair
-    name = ntfs.pipe_name(sid, os.getpid()) + f"-test-{threading.get_ident()}"
-    with pytest.raises(OSError):
-        turbo.make_pipe(name, sid)
-
-
 def test_from_source_the_engine_asks_for_no_permission_without_the_dev_switch(tmp_path, monkeypatch):
     from nobadfind import ntfs
     monkeypatch.setattr(sys, "frozen", False, raising=False)
     monkeypatch.delenv(ntfs.DEV_ENV, raising=False)
+    from nobadfind import turbosvc
     asked = []
     monkeypatch.setattr(turbo, "start_elevated", lambda argv: asked.append(argv))
-    monkeypatch.setattr(turbo, "make_pipe", lambda name, sid: asked.append(name))
+    monkeypatch.setattr(turbosvc, "open_client_pipe", lambda *a, **k: asked.append(a))
     s = Store(str(tmp_path / "i.db"), encrypt=False)
     t = turbo.Turbo(Settings(str(tmp_path / "s.json")), s, Ix([PROF]), ntfs_drive=lambda d: True,
                     drives=lambda: [{"root": DRIVE, "type": "fixed", "label": ""}])

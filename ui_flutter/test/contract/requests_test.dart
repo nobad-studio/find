@@ -135,6 +135,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.turboState();
     case 'turbo_set' when p['on'] is bool:
       return c.turboSet(p['on'] as bool);
+    case 'turbo_helper' when p['action'] == 'update' || p['action'] == 'remove':
+      return c.turboHelper(p['action'] as String);
   }
   return c.call(m, p);
 }
