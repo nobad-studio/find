@@ -171,7 +171,7 @@ def run(folder, models_dir, ocr=True, features_out=None):
                     [dict(recall=r["siglip_recall"], ndcg=r["siglip_ndcg"], mrr=r["siglip_mrr"]) for r in sub])}
         if features_out:
             with open(features_out, "w", encoding="utf-8") as f:
-                json.dump(feats, f)
+                json.dump({"rows": feats, "ocr_text": ocr_text}, f, ensure_ascii=False)
         return rep
     finally:
         if store is not None:

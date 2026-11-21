@@ -4,6 +4,36 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: hybrid photo search, step 1: calibrated channels with SmolVLM2-500M captions
+
+`python tools/fit_hybrid.py <set>`, same 308 photos and 60 searches. Captions and object lists from SmolVLM2-500M
+Q8_0 on Iris Xe Vulkan (two short questions, 48/40 tokens, repeat penalty 1.3): **3.0 s compute a photo** (5.4 s
+wall with llama-mtmd-cli reloading the model each run), 308/308 without errors. Channels calibrated per channel
+(Platt, log-odds over the base rate, missing = 0) and weighted by logistic regression; 5-fold cross-validation
+over SEARCHES (weights never see the searches they're scored on).
+
+| Ranking | nDCG@10 | recall@10 |
+|---|---|---|
+| Find today | 0.755 | 0.780 |
+| SigLIP alone | 0.864 | 0.913 |
+| SigLIP + caption + objects + words | 0.868 | 0.902 |
+| + black-and-white rule + text channels for searches asking for writing | **0.874** | 0.908 |
+| + every channel weighted apart for searches asking for writing | 0.871 | 0.906 |
+
+- **Not a real gain yet:** paired per search against SigLIP alone, nDCG@10 +0.007 (bootstrap 95 % CI -0.016 to
+  +0.029; 25 searches better, 22 worse), recall@10 -0.007. **Gate not passed; not wired into search.**
+- Captions help people and actions: "someone reading a book" +0.19, "people dancing" +0.19, "someone sitting
+  alone" +0.18, "a woman smiling" +0.15; by kind: actions 0.77 -> 0.83, mood 0.65 -> 0.68.
+- They hurt screens and text: "a screenshot ..." -0.26, "a restaurant menu" -0.22, frustrated laptop -0.19.
+  SigLIP base already reads signs well; Windows OCR found text in only 37 of 308 photos, so the OCR channels got
+  ~0 weight.
+- Black and white: mean HSV saturation < 30 marks every black-and-white/sepia photo graded relevant (a rule, not
+  learned: one judged search asks for it). Photo-type searches 0.815 -> 0.847 with it.
+- **"Facts in one pass" fails with SmolVLM2-500M:** asked for a 7-line CAPTION/OBJECTS/... format (with and
+  without a worked example) it echoed the template or wrote free prose, looped on a Hindi sign
+  ("kalalakalala..." to the token limit) and invented a green tree in a black-and-white photo. Two short
+  questions give usable answers.
+
 ## 2026-11-21: photo search baseline (hybrid photo search, step 0)
 
 `python tools/eval_photo_search.py <set>`: 308 openly licensed Wikimedia Commons photos, 60 judged searches (graded
