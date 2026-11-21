@@ -400,6 +400,10 @@ class Store:
             self.db.execute("DELETE FROM nvecs_next")
             self.db.commit()
 
+    def has_vectors(self):
+        """True when the searched set has at least one text or name vector."""
+        return bool(self.one("SELECT 1 FROM vecs LIMIT 1") or self.one("SELECT 1 FROM nvecs WHERE length(v) > 0 LIMIT 1"))
+
     def drop_next_vectors(self):
         with self.wlock:
             self.db.execute("DELETE FROM vecs_next")

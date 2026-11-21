@@ -684,6 +684,8 @@ class Indexer:
             if self.store.meta("vec_version") != embed.VEC_VERSION:
                 log("meaning vectors are made a better way now; computing them again")
                 self.store.drop_vectors()
+                self.store.drop_next_vectors()      # a half-done switch was made the old way too
+                self.store.set_meta("vec_model_next", "")
                 self.store.set_meta("vec_version", embed.VEC_VERSION)
             blob = self.store.one("SELECT v FROM nvecs WHERE length(v) > 0 LIMIT 1") or \
                 self.store.one("SELECT v FROM vecs LIMIT 1")
@@ -734,6 +736,16 @@ class Indexer:
             if self.store.meta("vec_model_next"):
                 self.store.drop_next_vectors()
                 self.store.set_meta("vec_model_next", "")
+            return
+        if not self.store.has_vectors():
+            # Nothing of the old model to keep searchable: the new one takes over now (with whatever part of the
+            # rebuild is done) and its vectors are searched as they're made, instead of after the whole set.
+            if self.store.meta("vec_model_next") != wanted:
+                self.store.drop_next_vectors()
+            log(f"meaning search moves to {wanted} now: {self.text_model} had no vectors to keep")
+            self.store.swap_vectors(wanted)
+            self.status.pop("rebuild", None)
+            self._use_text_model(wanted)
             return
         if self.store.meta("vec_model_next") != wanted:
             self.store.drop_next_vectors()           # another switch was half done: start over for this one
