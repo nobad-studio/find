@@ -4,6 +4,29 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: Vision Phase 0, step 2 (Qwen3-VL-2B Q4_K_M) on the reference PC
+
+Same tool, PC and 32-question set as step 1 (below).
+
+| candidate | device | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall | 10,000 photos |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Qwen3-VL-2B Q4_K_M | Vulkan | 10,060 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 1.00 | 0.91 | 27.9 h |
+| Qwen3-VL-2B Q4_K_M | CPU | 16,395 | 3,120 | 0 | 1.00 | 0.77 | 1.00 | 1.00 | 0.96 | 0.90 | 45.5 h |
+
+Median seconds per answer on Vulkan, by task (generation length dominates):
+
+| | read text | objects | question | description | compare |
+|---|---|---|---|---|---|
+| SmolVLM2-500M | 1.5 | 7.0 | 1.2 | 6.0 | 2.6 |
+| Qwen3-VL-2B | 6.4 | 17.5 | 5.2 | 18.9 | 9.3 |
+
+- Qwen3-VL-2B read every English and German sign exactly (RAIL RESERVATION CENTRE, PARCEL OFFICE, EXIT,
+  Scentral Bark, Airtel, the full German dog-park text), named every expected object, and got all 3 comparisons.
+- **Hindi: it made text up.** On the Mirzapur shop photo it wrote fluent Devanagari that isn't on the sign
+  ("द एयरलाइन्स एंड टेक्नोलॉजी", "मुंबई"...), and it read the Hindi line of the trilingual sign as Urdu-script
+  gibberish. Its Hindi score is 0/3, the same as SmolVLM2, but it's confidently wrong, which is worse.
+- Cost: about 4x SmolVLM2's time per answer and about 2.4x its RAM (3.9 GB + 3 GB shared GPU memory on Vulkan).
+
 ## 2026-11-21: Vision Phase 0, step 1 (Florence-2, SmolVLM2-500M) on the reference PC
 
 `python -m tools.vision_bench` (dev only, `tools/vision_bench/README.md`), llama.cpp b12602, ONNX Runtime 1.27.0
