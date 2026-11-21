@@ -210,7 +210,7 @@ void main() {
         await tester.pump();
       }
       await settle(tester);
-      expect(find.text('report 20.pdf'), findsOneWidget); // scrolled into view
+      expect(find.descendant(of: find.byType(ListView), matching: find.text('report 20.pdf')), findsOneWidget); // scrolled into view
       expect(find.text('report 0.pdf'), findsNothing); // scrolled away
       await key(tester, LogicalKeyboardKey.enter);
       expect(engine.opened, [120]);

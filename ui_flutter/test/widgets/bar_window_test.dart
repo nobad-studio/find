@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:nobad_find/app/app.dart';
 import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/models/result.dart';
+import 'package:nobad_find/features/bar/bar_window.dart' show BarPreview;
 import 'package:nobad_find/platform/window.dart';
 
 import 'package:nobad_find/widgets/pressable.dart';
@@ -125,11 +126,23 @@ void main() {
     expect(w.calls, ['showBar']);
   });
 
+  testWidgets('0.9.5: a preview of the selected result beside the list, following the selection', (tester) async {
+    final engine = FakeEngine(files: manyFiles(3));
+    await pumpBar(tester, engine, rows: 5);
+    await type(tester, 'report');
+    final preview = find.byType(BarPreview);
+    expect(preview, findsOneWidget);
+    final first = tester.widget<BarPreview>(preview).result.id;
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(tester.widget<BarPreview>(preview).result.id, isNot(first));
+  });
+
   testWidgets('long folders keep their end', (tester) async {
     final engine = FakeEngine(files: manyFiles(1));
     await pumpBar(tester, engine, rows: 1);
     await type(tester, 'report');
-    final shown = find.textContaining('Archive');
+    final shown = find.descendant(of: find.byType(ListView), matching: find.textContaining('Archive')); // not the preview
     expect(shown, findsOneWidget);
     expect(tester.widget<Text>(shown).data, startsWith('…'));
   });

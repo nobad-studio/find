@@ -326,6 +326,9 @@ class FindController extends ChangeNotifier {
     return true;
   }
 
+  /// A short message where this controller shows them (a toast, or the bar's notice line).
+  void say(String s) => _say(s);
+
   void _say(String s) {
     if (toasts != null) {
       toasts!.show(s);
