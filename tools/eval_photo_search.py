@@ -100,7 +100,7 @@ def build(root, home, data_dir, ocr=True):
     return ctx
 
 
-def run(folder, models_dir, ocr=True, features_out=None):
+def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
     from nobadfind import search
     queries, photos, qrels = load_set(folder)
     root = tempfile.mkdtemp(prefix="nobadfind-evalphoto-")
@@ -169,6 +169,33 @@ def run(folder, models_dir, ocr=True, features_out=None):
             if sub:
                 rep["by_channel"][ch] = {"find": aggregate(sub), "siglip_only": aggregate(
                     [dict(recall=r["siglip_recall"], ndcg=r["siglip_ndcg"], mrr=r["siglip_mrr"]) for r in sub])}
+        # ranking variants (search.VARIANTS), each measured on the same index; today's ranking is "" (none on)
+        rep["variants"] = {}
+        sig_by_q = {r["id"]: (r["siglip_recall"], r["siglip_ndcg"]) for r in rows}
+        for vs in variant_sets or ():
+            old = set(search.VARIANTS)
+            search.VARIANTS.clear()
+            search.VARIANTS.update(vs)
+            try:
+                vrows = []
+                for item in queries:
+                    r = search.search(store, item["text"], embedder=ctx["embedder"], vindex=ctx["vindex"], limit=60,
+                                      roots=[home], photo_text=ctx["photo_text"], pindex=ctx["pindex"])
+                    ranked = [n for n in (alias.get(os.path.basename(x["path"]), "") for x in r["results"])
+                              if n in photos]
+                    rec, ndcg, mrr = metrics(ranked, qrels.get(item["id"], {}))
+                    why = {alias.get(os.path.basename(x["path"]), ""): x["why"] for x in r["results"]}
+                    vrows.append(dict(id=item["id"], recall=rec, ndcg=ndcg, mrr=mrr, found=len(ranked),
+                                      top=[(n, why.get(n)) for n in ranked[:10]]))
+            finally:
+                search.VARIANTS.clear()
+                search.VARIANTS.update(old)
+            a = aggregate(vrows)
+            d = [r["ndcg"] - sig_by_q[r["id"]][1] for r in vrows if r["ndcg"] is not None]
+            a.update(vs_siglip_better=sum(x > 0.005 for x in d), vs_siglip_worse=sum(x < -0.005 for x in d),
+                     empty=sum(1 for r in vrows if not r["found"]), per_query={r["id"]: r["ndcg"] for r in vrows},
+                     tops={r["id"]: r["top"] for r in vrows})
+            rep["variants"]["+".join(sorted(vs)) or "today"] = a
         if features_out:
             with open(features_out, "w", encoding="utf-8") as f:
                 json.dump({"rows": feats, "ocr_text": ocr_text}, f, ensure_ascii=False)
@@ -189,6 +216,11 @@ def _print(rep):
     print("by channel (Find today / SigLIP only, nDCG@10):")
     for ch, v in rep["by_channel"].items():
         print(f"  {ch}  n={v['find']['n']:<3} {v['find']['ndcg10']!s:>6} / {v['siglip_only']['ndcg10']!s:<6}")
+    if rep.get("variants"):
+        print("ranking variants (nDCG@10 / recall@10; searches better/worse than SigLIP alone; empty results):")
+        for k, v in rep["variants"].items():
+            print(f"  {k:40} {v['ndcg10']!s:>6} / {v['recall10']!s:<6} {v['vs_siglip_better']:>3}/{v['vs_siglip_worse']:<3}"
+                  f" empty {v['empty']}")
     worst = sorted((r for r in rep["rows"] if r["ndcg"] is not None), key=lambda r: r["ndcg"])[:8]
     print("weakest searches (nDCG@10):")
     for r in worst:
@@ -203,8 +235,10 @@ def main(argv=None):
     ap.add_argument("--json")
     ap.add_argument("--features")
     ap.add_argument("--no-ocr", action="store_true")
+    ap.add_argument("--variants", help='ranking variant sets to measure, e.g. ";photo_nofloor;noweak,noguess" ("" = today)')
     a = ap.parse_args(argv)
-    rep = run(a.folder, a.models_dir, ocr=not a.no_ocr, features_out=a.features)
+    sets = [[v for v in part.split(",") if v] for part in a.variants.split(";")] if a.variants else None
+    rep = run(a.folder, a.models_dir, ocr=not a.no_ocr, features_out=a.features, variant_sets=sets)
     _print(rep)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

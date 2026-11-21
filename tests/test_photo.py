@@ -178,3 +178,37 @@ def test_a_photo_search_says_what_it_needs(tmp_path, monkeypatch):
     assert "needs" not in a.search("black shirt image")             # every photo looked at: nothing to say
     assert models.size_mb(models.get(models.DEFAULT_PHOTO)) > 0
     s.close()
+
+
+def test_photo_v2_keeps_low_scoring_photos_in_siglips_order_and_marks_them_less_sure(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    vi = _pindex(s)
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    today = [x["name"] for x in search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]]
+    assert today == ["IMG_0042.jpg"]                         # today: the beach photo is under the floor, dropped
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "1")
+    r = search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]
+    assert [x["name"] for x in r] == ["IMG_0042.jpg", "IMG_0043.jpg"]
+    assert not r[0]["weak"] and r[1]["weak"]                 # kept, after the sure one, shown as less sure
+    assert search.search(s, "dog pdf", photo_text=_Text(), pindex=vi)["results"] == []   # still not photos
+    s.close()
+
+
+def test_photo_v2_asks_siglip_the_whole_description_unless_it_has_a_date_or_place(monkeypatch):
+    from nobadfind.query import parse
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search._photo_question(parse("a screenshot of a phone")) == "phone"            # today
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "1")
+    assert search._photo_question(parse("a screenshot of a phone")) == "a screenshot of a phone"
+    assert search._photo_question(parse("beach photos from last week")) == parse("beach photos from last week").meaning
+
+
+def test_photo_v2_drops_loose_ocr_meaning_on_photos_but_keeps_documents_and_close_matches(tmp_path):
+    s = _store(tmp_path)
+    ids = dict(s.q("SELECT name, id FROM files"))
+    photo_loose, photo_close, pdf_loose = ids["IMG_0042.jpg"], ids["IMG_0043.jpg"], ids["lease.pdf"]
+    best = {photo_loose: (0.30, "x", "text"), photo_close: (0.45, "y", "text"), pdf_loose: (0.30, "z", "text")}
+    kept = search._drop_loose_photo_text(s, [photo_loose, photo_close, pdf_loose], best)
+    assert kept == [photo_close, pdf_loose]
+    assert photo_loose not in best and pdf_loose in best
+    s.close()

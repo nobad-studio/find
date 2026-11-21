@@ -4,6 +4,42 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: photo ranking v2 (fix the existing ranking first; flag `NOBAD_FIND_PHOTO_V2=1`, off by default)
+
+Same 308 photos / 60 searches (`tools/eval_photo_search.py --variants`, one index build, each change measured
+alone). Diagnosis of today's 0.755 against SigLIP alone 0.864 (nDCG@10):
+
+| Change (alone) | nDCG@10 | recall@10 |
+|---|---|---|
+| today | 0.755 | 0.780 |
+| no photo score floors | **0.815** | **0.871** |
+| SigLIP reads the whole description | 0.767 | 0.795 |
+| no "sure first" reorder / no best guess | 0.752 / 0.755 | 0.780 / 0.780 |
+| photo list alone in the fusion (measurement only) | 0.754 | 0.773 |
+
+- **Floors were the main damage.** SigLIP similarities run 0.02-0.08 for right photos; `PHOTO_MIN` 0.04 and
+  the relative floors dropped true matches (two of four coffee cups at 0.030/0.033).
+- **Loose OCR meaning was the rest:** of the "text has a loosely related meaning" results in the top 10, 38 of
+  44 were wrong (garbled stadium-advert text matching gardens, boats, calm lakes).
+- The query parser drops kind words before SigLIP sees them ("a screenshot of a phone" -> "phone") and reads
+  "a handwritten note" as text documents only (no photo can match: the one empty search). Not changed: open item.
+
+**v2** = no photo floors (low photos kept in SigLIP's order, shown as less sure after the sure results) + SigLIP
+asked the whole description when it has no date/place/folder words + a photo's OCR text counts as a meaning
+match only when at least "related" (0.38, the existing label threshold; exact words still count).
+
+| Ranking | nDCG@10 | recall@10 | worse than SigLIP alone |
+|---|---|---|---|
+| today | 0.755 | 0.780 | 43 searches |
+| **v2** | **0.840** | **0.895** | 6 |
+| SigLIP alone (baseline and fallback) | 0.864 | 0.913 | - |
+
+- v2 vs today, paired per search: **+0.086 nDCG@10 (bootstrap 95 % CI +0.056 to +0.119), 41 better, 4 worse.**
+- v2 vs SigLIP alone: -0.024 (CI -0.064 to 0.000); the empty "handwritten note" search alone is -0.017.
+- Mixed-file regression check (`tools/eval_search.py`, documents + look-alike names + photos), v2 off / on:
+  keywords recall@1 1.0 / 1.0, photo 1.0 / 1.0, meaning MRR 0.495 / 0.495, all 0.951 / 0.951: no change.
+  (An earlier run's meaning 0.529 was run-to-run variation: the corpus is regenerated with fresh dates.)
+
 ## 2026-11-21: hybrid photo search, step 1: calibrated channels with SmolVLM2-500M captions
 
 `python tools/fit_hybrid.py <set>`, same 308 photos and 60 searches. Captions and object lists from SmolVLM2-500M
