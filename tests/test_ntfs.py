@@ -359,7 +359,7 @@ def test_messages_are_ascii_lines():
 
 
 def test_fixed_words_only():
-    assert set(ntfs.WORDS) == {"serve", "selftest"}
+    assert set(ntfs.WORDS) == {"install", "remove", "service", "serve", "selftest"}
     assert ntfs.helper_main("rm -rf") == 2
     assert ntfs.helper_main("") == 2
 
@@ -423,7 +423,7 @@ def test_from_source_the_helper_needs_the_dev_switch(monkeypatch):
     monkeypatch.setattr(ntfs.winapi, "is_admin", lambda: True)
     monkeypatch.delenv(ntfs.DEV_ENV, raising=False)
     ran = []
-    monkeypatch.setattr(ntfs, "_serve", lambda: ran.append("serve") or 0)
+    monkeypatch.setattr(ntfs, "_serve_dev", lambda: ran.append("serve") or 0)
     monkeypatch.setattr(ntfs, "_selftest", lambda: ran.append("selftest") or 0)
     assert ntfs.helper_main("serve") == 6 and ntfs.helper_main("selftest") == 6 and ran == []
     monkeypatch.setenv(ntfs.DEV_ENV, "yes")                         # only exactly "1"
@@ -432,9 +432,40 @@ def test_from_source_the_helper_needs_the_dev_switch(monkeypatch):
     assert ntfs.helper_main("serve") == 0 and ran == ["serve"]
 
 
-def test_the_exe_needs_no_dev_switch(monkeypatch):
+def test_the_exe_needs_no_dev_switch_and_never_serves_per_run(monkeypatch):
     monkeypatch.setattr(ntfs.sys, "frozen", True, raising=False)
     monkeypatch.setattr(ntfs.winapi, "is_admin", lambda: True)
     monkeypatch.delenv(ntfs.DEV_ENV, raising=False)
-    monkeypatch.setattr(ntfs, "_serve", lambda: 0)
-    assert ntfs.helper_main("serve") == 0
+    ran = []
+    monkeypatch.setattr(ntfs, "_serve_dev", lambda: ran.append("serve") or 0)
+    monkeypatch.setattr(ntfs, "_install", lambda: ran.append("install") or 0)
+    monkeypatch.setattr(ntfs, "_remove", lambda: ran.append("remove") or 0)
+    assert ntfs.helper_main("install") == 0 and ntfs.helper_main("remove") == 0
+    assert ntfs.helper_main("serve") == 2                          # the installed app uses the service
+    assert ran == ["install", "remove"]
+
+
+def test_from_source_a_service_is_never_set_up(monkeypatch):
+    """2026-11-21: install/remove/service would point an elevated service at user-writable code: always refused
+    from source, even with the dev switch."""
+    monkeypatch.setattr(ntfs.sys, "frozen", False, raising=False)
+    monkeypatch.setattr(ntfs.winapi, "is_admin", lambda: True)
+    monkeypatch.setenv(ntfs.DEV_ENV, "1")
+    ran = []
+    for name in ("_install", "_remove"):
+        monkeypatch.setattr(ntfs, name, lambda n=name: ran.append(n) or 0)
+    monkeypatch.setattr(ntfs.turbosvc, "run_service", lambda body: ran.append("service") or 0)
+    for word in ("install", "remove", "service"):
+        assert ntfs.helper_main(word) == 7
+    assert ran == []
+
+
+def test_helper_main_maps_refusals_to_exit_codes(monkeypatch):
+    monkeypatch.setattr(ntfs.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(ntfs.winapi, "is_admin", lambda: True)
+    for exc, code in ((ntfs.turbosvc.Mismatch("x"), 8), (ntfs.turbosvc.NotOurs("x"), 9),
+                      (ntfs.turbosvc.Unsafe("x"), 4), (PermissionError("x"), 4), (OSError(5, "x"), 5)):
+        def boom(e=exc):
+            raise e
+        monkeypatch.setattr(ntfs, "_install", boom)
+        assert ntfs.helper_main("install") == code

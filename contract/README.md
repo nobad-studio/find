@@ -29,7 +29,7 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
   `NaN` and `Infinity` are not JSON: `-32700`.
 - Unknown keys in `params` are ignored by the engine, but the schemas don't allow them: don't send them.
 - At most 8 connections. Requests run on a pool of 4 threads, so a slow call doesn't hold up a search; the calls
-  that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`) run on threads of their own
+  that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`, `turbo_helper`) run on threads of their own
   and only one of each waits at a time, so search, status and quit always get an answer.
 
 ### Start-up order for a UI
@@ -222,15 +222,24 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `secrets`), `some` (part of it is names only: browser profiles and app databases in `caches`) or `none`. Show
   `name`, `summary`, `why` and `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
-  int, usn_ok: bool, last_scan: number|null}], error: string}`: the optional turbo index, an elevated helper that
-  reads NTFS's own file list and change journal (names, sizes, times and changes only, never file contents).
-  `available` = an NTFS fixed drive is there, `enabled` = the `turbo` setting, `running` = the helper is connected,
-  `usn_ok` = changes on that drive come from the change journal, `error` = `""` or why it isn't running (the normal
-  folder walk is used then).
-- **`turbo_set`** `{on: bool}` → `{ok, error, state: TurboState}`: on: Windows shows a permission prompt (once per engine
-  run); the answer comes after it: **no time limit**. No at the prompt gives `ok: false` with a sentence and the
-  setting stays off. Off: the helper ends. While a prompt is open, another call answers at once with `ok: false`.
-  The `turbo` setting is read-only for `set_settings`: only `turbo_set` changes it.
+  int, usn_ok: bool, last_scan: number|null}], error: string, helper: not_installed|installed|needs_update}`: the
+  optional turbo index, an elevated helper that reads NTFS's own file list and change journal (names, sizes, times
+  and changes only, never file contents). `available` = an NTFS fixed drive is there, `enabled` = the `turbo`
+  setting, `running` = the helper is connected, `usn_ok` = changes on that drive come from the change journal,
+  `error` = `""` or why it isn't running (the normal folder walk is used then). `helper` (2026-11-21): the helper
+  is set up ONCE with administrator permission (a protected copy and a Windows service only this account may
+  start): `installed` = it starts with no prompt; `needs_update` = NOBAD Find was updated, or it was set up for
+  a NOBAD Find in another folder: the normal walk is used and `error` says "Turbo needs your OK once to update its
+  helper" until `turbo_helper` `update`; `not_installed` = nothing set up for this account (always so from source; one set up for another account on this PC counts as not installed here and is never removed from here). Show "Update
+  helper" for `needs_update` and "Remove" whenever it isn't `not_installed`.
+- **`turbo_set`** `{on: bool}` → `{ok, error, state: TurboState}`: on: if `helper` isn't `installed`, Windows shows a
+  permission prompt once to set it up; the answer comes after it: **no time limit**. No at the prompt gives
+  `ok: false` with a sentence and the setting stays off. After that, turbo starts with no prompt on every engine
+  run. Off: the helper ends and Windows asks once to remove it; No there still turns turbo off (`ok: true`) and
+  `error` says the helper is still installed. While a prompt is open, another call answers at once with
+  `ok: false`. The `turbo` setting is read-only for `set_settings`: only `turbo_set` changes it.
+- **`turbo_helper`** `{action: update|remove}` → `{ok, error, state: TurboState}`: `update` asks once to bring the
+  helper up to date (then turbo starts if it is on); `remove` = `turbo_set` off (one prompt). Same prompt rules.
 
 ### The window and quitting
 
@@ -300,6 +309,6 @@ lines, rewrites the `recv` lines), then review the diff.
 | `02-events.jsonl` | every event: status, level, activity, download progress/ready/failed, show (hotkeys and to_main), here, a notice waiting for a listener, unsubscribe, quit and quitting |
 | `03-settings-and-system.jsonl` | get/set_settings (and a bad one), pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words |
 | `04-indexing-page.jsonl` | status_full method and event, pause_for/resume with level events, bad pauses (a string, 0), learned_apps, reset_learned, hardware, forget |
-| `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off |
+| `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray) |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |

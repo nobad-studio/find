@@ -46,15 +46,28 @@ Specific to this app:
   exactly two elevated helpers; don't add others:
   - `wsearch.helper_main`: accepts the four words in `wsearch.STARTS` and runs `sc.exe` with a fixed argument list.
   - `ntfs.helper_main` (the **turbo index**, maintainer decision 2026-11-19, setting `turbo`, **off by default**):
-    accepts only the words in `ntfs.WORDS` (`serve`, `selftest`), reads NTFS metadata (MFT enumeration, file
-    records, change journal), never file contents, and talks only to its parent engine over a pipe whose DACL is the
-    user's SID (both ends check PIDs and the session). It drops other users' profiles, recycle bins, System Volume
-    Information, NTFS metafiles, everything outside the user's scope and categories, and folders the user couldn't
-    list (AccessCheck with the user's token) before anything leaves it; the engine applies its own rules again. Read
-    the module docstring before changing it. Content reading (text, OCR, models) stays in the normal-user workers.
-  Tests never trigger UAC: the turbo tests use fake links and synthetic USN/MFT buffers (the pipe's DACL and PID
-  checks are tested on a real, unelevated pipe). From source the helper is dev only and refuses without
-  `NOBAD_FIND_DEV_TURBO=1`; don't relax that (the prompt would name python.exe, imports come from the source tree).
+    its own small program `turbo\NobadFindTurbo.exe` (`packaging/turbo_launch.py`; no models, OCR, numpy or
+    SQLCipher), accepts only the words in `ntfs.WORDS` (`install`, `remove`, `service`; from source only `serve`,
+    `selftest`), reads NTFS metadata (MFT enumeration, file records, change journal), never file contents. It
+    drops other users' profiles, recycle bins, System Volume Information, NTFS metafiles, everything outside the
+    user's scope and categories, and folders the user couldn't list (AccessCheck with the connected client's own
+    token) before anything leaves it; the engine applies its own rules again. Read the docstrings of `ntfs.py` and
+    `turbosvc.py` before changing it. Content reading (text, OCR, models) stays in the normal-user workers.
+    **Maintainer decision 2026-11-21 (replaces "one UAC prompt per engine run"): administrator rights are asked for
+    ONCE, when the user turns turbo on.** The elevated `install` step copies only the helper's folder (verified
+    SHA-256 manifest, each file from one handle, checked again after the copy) into `<Program Files>\NOBAD Find
+    Turbo\bin` (DACL SYSTEM/Administrators full, Users read; a reparse point or a weaker existing DACL is refused),
+    records the installing user's SID (from Windows, never the command line) and NobadFind.exe's path in
+    `install.json` there, and registers the demand-start service `NOBADFindTurbo` (LocalSystem with its privileges
+    cut to SeChangeNotify + SeManageVolume; only that user may start/stop/query it). The engine starts it with no
+    prompt and is the pipe's CLIENT; the service trusts nothing the engine claims: it checks the client's token SID,
+    session, integrity, elevation and image against the record and fails closed. The protected copy is only
+    changed by an elevated step: a changed helper shows "needs update" and the normal walk until the user OKs it;
+    turning turbo off, Remove and `--uninstall` delete the service and folder (one prompt).
+  Tests never trigger UAC or install a service: fakes for the service manager and the folder DACL steps, synthetic
+  USN/MFT buffers, and the pipe's DACL and both ends' identity checks on a real, unelevated pipe. From source the
+  helper is dev only and refuses without `NOBAD_FIND_DEV_TURBO=1`; don't relax that (the prompt would name
+  python.exe, imports come from the source tree), and `install`/`remove`/`service` always refuse from source.
 - **Out of scope (maintainer decision 2026-11-17):** no activity timeline or usage history (Recent items, browser
   history, event logs, programs run). Indexing is the normal-user folder walk (`walker.py`) plus folder-change
   notifications (`watcher.py`); the turbo helper above is the one optional exception for names and changes.

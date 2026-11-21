@@ -1,10 +1,19 @@
-"""The engine's side of the optional turbo index (the elevated reader is ntfs.py; the privacy reasoning is there).
+"""The engine's side of the optional turbo index (the elevated reader is ntfs.py; the privacy reasoning is there;
+the one-time setup, paths and DACLs are in turbosvc.py).
 
-- `turbo_set {on}` -> Turbo.turn_on / turn_off. On: the engine makes its private pipe, asks Windows to start
-  `NobadFind.exe --turbo serve` elevated (one UAC prompt; saying no leaves the setting off), checks the client is that
-  process in this session, and sends the scope. Off: the pipe closes and the helper ends.
-- With the setting on, the indexer asks once per engine run (ensure) when indexing starts: one prompt per session.
-  Declined then, the setting stays on (asked again next run) and the normal walk is used.
+Maintainer decision 2026-11-21: administrator rights are asked for ONCE, when the user turns turbo on.
+- `turbo_set {on: true}` -> Turbo.turn_on: if the helper isn't set up for this account and this NobadFind.exe, or
+  its files differ from the ones this version ships (HelperSetup.status), Windows asks once (`NobadFindTurbo.exe
+  --turbo install`, elevated); saying no leaves the setting off. Then, with no prompt, the engine starts the service
+  with its own rights, connects to the service's pipe as the client, checks the server is the service's process
+  (PipeLink.start) and sends the scope.
+- With the setting on, the indexer starts it once per engine run (ensure) when indexing starts, WITHOUT a prompt.
+  If the helper needs an update (a new NOBAD Find was installed) or was removed, the normal walk is used and the
+  state says "Turbo needs your OK once to update its helper" until the user OKs it (`turbo_helper {action:
+  "update"}`). The protected copy is never updated without that prompt.
+- `turbo_set {on: false}` and `turbo_helper {action: "remove"}`: the link closes (the service ends with it) and
+  Windows asks once to remove the service and its folder (`--turbo remove`). Saying no turns turbo off anyway and
+  leaves the helper installed ("Remove" stays offered). `--uninstall` does the same (remove_on_uninstall).
 - Indexer._scan_names calls scan(): each NTFS drive in the scope is read by the helper (or caught up from the saved
   journal place when the scope hasn't changed), the rows go through the engine's own rules (Walker.excluded, the
   same check live changes get) before they reach the index. Drives the helper didn't cover are walked as before.
@@ -13,8 +22,9 @@
   folder notifications (watcher.py) carry on alone.
 - State in the contract's turbo_state shape; every change is pushed as the `turbo` event.
 - From source this is development only: without NOBAD_FIND_DEV_TURBO=1 the engine shows no permission prompt and
-  says why (DEV_ONLY). From source the prompt would name python.exe and the elevated interpreter would import from the
-  user-writable source tree (ntfs.py docstring). The installed exe is unaffected.
+  says why (DEV_ONLY). With it, the old per-run elevated helper (`--turbo serve`, one prompt per run) is used, as a
+  pipe server the engine connects to; a service is never set up from source (ntfs.py docstring). The installed exe
+  is unaffected.
 """
 import ctypes
 import hashlib
@@ -24,12 +34,13 @@ import threading
 import time
 from ctypes import wintypes
 
-from . import ntfs, winapi
+from . import ntfs, turbosvc, winapi
 from .kinds import kind_of
 from .log import log
 from .walker import Walker
 
-CONNECT_TIMEOUT = 60             # seconds from the permission prompt being answered to the helper connecting
+CONNECT_TIMEOUT = 60             # seconds from the permission prompt being answered to the helper's pipe (source)
+SERVICE_START_S = 20             # seconds for the service to run and serve its pipe
 SAVE_USN_EVERY = 30              # seconds between saves of the journal place while following
 HELLO_WAIT = 10                  # seconds a scan waits for the helper to list its drives
 QUIET_S = 120                   # a drive whose helper sends nothing this long is walked instead (0.9.1)
@@ -39,10 +50,149 @@ DECLINED = ("Windows didn't get permission (the prompt was closed or answered No
             "normal folder walk.")
 UNAVAILABLE = "The turbo index needs an NTFS drive in what you index; none was found, so the normal walk is used."
 ENDED = "The turbo helper stopped; NOBAD Find went back to its normal folder walk and change notifications."
+NEEDS_UPDATE = ("Turbo needs your OK once to update its helper. Until then NOBAD Find uses its normal folder walk.")
+NOT_SET_UP = ("Turbo's helper isn't set up any more. Turn turbo off and on again (Windows asks once). Until then "
+              "NOBAD Find uses its normal folder walk.")
+KEPT = ("Turbo is off. Its helper is still installed because Windows didn't get permission to remove it; use "
+        "Remove when you want it gone.")
+SETUP_FAILED = {
+    -1: "This NOBAD Find has no turbo helper (NobadFindTurbo.exe is missing). Installing NOBAD Find again fixes it.",
+    3: "Windows didn't give the turbo helper administrator rights; nothing was changed.",
+    4: "The turbo helper refused to set itself up (its folder or the account didn't check out); nothing was used.",
+    7: "The turbo helper is only set up from NOBAD Find's installed app.",
+    8: "The turbo helper's files changed while they were copied, so they weren't used. Try again.",
+    9: "Another program already has a Windows service named NOBADFindTurbo, so turbo can't set up its own.",
+}
+SETUP_OTHER = "The turbo helper couldn't be set up (error {code}); NOBAD Find keeps using its normal folder walk."
+HELPER_ACTIONS = ("update", "remove")
 
 
 class Declined(Exception):
     """The user said no at the UAC prompt."""
+
+
+class SetupFailed(Exception):
+    """The elevated install/remove step ran and refused or failed (its exit code)."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+    @property
+    def sentence(self):
+        return SETUP_FAILED.get(self.code) or SETUP_OTHER.format(code=self.code)
+
+
+class HelperSetup:
+    """The protected copy and its service as seen from the engine (normal user rights; asking for the elevated
+    install/remove step is the only thing that prompts). kind: "service" (the installed app) or "dev" (from
+    source: the old per-run helper, nothing is ever installed)."""
+
+    TTL = 30.0
+
+    def __init__(self, scm=None, elevate=None, frozen=None, clock=time.monotonic):
+        import sys
+        self.kind = "service" if (getattr(sys, "frozen", False) if frozen is None else frozen) else "dev"
+        self.scm = scm or turbosvc.Scm()
+        self._elevate = elevate or winapi.run_elevated
+        self._clock = clock
+        self._own = None
+        self._cached = None
+
+    def helper_exe(self):
+        return os.path.join(turbosvc.user_helper_dir(), turbosvc.EXE)
+
+    def own_manifest(self):
+        """The manifest hash of the helper files this NOBAD Find ships (computed once per engine run: the
+        installer ends the engine before it replaces them)."""
+        if self._own is None:
+            try:
+                self._own = turbosvc.manifest_hash(turbosvc.manifest(turbosvc.user_helper_dir()))
+            except (OSError, ValueError) as e:
+                log(f"turbo: the helper's own files can't be read: {type(e).__name__}", "warn")
+                return None
+        return self._own
+
+    def forget(self):
+        self._cached = None
+
+    def status(self):
+        """(turbosvc.INSTALLED / NEEDS_UPDATE / NOT_INSTALLED, why)."""
+        if self.kind != "service":
+            return turbosvc.NOT_INSTALLED, ""
+        now = self._clock()
+        if self._cached is not None and now - self._cached[0] < self.TTL:
+            return self._cached[1]
+        try:
+            root = turbosvc.protected_root()
+            rec = turbosvc.read_record(root)
+            try:
+                cfg = self.scm.config()
+            except PermissionError:                  # this account may not even query it: another account's
+                r = (turbosvc.NOT_INSTALLED, turbosvc.OTHER_ACCOUNT)
+                self._cached = (now, r)
+                return r
+            from .rpc import server as srv
+            r = turbosvc.helper_status(rec, cfg.command if cfg else None, self.own_manifest(), srv.user_sid(),
+                                       ntfs.own_image(), turbosvc.service_command(root))
+        except (OSError, ValueError) as e:
+            log(f"turbo: helper state unknown: {type(e).__name__}", "warn")
+            r = (turbosvc.NOT_INSTALLED, "")
+        self._cached = (now, r)
+        return r
+
+    def _run(self, word):
+        self.forget()
+        code = self._elevate([self.helper_exe(), "--turbo", word])
+        self.forget()
+        if code is None:
+            raise Declined()
+        if code != 0:
+            raise SetupFailed(code)
+
+    def install(self):
+        if self.kind != "service":
+            raise DevOnly("a service is never set up from source")
+        if not os.path.isfile(self.helper_exe()):
+            raise SetupFailed(-1)
+        self._run("install")
+
+    def remove(self):
+        if self.kind == "service":
+            self._run("remove")
+
+
+def remove_on_uninstall(setup=None):
+    """--uninstall: if turbo's helper is set up for THIS account (its record names this user, or a service this user
+    may query is there), Windows asks once to remove it. Another account's helper is left alone (this user can't
+    even query its service). True when nothing of this account's is left."""
+    setup = setup or HelperSetup()
+    if setup.kind != "service":
+        return True
+    try:
+        cfg = setup.scm.config()
+    except PermissionError:
+        return True                                   # another account's service: not ours to remove
+    except OSError:
+        cfg = None
+    try:
+        rec = turbosvc.read_record(turbosvc.protected_root())
+    except (OSError, ValueError):
+        rec = None
+    if cfg is None and rec is None:
+        return True
+    if rec is not None:
+        from .rpc import server as srv
+        try:
+            if rec.user_sid != srv.user_sid():
+                return True                           # set up for another account on this PC
+        except OSError:
+            return False
+    try:
+        setup.remove()
+    except (Declined, SetupFailed, OSError):
+        return False
+    return True
 
 
 class DevOnly(PermissionError):
@@ -60,9 +210,10 @@ def drive_of(path):
 
 class Turbo:
     def __init__(self, settings, store, indexer, push=None, launch=None, ntfs_drive=None, drives=None,
-                 clock=time.time):
+                 clock=time.time, setup=None):
         self.settings, self.store, self.indexer = settings, store, indexer
         self._push = push
+        self.setup = setup or HelperSetup()
         self._launch = launch or self._launch_helper
         self._ntfs = ntfs_drive or ntfs.is_ntfs_fixed
         self._drives = drives or winapi.drives
@@ -106,7 +257,8 @@ class Turbo:
                 vols.append({"drive": d, "ntfs": self._is_ntfs(d), "files": int(v.get("files", 0)),
                              "usn_ok": bool(v.get("usn_ok")) and self.running(), "last_scan": v.get("last_scan")})
         return {"available": any(v["ntfs"] for v in vols), "enabled": bool(self.settings.get("turbo")),
-                "running": self.running(), "volumes": vols, "error": self.error}
+                "running": self.running(), "volumes": vols, "error": self.error,
+                "helper": self.setup.status()[0]}
 
     def _changed(self):
         if self._push is not None:
@@ -123,19 +275,58 @@ class Turbo:
 
     # ----- on and off -----
     def ensure(self):
-        """With the setting on: start the helper once per engine run (one permission prompt per session)."""
+        """With the setting on: start the helper once per engine run. The installed app never prompts here (a
+        helper that needs an update waits for the user's OK); from source (dev) the per-run prompt."""
         if not self.settings.get("turbo") or self.running() or self._asked:
             return
         self.turn_on(keep_on_failure=True)
 
-    def turn_on(self, keep_on_failure=False):
+    def _set_up(self, keep_on_failure, force=False):
+        """The installed app: the helper must be set up and current. On the user's action (not keep_on_failure)
+        Windows asks once; at engine start never. Returns None when it is ready, else the failure answer."""
+        if self.setup.kind != "service":
+            return None
+        st, why = self.setup.status()
+        if st == turbosvc.INSTALLED and not force:
+            return None
+        if keep_on_failure:
+            self.error = NEEDS_UPDATE if st == turbosvc.NEEDS_UPDATE else (
+                why + " Turn turbo off and on again to set it up for you (Windows asks once)."
+                if why == turbosvc.OTHER_ACCOUNT else NOT_SET_UP)
+            if why:
+                log(f"turbo: {why}")
+            return self._failed(True)
+        try:
+            self.setup.install()
+        except Declined:
+            self.error = DECLINED
+            return self._failed(False)
+        except SetupFailed as e:
+            log(f"turbo setup failed: exit {e.code}", "warn")
+            self.error = e.sentence
+            return self._failed(False)
+        except (OSError, DevOnly) as e:
+            log(f"turbo setup didn't run: {type(e).__name__}", "warn")
+            self.error = SETUP_OTHER.format(code=getattr(e, "winerror", 0) or 0)
+            return self._failed(False)
+        if self.setup.status()[0] != turbosvc.INSTALLED:
+            self.error = "Turbo's helper was set up but doesn't match this NOBAD Find; the normal walk is used."
+            return self._failed(False)
+        return None
+
+    def turn_on(self, keep_on_failure=False, force_setup=False):
         with self._lock:
             self._asked = True
-            if self.running():
+            if self.running() and not force_setup:
                 return {"ok": True, "error": ""}
             if not self.state()["available"]:
                 self.error = UNAVAILABLE
                 return self._failed(keep_on_failure)
+            if force_setup:
+                self._close_link()
+            failed = self._set_up(keep_on_failure, force=force_setup)
+            if failed is not None:
+                return failed
             self._hello.clear()
             try:
                 link = self._launch()
@@ -169,22 +360,45 @@ class Turbo:
         return {"ok": False, "error": self.error}
 
     def turn_off(self):
+        """Off: the link closes (the helper ends), then Windows asks once to remove the helper. No there keeps it
+        installed (and says so); turbo is off either way."""
         with self._lock:
-            link, self._link = self._link, None
-            if link is not None:
-                try:
-                    link.send({"t": "stop"})
-                except OSError:
-                    pass
-                link.close()
+            self._close_link()
             self.settings.update({"turbo": False})
             self.error = ""
             self._release_waiters()
+            if self.setup.kind == "service" and self.setup.status()[0] != turbosvc.NOT_INSTALLED:
+                try:
+                    self.setup.remove()
+                except Declined:
+                    self.error = KEPT
+                except (SetupFailed, OSError) as e:
+                    log(f"turbo remove failed: {getattr(e, 'code', type(e).__name__)}", "warn")
+                    self.error = KEPT
+        self._changed()
+        return {"ok": True, "error": self.error}
+
+    def helper_action(self, action):
+        """`turbo_helper`: "update" (Windows asks once; then turbo starts if it is on) or "remove" (= turn_off)."""
+        if action not in HELPER_ACTIONS:
+            raise ValueError(action)
+        if action == "remove":
+            return self.turn_off()
+        if self.setup.kind != "service":
+            self.error = DEV_ONLY
+            self._changed()
+            return {"ok": False, "error": DEV_ONLY}
+        if self.settings.get("turbo"):
+            return self.turn_on(force_setup=True)
+        with self._lock:                                   # turbo is off: only bring the helper up to date
+            failed = self._set_up(False, force=True)
+        if failed is not None:
+            return failed
+        self.error = ""
         self._changed()
         return {"ok": True, "error": ""}
 
-    def stop(self):
-        """The engine is ending: the helper goes with it (and would on its own when the pipe closes)."""
+    def _close_link(self):
         link, self._link = self._link, None
         if link is not None:
             try:
@@ -192,6 +406,10 @@ class Turbo:
             except OSError:
                 pass
             link.close()
+
+    def stop(self):
+        """The engine is ending: the helper goes with it (and would on its own when the pipe closes)."""
+        self._close_link()
 
     def link_closed(self):
         """The helper's pipe ended without turn_off."""
@@ -459,34 +677,6 @@ def dev_allowed():
     return bool(getattr(sys, "frozen", False)) or os.environ.get(ntfs.DEV_ENV) == "1"
 
 
-def make_pipe(name, sid):
-    """The engine's end: DACL for this user's SID only (network logons denied, nothing inherited), one instance,
-    FILE_FLAG_FIRST_PIPE_INSTANCE (fails if anyone holds the name), no remote clients. Raises OSError."""
-    from .rpc import server as srv
-    k, a = srv._dlls()
-    sd = ctypes.c_void_p()
-    if not a.ConvertStringSecurityDescriptorToSecurityDescriptorW(srv.sddl_for(sid), 1, ctypes.byref(sd), None):
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        sa = srv._SA(ctypes.sizeof(srv._SA), sd, False)
-        h = k.CreateNamedPipeW(name, srv.PIPE_ACCESS_DUPLEX | srv.FILE_FLAG_OVERLAPPED |
-                               srv.FILE_FLAG_FIRST_PIPE_INSTANCE, srv.PIPE_REJECT_REMOTE_CLIENTS, 1, srv.BUF, srv.BUF,
-                               0, ctypes.byref(sa))
-    finally:
-        k.LocalFree(sd)
-    if not h or h == srv.INVALID_HANDLE:
-        raise ctypes.WinError(ctypes.get_last_error())
-    return h
-
-
-def client_ok(h, pid, session):
-    """The engine's check: the pipe's client is the process it started (pid), in the engine's session."""
-    w = _win()
-    cpid, csess = wintypes.DWORD(), wintypes.DWORD()
-    return bool(w.GetNamedPipeClientProcessId(h, ctypes.byref(cpid)) and cpid.value == pid
-                and w.GetNamedPipeClientSessionId(h, ctypes.byref(csess)) and csess.value == session)
-
-
 def start_elevated(argv):
     """ShellExecuteEx "runas" (the UAC prompt), not waiting: the helper's process handle. Raises Declined."""
     sei = winapi._SEI()
@@ -511,98 +701,126 @@ def start_elevated(argv):
 
 
 class PipeLink:
-    """The engine's end: one pipe instance for one helper. send() writes a line; the reader thread hands each message
-    to turbo.on_message and calls turbo.link_closed() when the pipe ends."""
+    """The engine's end (the CLIENT since 2026-11-21): the service's pipe, or from source the per-run elevated
+    helper's. send() writes a line; the reader thread hands each message to turbo.on_message and calls
+    turbo.link_closed() when the pipe ends."""
 
-    def __init__(self, turbo, conn, proc, server):
-        self.turbo, self.conn, self.proc, self._server = turbo, conn, proc, server
+    def __init__(self, turbo, pipe, proc, pid):
+        self.turbo, self.pipe, self.proc = turbo, pipe, proc
         self.alive = True
-        self.pid = 0                        # start(): the helper's process id
+        self.pid = pid                       # the helper's process id (the service's, or the elevated helper's)
         threading.Thread(target=self._read, daemon=True, name="turbo-pipe").start()
 
     @classmethod
     def start(cls, turbo, timeout=CONNECT_TIMEOUT):
+        if turbo.setup.kind == "service":
+            h, proc, pid = cls._connect_service(turbo.setup.scm)
+        else:
+            h, proc, pid = cls._connect_dev(timeout)
+        pipe = ntfs._Pipe(h)
+        link = cls(turbo, pipe, proc, pid)
+        try:
+            link.send({"t": "hi", "protocol": ntfs.PROTOCOL})
+        except OSError:
+            link.close()
+            raise
+        return link
+
+    @staticmethod
+    def _connect_service(scm, wait_s=SERVICE_START_S):
+        """Start the service with the user's own rights (no prompt), then open its pipe and check its server is the
+        service's own process in session 0, and the service runs the protected copy."""
+        from .rpc import server as srv
+        root = turbosvc.protected_root()
+        cfg = scm.config()
+        if cfg is None or os.path.normcase(cfg.command.strip()) != os.path.normcase(turbosvc.service_command(root)):
+            raise PermissionError("the turbo service isn't the protected copy")
+        scm.start()
+        began = time.monotonic()
+        pid = 0
+        while time.monotonic() - began < wait_s:
+            st = scm.status()
+            if st is None:
+                raise OSError(0, "the turbo service is gone")
+            if st[0] == turbosvc.RUNNING and st[1]:
+                pid = st[1]
+                break
+            if st[0] == turbosvc.STOPPED and time.monotonic() - began > 2:
+                raise OSError(0, "the turbo service stopped")
+            time.sleep(0.1)
+        if not pid:
+            raise TimeoutError("the turbo service didn't start")
+
+        def alive():
+            s = scm.status()
+            return bool(s) and s[0] == turbosvc.RUNNING and s[1] == pid
+        h = turbosvc.open_client_pipe(turbosvc.service_pipe_name(srv.user_sid()), wait_s, alive)
+        if not ntfs.server_ok(h, pid, 0):
+            _win().CloseHandle(h)
+            raise PermissionError("the turbo pipe isn't served by the turbo service")
+        return h, None, pid
+
+    @staticmethod
+    def _connect_dev(timeout):
+        """From source (NOBAD_FIND_DEV_TURBO=1): the per-run elevated helper (one prompt) serves the pipe; its
+        server must be the process ShellExecuteEx started, in this session."""
         if not dev_allowed():
             raise DevOnly("from source without NOBAD_FIND_DEV_TURBO=1")
         from .rpc import server as srv
-        k, _a = srv._dlls()
         w = _win()
         sid = srv.user_sid()
-        h = make_pipe(ntfs.pipe_name(sid, os.getpid()), sid)
-        try:
-            proc = start_elevated(helper_argv())
-        except BaseException:
-            k.CloseHandle(h)
-            raise
+        proc = start_elevated(helper_argv())
         pid = w.GetProcessId(proc)
         from . import jobs
         if jobs.OUTER is not None and getattr(jobs.OUTER, "handle", None):
             if not w.AssignProcessToJobObject(jobs.OUTER.handle, proc):     # Windows may refuse for an elevated
                 log("turbo helper is outside the job; it ends on its own with the engine")
-        ov = srv._OVERLAPPED()
-        ov.hEvent = k.CreateEventW(None, True, False, None)
         try:
-            ok = k.ConnectNamedPipe(h, ctypes.byref(ov))
-            err = ctypes.get_last_error()
-            if not ok and err == srv.ERROR_IO_PENDING:
-                arr = (wintypes.HANDLE * 2)(ov.hEvent, proc)
-                r = w.WaitForMultipleObjects(2, arr, False, int(timeout * 1000))
-                if r != 0:
-                    k.CancelIoEx(h, ctypes.byref(ov))
-                    k.CloseHandle(h)
-                    raise TimeoutError("the helper didn't connect")
-            elif not ok and err != srv.ERROR_PIPE_CONNECTED:
-                k.CloseHandle(h)
-                raise ctypes.WinError(err)
-        finally:
-            k.CloseHandle(ov.hEvent)
+            h = turbosvc.open_client_pipe(ntfs.pipe_name(sid, os.getpid()), timeout,
+                                          lambda: ntfs._k32().WaitForSingleObject(proc, 0) != 0)
+        except OSError:
+            w.CloseHandle(proc)
+            raise TimeoutError("the helper didn't serve its pipe")
         mine = wintypes.DWORD()
         w.ProcessIdToSessionId(w.GetCurrentProcessId(), ctypes.byref(mine))
-        if not client_ok(h, pid, mine.value):
-            k.DisconnectNamedPipe(h)
-            k.CloseHandle(h)
-            raise PermissionError("the pipe's client isn't the helper NOBAD Find started")
-        link = cls(turbo, srv.Conn(k, h), proc, srv)
-        link.pid = pid
-        return link
+        if not ntfs.server_ok(h, pid, mine.value):
+            w.CloseHandle(h)
+            w.CloseHandle(proc)
+            raise PermissionError("the pipe isn't served by the helper NOBAD Find started")
+        return h, proc, pid
 
     def send(self, msg):
-        if not self.conn.send(msg):
-            self.alive = False
+        if not self.alive:
             raise OSError(0, "turbo pipe closed")
+        try:
+            self.pipe.send(msg)
+        except OSError:
+            self.alive = False
+            raise
 
     def close(self):
         self.alive = False
-        self.conn.close()
+        self.pipe.close()
 
     def _read(self):
-        srv = self._server
-        k, _a = srv._dlls()
-        ov = srv._OVERLAPPED()
-        ov.hEvent = k.CreateEventW(None, True, False, None)
-        buf = ctypes.create_string_buffer(srv.BUF)
-        n = wintypes.DWORD()
         lines = ntfs.Lines()
         try:
-            while self.alive and self.conn.alive:
-                k.ResetEvent(ov.hEvent)
-                if not k.ReadFile(self.conn.handle, buf, srv.BUF, None, ctypes.byref(ov)) \
-                        and ctypes.get_last_error() != srv.ERROR_IO_PENDING:
+            while self.alive:
+                data = self.pipe.read()
+                if not data:
                     break
-                k.WaitForSingleObject(ov.hEvent, srv.INFINITE)
-                if not k.GetOverlappedResult(self.conn.handle, ctypes.byref(ov), ctypes.byref(n), False):
-                    break
-                for msg in lines.feed(buf.raw[:n.value]):
+                for msg in lines.feed(data):
                     self.turbo.on_message(msg)
         except ValueError:
             log("turbo helper sent a message that isn't one; closing", "warn")
         except Exception as e:
             log(f"turbo pipe ended: {type(e).__name__}", "warn")
         finally:
-            k.CloseHandle(ov.hEvent)
             was = self.alive
             self.alive = False
-            self.conn.close()
-            _win().CloseHandle(self.proc)
+            self.pipe.close()
+            if self.proc:
+                _win().CloseHandle(self.proc)
+                self.proc = None
             if was:
                 self.turbo.link_closed()

@@ -162,8 +162,12 @@ abstract class EngineApi {
   Future<ScopeInfo> scopeInfo();
   Future<TurboState> turboState();
 
-  /// On: Windows asks for administrator permission (no time limit); off: the helper ends.
+  /// On: Windows asks for administrator permission once if the helper isn't set up (no time limit); after that it
+  /// starts with no prompt. Off: the helper ends and Windows asks once to remove it.
   Future<TurboSet> turboSet(bool on);
+
+  /// The helper: `update` (Windows asks once) or `remove` (turbo off, one prompt).
+  Future<TurboSet> turboHelper(String action);
 
   /// Windows' "Open with" dialog for the result.
   Future<ActionResult> openWith(int id);

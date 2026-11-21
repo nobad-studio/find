@@ -409,6 +409,8 @@ class EngineClient {
   Future<ScopeInfo> scopeInfo() async => ScopeInfo.fromJson(await call('scope_info'));
   Future<TurboState> turboState() async => TurboState.fromJson(await call('turbo_state'));
   Future<TurboSet> turboSet(bool on) async => TurboSet.fromJson(await call('turbo_set', {'on': on}, false));
+  Future<TurboSet> turboHelper(String action) async =>
+      TurboSet.fromJson(await call('turbo_helper', {'action': action}, false));
 
   Future<Uint8List?> thumbnail(int id) {
     if (_thumbs.containsKey(id)) {

@@ -1,4 +1,5 @@
-"""get_settings, set_settings, hotkey_state, hotkey_probe, pick_folder, rescan, wipe, scope_info, turbo_state, turbo_set.
+"""get_settings, set_settings, hotkey_state, hotkey_probe, pick_folder, rescan, wipe, scope_info, turbo_state, turbo_set,
+turbo_helper.
 
 Every value goes through settings.coerce inside Api.set_settings. pick_folder shows
 Windows' folder dialog from the engine, so the UI never hands the engine a folder path of its own."""
@@ -49,10 +50,27 @@ def methods(api, events=None):
             events.turbo(out["state"])
         return out
 
+    def turbo_helper(params, conn=None):
+        action = str_param(params, "action")
+        if action not in ("update", "remove"):
+            raise RpcError(INVALID_PARAMS, "'action' must be update or remove")
+        if not _asking.acquire(blocking=False):
+            return {"ok": False, "error": BUSY, "state": api.turbo_state()}
+        try:
+            r = api.turbo_helper(action) or {}
+        finally:
+            _asking.release()
+        out = ok(r)
+        out["state"] = r.get("state") if isinstance(r.get("state"), dict) else api.turbo_state()
+        if events is not None:
+            events.turbo(out["state"])
+        return out
+
     return {"get_settings": lambda params, conn=None: api.get_settings(),
             "scope_info": lambda params, conn=None: api.scope_info(),
             "turbo_state": lambda params, conn=None: api.turbo_state(),
             "turbo_set": turbo_set,
+            "turbo_helper": turbo_helper,
             "set_settings": set_settings,
             "hotkey_state": lambda params, conn=None: api.hotkey_state(),
             "hotkey_probe": hotkey_probe,

@@ -135,6 +135,7 @@ BAD = {
     "wsearch_set": [{"off": "yes"}, {}],
     "use_instead_of_windows_search": [{"on": 1}, {}],
     "turbo_set": [{"on": "yes"}, {"on": 1}, {}],
+    "turbo_helper": [{"action": "delete"}, {"action": 1}, {}],
     "subscribe": [{"events": "status"}, {"events": [1]}, {}],
     "unsubscribe": [{"events": "status"}, {}],
     "ui_shown": [{"window": "desktop"}],

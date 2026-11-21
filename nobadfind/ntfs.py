@@ -4,9 +4,16 @@ Maintainer decision 2026-11-19 (ROADMAP §3): an optional elevated helper, OFF b
 reverses "never elevated" for this one helper only. The walker (walker.py) and folder notifications (watcher.py)
 stay the fallback: UAC declined, a drive that isn't NTFS, any error.
 
+Maintainer decision 2026-11-21: administrator rights are asked for ONCE, when the user turns turbo on, instead of
+every engine start (it was one UAC prompt per engine run). turbosvc.py has the setup: the helper's own small program
+is copied (verified) into a folder only administrators can change and registered as a demand-start service that
+only the user who set it up may start; its docstring has the paths, DACLs and the update and removal steps.
+
 What it does
-- `NobadFind.exe --turbo serve`, started by the engine with ShellExecuteW "runas" (one UAC prompt per engine run),
-  exactly like wsearch.helper_main. It accepts the fixed words in WORDS and nothing else from its command line.
+- `NobadFindTurbo.exe --turbo <word>` accepts the fixed words in WORDS and nothing else from its command line:
+  `install` and `remove` (elevated, one UAC prompt each, started by the engine like wsearch.helper_main), `service`
+  (the service manager runs the protected copy with it; the engine starts the service, no prompt), `serve` (from
+  source only, development: the old per-run elevated helper) and `selftest` (measurements in an admin terminal).
 - Per fixed NTFS drive in the scope: FSCTL_ENUM_USN_DATA lists every MFT entry (file reference number, parent,
   name, attributes) in two passes (folders first, so paths resolve with only the folder tree in memory), then
   FSCTL_GET_NTFS_FILE_RECORD gives each kept entry's size and times from its MFT record ($STANDARD_INFORMATION,
@@ -17,9 +24,9 @@ What it does
   A journal that was deleted, reset or wrapped past the saved USN (plan_scan, JournalLost) means a full read again.
 - After an engine restart it catches up from the USN the engine saved (if the journal is the same one and still
   holds that USN) instead of reading the whole drive again.
-- Lifetime: one helper per engine run (one UAC prompt per session, the option the maintainer preferred). It ends when
-  the engine ends: the engine puts it in its kill-on-close job where Windows allows that, and the helper itself
-  waits on the engine's process handle and on the pipe, and exits when either goes.
+- Lifetime: one service run per engine run, serving that one engine. It ends when the engine ends: it waits on the
+  client's process handle and on the pipe and exits when either goes, and it exits after turbosvc.IDLE_S when no
+  client connects. Never started at boot or by anyone but the recorded user (and administrators).
 
 Privacy (why an elevated reader doesn't leak more than the normal walk would show)
 An administrator can read every folder's names, including other people's. The helper therefore drops, before
@@ -32,24 +39,35 @@ anything leaves it:
 - folders the user couldn't list as themselves: each folder's security descriptor is checked with AccessCheck against
   the ENGINE USER's token (cached per descriptor), so a folder only an administrator may open keeps its name (the
   normal walk sees that too) but not its contents. A failing check counts as "no" (fail closed).
-The user's identity comes from Windows, never from the engine's messages: the SID of the pipe server process's token,
-and that SID's profile from HKLM ProfileList. The engine's config can only narrow what is sent (roots, exclusions,
+The user's identity comes from Windows, never from the engine's messages: the SID recorded by the elevated setup step
+(from the tokens of the engine that asked and of the elevated process), which must equal the SID of the connected
+client's own token (ImpersonateNamedPipeClient at identification level, and its process token), and that SID's
+profile from HKLM ProfileList. The token AccessCheck uses is the CONNECTED CLIENT's token (identification level). The engine's config can only narrow what is sent (roots, exclusions,
 category switches); the hard drops above don't depend on it. The engine then applies its own rules again to every
 record (turbo.Turbo._rows: Walker.excluded) and reads file contents only in its normal-user workers.
 
-The pipe
-- The ENGINE is the server: `\\\\.\\pipe\\NOBADFind-turbo-<user SID>-<engine pid>`, DACL for that user's SID only
-  (network logons denied), one instance, FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_REJECT_REMOTE_CLIENTS.
-- The engine checks the client is the process its ShellExecuteEx started (GetNamedPipeClientProcessId) in its own
-  session (GetNamedPipeClientSessionId). The helper checks the server is its parent process (the process that asked
-  for elevation), runs the same program (QueryFullProcessImageNameW), in the same session
-  (GetNamedPipeServerSessionId), and the pipe name carries that process's own token SID.
-- The helper opens the pipe with SECURITY_IDENTIFICATION, so the engine (and anything pretending to be it) can't
-  impersonate the elevated helper.
-- Both checks are small functions (turbo.client_ok, server_ok) tested on a real pipe without elevation.
-- Messages: one JSON object per line, ASCII, capped at MAX_LINE (Lines). The helper accepts only `config`, `scan`
-  and `stop`; every field is checked (parse_config, parse_drive, parse_since). Paths from the engine are only ever
-  compared as strings, never opened.
+The pipe (2026-11-21: reversed, the elevated side is the server and trusts nothing the engine claims)
+- The SERVICE is the server: `\\\\.\\pipe\\NOBADFind-turbo-svc-<recorded user SID>` (from source: `...-turbo-<SID>-
+  <engine pid>`), DACL turbosvc.pipe_sddl: that user's SID only with read/write data rights (no new instances, no
+  DACL change), network logons denied, medium label; one instance, FILE_FLAG_FIRST_PIPE_INSTANCE (a name someone
+  already holds makes the service end), PIPE_REJECT_REMOTE_CLIENTS. It serves one client.
+- The engine opens it with SECURITY_IDENTIFICATION, so the elevated side can identify the engine's user but never
+  act as it, and checks the server is the service's own process (the pid from the service manager, the service's
+  configured binary is the protected copy) in session 0 (server_ok); from source, the process its ShellExecuteEx
+  started, in its own session.
+- The service reads one small `hi` line (identification needs the client to have written), then checks the client
+  with Windows' own answers only (client_identity, check_client): the client token's SID (ImpersonateNamedPipeClient,
+  OpenThreadToken, RevertToSelf; a failing RevertToSelf ends the process) and the client process's token SID both
+  equal the recorded SID; not elevated, at least medium integrity, no AppContainer, not a restricted token; the
+  pipe's client session = the token's session = the process's session, not 0, and an active session (WTS); the
+  process image (QueryFullProcessImageNameW) is the recorded NobadFind.exe (from source: the parent that asked for
+  elevation, which is also the only pid allowed). Any failure: the service ends (fail closed). The image check is
+  defence in depth only: the user's own NobadFind.exe is in a folder the user can write to.
+- Both ends' checks are small functions (check_client is pure; client_identity and server_ok are tested on a real,
+  unelevated pipe).
+- Messages: one JSON object per line, ASCII, capped at MAX_LINE (Lines; the first line, before the client is
+  checked, at HI_MAX). The helper accepts only `hi` (first), `config`, `scan` and `stop`; every field is checked
+  (parse_config, parse_drive, parse_since). Paths from the engine are only ever compared as strings, never opened.
 
 From source (development only)
 The shipped exe is the only supported way to run the helper. From source, the UAC prompt names python.exe, not NOBAD
@@ -57,7 +75,8 @@ Find, and the elevated interpreter imports nobadfind from the source tree, a fol
 is the repository). So from source the helper refuses to run unless NOBAD_FIND_DEV_TURBO=1 is set (DEV_ENV), and the
 engine doesn't ask Windows for permission without it either. An elevated process doesn't inherit the caller's
 environment: set it for the user (`setx NOBAD_FIND_DEV_TURBO 1`, then a new terminal), or in the admin terminal for
-`--turbo selftest`. Frozen builds ignore it.
+`--turbo selftest`. Frozen builds ignore it. From source `install`, `remove` and `service` always refuse, with or
+without it: a service would run user-writable code as LocalSystem. The frozen build refuses `serve`.
 """
 import ctypes
 import json
@@ -70,12 +89,16 @@ import time
 from collections import namedtuple
 from ctypes import wintypes
 
-from . import scope, winapi
+from . import scope, turbosvc, winapi
 
-WORDS = ("serve", "selftest")
+WORDS = ("install", "remove", "service", "serve", "selftest")
+SOURCE_WORDS = ("serve", "selftest")      # from source: development only, with NOBAD_FIND_DEV_TURBO=1
+SETUP_WORDS = ("install", "remove", "service")    # the installed helper only: always refused from source
 DEV_ENV = "NOBAD_FIND_DEV_TURBO"         # from source only: "1" lets the helper run (module docstring)
-PROTOCOL = 1
+PROTOCOL = 2                             # 2 (2026-11-21): the engine is the client and says hi first
 MAX_LINE = 8 * 1024 * 1024
+HI_MAX = 4096                            # the first line, read before the client is checked
+HI_WAIT = 30                             # seconds a connected client has to say hi
 ROWS_PER_MESSAGE = 1000
 FOLLOW_EVERY = 1.0                       # seconds between looks at the change journal
 EPOCH = 116444736000000000               # FILETIME of 1970-01-01
@@ -525,6 +548,12 @@ def _k32():
                 ("GetOverlappedResult", B, [H, P, ctypes.POINTER(D), B]),
                 ("GetNamedPipeServerProcessId", B, [H, ctypes.POINTER(D)]),
                 ("GetNamedPipeServerSessionId", B, [H, ctypes.POINTER(D)]),
+                ("GetNamedPipeClientProcessId", B, [H, ctypes.POINTER(D)]),
+                ("GetNamedPipeClientSessionId", B, [H, ctypes.POINTER(D)]),
+                ("ConnectNamedPipe", B, [H, P]),
+                ("DisconnectNamedPipe", B, [H]),
+                ("CancelIoEx", B, [H, P]),
+                ("GetCurrentThread", H, []),
                 ("LocalFree", P, [P])):
             f = getattr(k, name)
             f.restype, f.argtypes = res, args
@@ -690,6 +719,10 @@ def _advapi():
                 ("ConvertSidToStringSidW", B, [P, ctypes.POINTER(w.LPWSTR)]),
                 ("DuplicateTokenEx", B, [H, D, P, ctypes.c_int, ctypes.c_int, ctypes.POINTER(H)]),
                 ("GetFileSecurityW", B, [w.LPCWSTR, D, P, D, ctypes.POINTER(D)]),
+                ("ImpersonateNamedPipeClient", B, [H]),
+                ("RevertToSelf", B, []),
+                ("OpenThreadToken", B, [H, D, B, ctypes.POINTER(H)]),
+                ("IsTokenRestricted", B, [H]),
                 ("AccessCheck", B, [P, H, D, P, P, ctypes.POINTER(D), ctypes.POINTER(D), ctypes.POINTER(B)])):
             f = getattr(a, name)
             f.restype, f.argtypes = res, args
@@ -712,6 +745,65 @@ def token_sid(token):
         return s.value
     finally:
         k.LocalFree(s)
+
+
+def token_dword(token, cls):
+    """A DWORD-sized token information class (TokenSessionId 12, TokenElevation 20, TokenIsAppContainer 29,
+    TokenElevationType 18), or None."""
+    v, need = wintypes.DWORD(), wintypes.DWORD()
+    return v.value if _advapi().GetTokenInformation(token, cls, ctypes.byref(v), 4, ctypes.byref(need)) else None
+
+
+def integrity_of(token):
+    """The token's mandatory integrity level (0x2000 medium, 0x3000 high, 0x4000 system), or -1."""
+    a = _advapi()
+    need = wintypes.DWORD()
+    a.GetTokenInformation(token, 25, None, 0, ctypes.byref(need))                # TokenIntegrityLevel
+    if not need.value or need.value > 4096:
+        return -1
+    buf = ctypes.create_string_buffer(need.value)
+    if not a.GetTokenInformation(token, 25, buf, need, ctypes.byref(need)):
+        return -1
+    sid = ctypes.c_void_p.from_buffer(buf).value
+    s = wintypes.LPWSTR()
+    if not a.ConvertSidToStringSidW(sid, ctypes.byref(s)):
+        return -1
+    try:
+        text = s.value or ""
+    finally:
+        _k32().LocalFree(s)
+    return int(text.rsplit("-", 1)[1]) if text.startswith("S-1-16-") else -1
+
+
+def linked_token_sid(token):
+    """The SID of an elevated split token's linked (limited) token, "" when there is none."""
+    a = _advapi()
+    h, need = wintypes.HANDLE(), wintypes.DWORD()
+    if not a.GetTokenInformation(token, 19, ctypes.byref(h), ctypes.sizeof(h), ctypes.byref(need)):  # TokenLinked
+        return ""
+    try:
+        return token_sid(h)
+    finally:
+        _k32().CloseHandle(h)
+
+
+def session_active(session):
+    """True when this Windows session is the signed-in, active one (WTSConnectState == WTSActive)."""
+    try:
+        w = ctypes.WinDLL("wtsapi32", use_last_error=True)
+        w.WTSQuerySessionInformationW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
+                                                  ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD)]
+        w.WTSQuerySessionInformationW.restype = wintypes.BOOL
+        w.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+        buf, n = ctypes.c_void_p(), wintypes.DWORD()
+        if not w.WTSQuerySessionInformationW(None, session, 8, ctypes.byref(buf), ctypes.byref(n)):  # ConnectState
+            return False
+        try:
+            return n.value >= 4 and ctypes.c_int.from_address(buf.value).value == 0                   # WTSActive
+        finally:
+            w.WTSFreeMemory(buf)
+    except (OSError, AttributeError):
+        return False
 
 
 def profile_of(sid):
@@ -828,58 +920,106 @@ class _Pipe:
             return b""
         return buf.raw[:n] if n else b""
 
+    def close(self):
+        k = _k32()
+        h, self.h = self.h, None
+        if h:
+            k.CancelIoEx(h, None)
+            k.CloseHandle(h)
 
-def server_ok(h, ppid, session):
-    """The helper's check: the pipe at h is served by its parent process, in its own session."""
+
+def server_ok(h, pid, session):
+    """The engine's check (client end): the pipe at h is served by process pid (the service's own process, or the
+    elevated helper it started from source), in that session (0 for the service)."""
     spid, ssess = wintypes.DWORD(), wintypes.DWORD()
     k = _k32()
-    return bool(k.GetNamedPipeServerProcessId(h, ctypes.byref(spid)) and spid.value == ppid
+    return bool(k.GetNamedPipeServerProcessId(h, ctypes.byref(spid)) and spid.value == pid
                 and k.GetNamedPipeServerSessionId(h, ctypes.byref(ssess)) and ssess.value == session)
 
 
-def _connect_to_parent():
-    """Open the engine's pipe, after checking the engine is who the pipe name and Windows say it is.
-    Returns (_Pipe, parent process handle, the user's SID, the user's token for AccessCheck)."""
+# ---------- who is the client (helper side: the server end) ----------
+Identity = namedtuple("Identity", "pid pipe_session token_session process_session sid process_sid image elevated "
+                                  "integrity app_container restricted active")
+MEDIUM = 0x2000
+
+
+def _revert_or_die():
+    if not _advapi().RevertToSelf():
+        os._exit(9)                                       # never go on running as the client
+
+
+def client_identity(h):
+    """Everything Windows says about the client of the server pipe h (after it has written something):
+    (Identity, an identification-level copy of its token for AccessCheck, its process handle). Raises
+    PermissionError when Windows can't say."""
     k, a = _k32(), _advapi()
-    me = k.GetCurrentProcessId()
-    ppid = parent_pid(me)
-    if not ppid:
-        raise PermissionError("no parent process")
-    hp = k.OpenProcess(0x1000 | 0x100000, False, ppid)           # query limited information, synchronize
-    if not hp:
-        raise PermissionError("parent process can't be opened")
-    if os.path.normcase(image_of(hp)) != os.path.normcase(image_of(k.GetCurrentProcess())):
-        raise PermissionError("the parent isn't NOBAD Find")
-    if session_of(ppid) != session_of(me):
-        raise PermissionError("the parent is in another session")
+    cpid, csess = wintypes.DWORD(), wintypes.DWORD()
+    if not (k.GetNamedPipeClientProcessId(h, ctypes.byref(cpid)) and k.GetNamedPipeClientSessionId(
+            h, ctypes.byref(csess))):
+        raise PermissionError("no client process")
     tok = wintypes.HANDLE()
-    if not a.OpenProcessToken(hp, 0x8 | 0x2, ctypes.byref(tok)):         # TOKEN_QUERY | TOKEN_DUPLICATE
-        raise PermissionError("the parent's token can't be read")
-    sid = token_sid(tok)
-    if not SID_RE.match(sid):
-        raise PermissionError("the parent isn't a user account")
-    imp = wintypes.HANDLE()
-    if not a.DuplicateTokenEx(tok, 0x8 | 0x4, None, 1, 2, ctypes.byref(imp)):   # SecurityIdentification, impersonation
-        raise PermissionError("no token for access checks")
-    k.CloseHandle(tok)
-    name = pipe_name(sid, ppid)
-    h = k.CreateFileW(name, GENERIC_READ | 0x40000000, 0, None, OPEN_EXISTING,
-                      FILE_FLAG_OVERLAPPED | 0x00100000 | 0x00010000, None)   # overlapped; SQOS: identification only
-    if not h or h == INVALID_HANDLE:
-        raise PermissionError(f"pipe not there ({ctypes.get_last_error()})")
-    if not server_ok(h, ppid, session_of(me)):
-        k.CloseHandle(h)
-        raise PermissionError("the pipe isn't served by the parent in this session")
-    return _Pipe(h), hp, sid, imp
+    if not a.ImpersonateNamedPipeClient(h):
+        raise PermissionError(f"the client can't be identified ({ctypes.get_last_error()})")
+    try:
+        got = a.OpenThreadToken(k.GetCurrentThread(), 0x8 | 0x2, True, ctypes.byref(tok))   # QUERY | DUPLICATE
+    finally:
+        _revert_or_die()
+    if not got:
+        raise PermissionError("the client's token can't be read")
+    try:
+        imp = wintypes.HANDLE()
+        if not a.DuplicateTokenEx(tok, 0x8 | 0x4, None, 1, 2, ctypes.byref(imp)):   # SecurityIdentification
+            raise PermissionError("no token for access checks")
+        sid = token_sid(tok)
+        tsess = token_dword(tok, 12)
+        elevated = token_dword(tok, 20)
+        appc = token_dword(tok, 29)
+        integrity = integrity_of(tok)
+        restricted = bool(a.IsTokenRestricted(tok))
+    finally:
+        k.CloseHandle(tok)
+    hp = k.OpenProcess(0x1000 | 0x100000, False, cpid.value)     # query limited information, synchronize
+    if not hp:
+        k.CloseHandle(imp)
+        raise PermissionError("the client process can't be opened")
+    ptok = wintypes.HANDLE()
+    psid = ""
+    if a.OpenProcessToken(hp, 0x8, ctypes.byref(ptok)):
+        psid = token_sid(ptok)
+        k.CloseHandle(ptok)
+    ident = Identity(cpid.value, csess.value, tsess, session_of(cpid.value), sid, psid, image_of(hp),
+                     elevated != 0, integrity, appc != 0, restricted, session_active(csess.value))
+    return ident, imp, hp
 
 
-def _rules_for(sid, cfg, profile=None):
+def check_client(ident, sid, image, pid=None):
+    """The service's decision, from Windows' answers only (client_identity) against the protected record (sid,
+    image) or, from source, the parent that asked for elevation (pid). Raises PermissionError: fail closed."""
+    if not (SID_RE.match(sid or "") and ident.sid == sid and ident.process_sid == sid):
+        raise PermissionError("the client isn't the account turbo was set up for")
+    if pid is not None and ident.pid != pid:
+        raise PermissionError("the client isn't the process that asked")
+    if not ident.pipe_session or not (ident.pipe_session == ident.token_session == ident.process_session):
+        raise PermissionError("the client's session doesn't add up")
+    if not ident.active:
+        raise PermissionError("the client isn't in the active signed-in session")
+    if ident.elevated or ident.restricted or ident.app_container or ident.integrity < MEDIUM:
+        raise PermissionError("the client's token isn't a normal user's")
+    if not turbosvc.same_path(ident.image, image):
+        raise PermissionError("the client isn't NOBAD Find")
+    return True
+
+
+def _rules_for(sid, cfg, profile=None, own=None):
     prof = profile or profile_of(sid)
     if not prof:
         raise PermissionError("no profile for this account")
     others = [p for p in scope._profile_list() if p and _norm(p) != _norm(prof)]
-    return scope.Rules(system=cfg["include_system"], caches=cfg["include_caches"], secrets=cfg["include_secrets"],
-                       profile=prof, others=others)
+    rules = scope.Rules(system=cfg["include_system"], caches=cfg["include_caches"], secrets=cfg["include_secrets"],
+                        profile=prof, others=others)
+    if own:
+        rules.own = scope.norm(own)          # as a service LOCALAPPDATA isn't the user's: their index folder
+    return rules
 
 
 class Scanner:
@@ -964,14 +1104,59 @@ class Scanner:
                 self.send({"t": "changes", "drive": self.drive, "paths": paths})
 
 
-def _serve():
-    pipe, parent, sid, token = _connect_to_parent()
+def _wait_connect(h, timeout_s):
+    """Overlapped ConnectNamedPipe with a deadline. True when a client is connected."""
+    k = _k32()
+    ov = _OVERLAPPED()
+    ov.hEvent = k.CreateEventW(None, True, False, None)
+    try:
+        if k.ConnectNamedPipe(h, ctypes.byref(ov)):
+            return True
+        err = ctypes.get_last_error()
+        if err == 535:                                    # ERROR_PIPE_CONNECTED
+            return True
+        if err != ERROR_IO_PENDING:
+            return False
+        if k.WaitForSingleObject(ov.hEvent, int(timeout_s * 1000)) != 0:
+            k.CancelIoEx(h, ctypes.byref(ov))
+            return False
+        n = wintypes.DWORD()
+        return bool(k.GetOverlappedResult(h, ctypes.byref(ov), ctypes.byref(n), True))
+    finally:
+        k.CloseHandle(ov.hEvent)
+
+
+def serve_client(h, sid, image, pid=None, end=os._exit, own=None):
+    """The server end, connected: read the client's hi (small), check the client with Windows' answers
+    (check_client), then serve it. Any failure ends the process (end)."""
+    pipe = _Pipe(h)
+    timer = threading.Timer(HI_WAIT, end, (0,))
+    timer.daemon = True
+    timer.start()
+    lines = Lines(HI_MAX)
+    pending = []
+    while not pending:
+        data = pipe.read()
+        if not data:
+            return 0
+        pending = lines.feed(data)
+    hi = pending.pop(0)
+    if hi.get("t") != "hi" or hi.get("protocol") != PROTOCOL:
+        raise ValueError("the client didn't say hi")
+    ident, token, hp = client_identity(h)
+    check_client(ident, sid, image, pid)
+    timer.cancel()
+    lines.max_line = MAX_LINE
+    return _serve(pipe, lines, pending, sid, token, hp, end, own)
+
+
+def _serve(pipe, lines, pending, sid, token, client, end=os._exit, own=None):
     k = _k32()
 
-    def watch_parent():
-        k.WaitForSingleObject(parent, 0xFFFFFFFF)
-        os._exit(0)                                       # the engine is gone: so is the helper
-    threading.Thread(target=watch_parent, daemon=True, name="parent").start()
+    def watch_client():
+        k.WaitForSingleObject(client, 0xFFFFFFFF)
+        end(0)                                            # the engine is gone: so is the helper
+    threading.Thread(target=watch_client, daemon=True, name="client").start()
     try:
         winapi.worker_priority(True)                      # idle CPU, low memory and I/O priority
     except Exception:
@@ -1029,16 +1214,19 @@ def _serve():
     threading.Thread(target=worker, daemon=True, name="scan").start()
     threading.Thread(target=follower, daemon=True, name="follow").start()
 
-    lines = Lines()
     while True:
-        data = pipe.read()
-        if not data:
-            return 0                                      # the engine closed the pipe
-        for msg in lines.feed(data):                      # a bad line raises: the helper ends
+        if pending:
+            batch, pending = pending, []
+        else:
+            data = pipe.read()
+            if not data:
+                return 0                                  # the engine closed the pipe
+            batch = lines.feed(data)                      # a bad line raises: the helper ends
+        for msg in batch:
             t = msg.get("t")
             if t == "config":
                 cfg = parse_config(msg)
-                flt = Filter(_rules_for(sid, cfg), cfg["roots"], cfg["exclude"], can_list=lister)
+                flt = Filter(_rules_for(sid, cfg, own=own), cfg["roots"], cfg["exclude"], can_list=lister)
                 with lock:
                     state["flt"] = flt
                     for sc in state["followers"].values():
@@ -1107,18 +1295,150 @@ def _selftest(out=print):
     return 0
 
 
+def own_image():
+    return image_of(_k32().GetCurrentProcess())
+
+
+def own_token_sid():
+    tok = wintypes.HANDLE()
+    if not _advapi().OpenProcessToken(_k32().GetCurrentProcess(), 0x8, ctypes.byref(tok)):
+        return "", None
+    try:
+        return token_sid(tok), token_dword(tok, 18)                 # TokenElevationType: 1 default, 2 full
+    finally:
+        _k32().CloseHandle(tok)
+
+
+def _parent_user(expected_image=None):
+    """The process that asked for elevation (the engine): (pid, its image, its token's SID), checked: same session,
+    a user account, not elevated, and (when given) the expected program. From Windows, never the command line."""
+    k, a = _k32(), _advapi()
+    me = k.GetCurrentProcessId()
+    ppid = parent_pid(me)
+    if not ppid:
+        raise PermissionError("no parent process")
+    hp = k.OpenProcess(0x1000, False, ppid)                       # query limited information
+    if not hp:
+        raise PermissionError("parent process can't be opened")
+    try:
+        img = image_of(hp)
+        if expected_image is not None and not turbosvc.same_path(img, expected_image):
+            raise PermissionError("the parent isn't NOBAD Find")
+        if session_of(ppid) != session_of(me):
+            raise PermissionError("the parent is in another session")
+        tok = wintypes.HANDLE()
+        if not a.OpenProcessToken(hp, 0x8, ctypes.byref(tok)):
+            raise PermissionError("the parent's token can't be read")
+        try:
+            sid, elevated = token_sid(tok), token_dword(tok, 20)
+        finally:
+            k.CloseHandle(tok)
+    finally:
+        k.CloseHandle(hp)
+    if not SID_RE.match(sid):
+        raise PermissionError("the parent isn't a user account")
+    if elevated:
+        raise PermissionError("the parent runs as administrator; NOBAD Find never does")
+    return ppid, img, sid
+
+
+def _serve_dev():
+    """From source (DEV_ENV): the per-run elevated helper; the engine that asked is the only client."""
+    ppid, img, sid = _parent_user(expected_image=own_image())
+    h = turbosvc.make_server_pipe(pipe_name(sid, ppid), turbosvc.pipe_sddl(sid))
+    if not _wait_connect(h, 60):
+        return 0
+    return serve_client(h, sid, img, pid=ppid)
+
+
+def _service(end):
+    """`--turbo service` under the service manager, from the protected copy only."""
+    root = turbosvc.protected_root()
+    if not turbosvc.same_path(own_image(), os.path.join(root, turbosvc.BIN, turbosvc.EXE)):
+        raise PermissionError("the service runs only from its protected folder")
+    for d in (root, os.path.join(root, turbosvc.BIN)):
+        if turbosvc.is_reparse(d) or not turbosvc.dacl_is_strong(turbosvc.path_sddl(d)):
+            raise PermissionError("the protected folder isn't protected")
+    if own_token_sid()[0] != turbosvc.SY:
+        raise PermissionError("the service runs as LocalSystem only")
+    rec = turbosvc.read_record(root)
+    if rec is None:
+        raise PermissionError("no record of who set turbo up")
+    prof = profile_of(rec.user_sid)
+    own = os.path.join(prof, "AppData", "Local", "NOBAD", "Find") if prof else None
+    h = turbosvc.make_server_pipe(turbosvc.service_pipe_name(rec.user_sid), turbosvc.pipe_sddl(rec.user_sid))
+    if not _wait_connect(h, turbosvc.IDLE_S):
+        return 0                                          # nobody came: end
+    return serve_client(h, rec.user_sid, rec.client_image, end=end, own=own)
+
+
+def _install():
+    """Elevated: copy this helper (<install>\\turbo) into the protected folder and register the service, for the
+    account of the NobadFind.exe that asked (turbosvc docstring)."""
+    me = own_image()
+    src = os.path.dirname(me)
+    if not (os.path.basename(me).lower() == turbosvc.EXE.lower()
+            and os.path.basename(src).lower() == turbosvc.USER_DIR):
+        raise PermissionError("not the helper of an installed NOBAD Find")
+    _ppid, client, sid = _parent_user(expected_image=os.path.join(os.path.dirname(src), "NobadFind.exe"))
+    mine, kind = own_token_sid()
+    # The account is always the parent's (the engine that asked), as Windows reports it. When the approving account
+    # is that same account (an administrator's split token, TokenElevationTypeFull), its linked token must agree.
+    # When another administrator typed their password for a standard account, mine differs and the standard
+    # account (the parent's) is the one recorded: that is who the administrator approved it for.
+    if mine == sid and kind == 2 and linked_token_sid_of_self() != sid:
+        raise PermissionError("the account that asked isn't the one that approved")
+    turbosvc.install(src, turbosvc.protected_root(), sid, client, turbosvc.Scm(), turbosvc.Fs())
+    return 0
+
+
+def linked_token_sid_of_self():
+    tok = wintypes.HANDLE()
+    if not _advapi().OpenProcessToken(_k32().GetCurrentProcess(), 0x8, ctypes.byref(tok)):
+        return ""
+    try:
+        return linked_token_sid(tok)
+    finally:
+        _k32().CloseHandle(tok)
+
+
+def _remove():
+    turbosvc.remove(turbosvc.protected_root(), turbosvc.Scm(), turbosvc.Fs())
+    return 0
+
+
 def helper_main(word):
-    """`--turbo <word>`. Only the words in WORDS; only elevated (the helper is pointless and refused otherwise)."""
+    """`--turbo <word>`. Only the words in WORDS; only elevated (the helper is pointless and refused otherwise).
+    install/remove/service only from the installed program; serve/selftest from source only with DEV_ENV."""
     if word not in WORDS:
         return 2
-    if not getattr(sys, "frozen", False) and os.environ.get(DEV_ENV) != "1":
+    frozen = bool(getattr(sys, "frozen", False))
+    if word in SETUP_WORDS and not frozen:
+        print("turbo: a service is never set up from source (it would run user-writable code as LocalSystem)",
+              file=sys.stderr)
+        return 7
+    if word == "serve" and frozen:
+        return 2                                          # the installed app uses the service
+    if not frozen and os.environ.get(DEV_ENV) != "1":
         print(f"turbo helper from source is for development only: set {DEV_ENV}=1 (see nobadfind/ntfs.py)",
               file=sys.stderr)
         return 6
     if not winapi.is_admin():
         return 3
     try:
-        return _serve() if word == "serve" else _selftest()
+        if word == "service":
+            return turbosvc.run_service(_service)
+        if word == "install":
+            return _install()
+        if word == "remove":
+            return _remove()
+        return _serve_dev() if word == "serve" else _selftest()
+    except turbosvc.Mismatch as e:
+        print(f"turbo helper refused: {e}", file=sys.stderr)
+        return 8
+    except turbosvc.NotOurs as e:
+        print(f"turbo helper refused: {e}", file=sys.stderr)
+        return 9
     except PermissionError as e:
         print(f"turbo helper refused: {e}", file=sys.stderr)
         return 4

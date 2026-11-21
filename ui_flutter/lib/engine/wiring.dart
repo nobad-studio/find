@@ -192,6 +192,12 @@ class PipeEngine implements EngineApi {
   }
 
   @override
+  Future<TurboSet> turboHelper(String action) {
+    if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid); // Windows' permission prompt
+    return _pipe.turboHelper(action);
+  }
+
+  @override
   Future<ActionResult> openWith(int id) {
     if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid);
     return _pipe.openWith(id);

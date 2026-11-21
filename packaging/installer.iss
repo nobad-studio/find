@@ -46,6 +46,8 @@ SignedUninstaller=yes
 ; An upgrade starts from a clean engine folder: what an older version shipped and this one doesn't (0.8.0's pywebview,
 ; pythonnet and WebView2 loader files) must not stay behind. Everything in it is installed again below.
 Type: filesandordirs; Name: "{app}\_internal"
+; The turbo index's helper (its own program, copied into Program Files only when the user OKs it): fresh too.
+Type: filesandordirs; Name: "{app}\turbo"
 
 [Files]
 Source: "..\dist\NobadFind\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -62,8 +64,9 @@ Filename: "{app}\{#MyAppExe}"; Flags: nowait runasoriginaluser; Check: WizardSil
 
 [UninstallRun]
 ; Runs after CurUninstallStepChanged(usUninstall) below has stopped NOBAD Find. It puts Windows Search back the way
-; it was if NOBAD Find turned it off (Windows may ask for permission once) and removes NOBAD Find's own
-; start-with-Windows entry. Uninstall waits for it.
+; it was if NOBAD Find turned it off (Windows may ask for permission once), removes the turbo index's service and
+; its folder in Program Files if they were set up (Windows asks once) and NOBAD Find's own start-with-Windows entry.
+; Uninstall waits for it.
 Filename: "{app}\{#MyAppExe}"; Parameters: "--uninstall"; Flags: waituntilterminated; RunOnceId: "NobadFindUninstall"
 
 [UninstallDelete]

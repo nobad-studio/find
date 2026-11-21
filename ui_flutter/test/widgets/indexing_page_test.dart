@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/models/scope_info.dart';
 import 'package:nobad_find/platform/languages.dart';
 import 'package:nobad_find/state/categories.dart';
@@ -63,8 +64,47 @@ void main() {
       'error': '',
     });
     expect(t.line, 'Turbo: on (C: NTFS)');
+    expect(t.helper, TurboHelper.notInstalled); // an engine before 2026-11-21 sends no helper
     expect(const TurboState(available: true, error: 'Windows said no.').line, 'Turbo: off. Windows said no.');
     expect(const TurboState().line, startsWith('Turbo: not available'));
+    final u = TurboState.fromJson({'available': true, 'enabled': true, 'helper': 'needs_update', 'error': 'x'});
+    expect((u.needsUpdate, u.removable), (true, true));
+    expect(u.line, startsWith('Turbo: needs your OK once to update its helper'));
+    expect(TurboState.fromJson({'helper': 'installed'}).helper, TurboHelper.installed);
+    expect(TurboState.fromJson({'helper': 'nonsense'}).helper, TurboHelper.notInstalled);
+  });
+
+  testWidgets('turbo: a helper that needs an update offers Update helper; one left installed offers Remove', (
+    tester,
+  ) async {
+    final engine = FakeEngine()
+      ..turbo = const TurboState(
+        available: true,
+        enabled: true,
+        helper: TurboHelper.needsUpdate,
+        error: 'Turbo needs your OK once to update its helper.',
+        volumes: [TurboVolume(drive: 'C:', ntfs: true)],
+      );
+    await openScope(tester, engine);
+    final update = find.byWidgetPredicate((w) => w is NbButton && w.label == 'Update helper');
+    expect(update, findsOneWidget);
+    expect(find.text('Helper needs your OK once to update'), findsOneWidget);
+    await tester.ensureVisible(update);
+    await tester.tap(update);
+    await tester.pumpAndSettle();
+    expect(engine.turboHelperCalls, ['update']);
+    expect(update, findsNothing);
+    expect(find.text('Helper set up: starts without asking'), findsOneWidget);
+    // turned off with the removal declined: the helper stays, Remove is offered
+    engine.turbo = const TurboState(available: true, helper: TurboHelper.installed);
+    engine.emit(TurboEvent(engine.turbo));
+    await tester.pumpAndSettle();
+    final remove = find.byWidgetPredicate((w) => w is NbButton && w.label == 'Remove');
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(engine.turboHelperCalls, ['update', 'remove']);
+    expect(remove, findsNothing);
   });
 
   test("Windows' languages suggest a focus like the engine's rule", () {

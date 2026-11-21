@@ -616,7 +616,7 @@
       }
     },
     "turbo_state": {
-      "description": "The optional turbo index (an elevated helper that reads the NTFS file list and change journal: names and changes only, never file contents). available: this PC can use it (Windows, an NTFS fixed drive in the scope); enabled: the turbo setting; running: the helper is connected now.",
+      "description": "The optional turbo index (an elevated helper that reads the NTFS file list and change journal: names and changes only, never file contents). available: this PC can use it (Windows, an NTFS fixed drive in the scope); enabled: the turbo setting; running: the helper is connected now; helper: whether its one-time setup is there and current.",
       "params": {
         "$ref": "#/$defs/no_params"
       },
@@ -625,7 +625,7 @@
       }
     },
     "turbo_set": {
-      "description": "Turn the turbo index on (Windows asks for administrator permission once per engine run; the answer comes after that prompt, don't time this call out) or off (the helper ends, the normal folder walk and change notifications take over). While one prompt is open, another call answers at once with ok false and a sentence. Saying no at the prompt gives ok false and leaves the setting off.",
+      "description": "Turn the turbo index on or off. On: if its helper isn't set up for this account and this NOBAD Find (helper not_installed or needs_update), Windows asks for administrator permission ONCE to set it up (the answer comes after that prompt, don't time this call out); after that it starts without a prompt, every engine run. Saying no gives ok false and leaves the setting off. Off: the helper ends, the normal folder walk and change notifications take over, and Windows asks once to remove the helper; saying no there still turns turbo off (ok true) and error says the helper is still installed. While one prompt is open, another call answers at once with ok false and a sentence.",
       "params": {
         "type": "object",
         "properties": {
@@ -643,6 +643,35 @@
           },
           {
             "on": false
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/turbo_change"
+      }
+    },
+    "turbo_helper": {
+      "description": "The turbo index's helper (the protected copy NOBAD Find sets up once). update: Windows asks once to bring it up to date (offered when helper is needs_update: NOBAD Find was updated, or it was set up for a NOBAD Find in another folder); then turbo starts if it is on. remove: turbo off and the helper removed (Windows asks once; as turbo_set off). Same prompt rules as turbo_set: no time limit, one prompt at a time.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "enum": [
+              "update",
+              "remove"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "action": "update"
+          },
+          {
+            "action": "remove"
           }
         ]
       },
@@ -2403,6 +2432,14 @@
         "error": {
           "type": "string",
           "description": "\"\" or a sentence: why turbo isn't running (the folder walk is used instead)."
+        },
+        "helper": {
+          "enum": [
+            "not_installed",
+            "installed",
+            "needs_update"
+          ],
+          "description": "The helper set up once with administrator permission (a Windows service only this account may start): installed = ready, starts with no prompt; needs_update = NOBAD Find was updated (or it was set up for a NOBAD Find in another folder): the normal walk is used until turbo_helper update; not_installed = nothing set up for this account (always, from source; a helper set up for another account on this PC counts as not installed here, and is never removed from here)."
         }
       },
       "required": [
@@ -2410,7 +2447,8 @@
         "enabled",
         "running",
         "volumes",
-        "error"
+        "error",
+        "helper"
       ],
       "additionalProperties": false
     },

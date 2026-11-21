@@ -25,7 +25,8 @@ def parse_args(argv=None):
     p.add_argument("--page", choices=PAGES, help="open the main window on this page")
     p.add_argument("--bar", action="store_true", help="open the quick find bar instead of the main window")
     p.add_argument("--wsearch", choices=("auto", "delayed-auto", "demand", "disabled"), help=argparse.SUPPRESS)
-    p.add_argument("--turbo", choices=("serve", "selftest"), help=argparse.SUPPRESS)   # the elevated NTFS helper
+    p.add_argument("--turbo", choices=("serve", "selftest"), help=argparse.SUPPRESS)   # dev: the elevated NTFS helper
+    # (the installed helper's words, install/remove/service, are NobadFindTurbo.exe's: packaging/turbo_launch.py)
     p.add_argument("--version", action="store_true")
     p.add_argument("--engine", action="store_true", help="no window: serve the UI over the private pipe")
     p.add_argument("--uninstall", action="store_true", help=argparse.SUPPRESS)   # run by the uninstaller
@@ -44,9 +45,10 @@ def first_window(args):
 
 
 def uninstall():
-    """Undo what NOBAD Find changed outside its own folder: Windows Search (if it turned it off) and the
-    "Start with Windows" entry. The index itself is deleted by the uninstaller if the user says so."""
-    from . import wsearch
+    """Undo what NOBAD Find changed outside its own folder: Windows Search (if it turned it off), the turbo index's
+    service and protected folder (Windows asks once) and the "Start with Windows" entry. The index itself is deleted
+    by the uninstaller if the user says so."""
+    from . import turbo, wsearch
     from .api import set_autostart
     from .settings import Settings
     settings = Settings(SETTINGS_PATH)
@@ -54,6 +56,13 @@ def uninstall():
         set_autostart(False)
     except OSError:
         pass
+    code = 0
+    if turbo.remove_on_uninstall():
+        settings.update({"turbo": False})
+    else:
+        print("The turbo index's helper is still installed. Remove it in Services (NOBADFindTurbo) and the folder "
+              "NOBAD Find Turbo in Program Files, as an administrator, if you want it gone.")
+        code = 1
     prev = settings.get("wsearch_prev")
     if prev and wsearch.state().get("start") == "disabled":
         if not wsearch.request(prev):            # Windows asks for permission; saying no leaves it off
@@ -61,7 +70,7 @@ def uninstall():
             return 1
     if prev:
         settings.update({"wsearch_prev": ""})
-    return 0
+    return code
 
 
 def _end(code):
