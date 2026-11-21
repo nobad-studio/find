@@ -4,6 +4,30 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: Vision Phase 0, step 1 (Florence-2, SmolVLM2-500M) on the reference PC
+
+`python -m tools.vision_bench` (dev only, `tools/vision_bench/README.md`), llama.cpp b12602, ONNX Runtime 1.27.0
+(CPU build). PC: 12 cores / 16 threads, 15.7 GB RAM, Intel Iris Xe (shared memory; Vulkan used, proven by
+llama.cpp's "using device Vulkan0" line). Set: 32 questions over 17 openly licensed Wikimedia Commons photos
+(English, German and Hindi signs, objects, counts, questions, descriptions, comparisons); answers written by
+looking at each photo; the photos are not in the repo. Window closed, nothing else heavy running.
+
+| candidate | device | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall | 10,000 photos |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SmolVLM2-500M Q8_0 | Vulkan | 2,329 | 1,650 | 848 | 0.86 | 0.46 | 1.00 | 0.75 | 1.00 | 0.72 | 6.5 h |
+| SmolVLM2-500M Q8_0 | CPU | 3,152 | 1,167 | 0 | 0.86 | 0.46 | 1.00 | 0.75 | 1.00 | 0.72 | 8.8 h |
+| Florence-2-base-ft int8 | CPU | 9,142 | 2,263 | - | 0.49 | 0.11 | - | - | 0.62 | 0.37 | 25.4 h |
+
+What the answers show (per-item answers in the run's `results.json`):
+- SmolVLM2 answered every question right (2 people, chess, red, snow, German, a photographer: 7/7), every
+  description, and 2 of 3 comparisons (it said two Tokyo night streets were not the same kind of place). Reading
+  text is its weak part: asked to copy a sign, it often describes it instead ("The signboard is green and
+  white..."); German came out garbled; **no Hindi text was read** (0/3).
+- Florence-2 int8 on CPU was 3-4x slower and used more RAM than SmolVLM2, and was weaker everywhere: its text
+  reading runs lines together ("ScentralBark", "Sairtel") and looped on the wide trilingual sign (repeated
+  Arabic-script tokens); objects missed signs and the motorcycle. Its int8 graphs may be part of the cause.
+- Hindi text needs a dedicated reader (not measured here; PaddleOCR Devanagari pinned in `models.json`).
+
 ## 2026-11-19 (late): 0.8.5 smart search (understood parts, best guess, autocomplete)
 
 **Quality** (`tools/eval_search.py`, generated corpus: 31 answer files in English, Hindi, Spanish, French and German
