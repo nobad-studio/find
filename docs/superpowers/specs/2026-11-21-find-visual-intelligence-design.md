@@ -332,9 +332,43 @@ memory, an internal error, suggestions (a better model fits now, turbo needs its
 Deduplicated and rate-limited, quiet during games and calls, no file names unless the user allows it, history
 capped and kept inside the encrypted index. (Built separately on `find-notifications`.)
 
+## Hybrid photo search (maintainer, 2026-11-21: "use hybrid retrieval, not just vector similarity")
+
+Today `search.py` fuses names, full text, text meaning and SigLIP photo look with reciprocal rank fusion and
+hand-set weights (1.3 / 1.0 / 0.8 / 1.0), tuned on a synthetic file corpus. Photo search adds channels:
+
+| Channel | Source |
+|---|---|
+| V look | SigLIP (exists) |
+| C caption meaning | SmolVLM2 caption, as full text and as text vectors |
+| O objects and attributes | SmolVLM2 objects ("person", "laptop", "dark") |
+| R actions and relationships | SmolVLM2 "who does what" ("person using laptop") |
+| T text in the photo | Windows OCR (exists) + PaddleOCR Devanagari |
+| M metadata | date, size, folder, type: a ranking signal as well as a filter |
+
+- **Calibrated, not raw:** each channel's raw score is mapped on judged data to the log-odds that the photo is
+  relevant. **A missing channel adds 0 (neutral):** a photo with no text or not yet understood is never pushed down.
+- **Learned weights:** a small regularized logistic model on the judged searches, checked on searches held out
+  from fitting; weights may depend on what the query asks for (objects, actions, text, dates).
+- **Light query expansion:** related phrasings via the text meaning model and concepts from the user's own
+  captions; no language model per search. The original query stays first; expansions only add candidates, and
+  everything is re-ranked against the original.
+- **Facts in one pass:** one structured SmolVLM2 prompt (caption, objects, people/pet count, actions, scene, text
+  present), stored once per photo; benchmarked against the separate questions before it replaces them.
+- **People's feelings and expressions** ("looking frustrated") sit behind `vision_people` (off by default);
+  objects, actions and scenes are on for everyone.
+- **Gate:** it ships only if it beats today's RRF on recall@10 and nDCG@10 on the photo search test set: 60
+  searches x about 300 openly licensed Wikimedia Commons photos graded 0/1/2 from what is visible
+  (`C:\Users\aassw\vbench\search\`, outside the repo; licences in `photos\sources.json`).
+
 ## Still open
 
-- Florence-2's place after the like-for-like runs; Qwen's tuned settings after the speed-up runs.
+- Florence-2's place: like-for-like it is slower and weaker than SmolVLM2 (768 px CPU: 9.1 s vs 5.6 s a photo;
+  objects 0.49 vs 0.76, descriptions 0.62 vs 0.92, text 0.11 vs 0.69), and the published fp16 GPU graphs don't
+  run on DirectML. It stays a catalog choice with no default role.
+- Qwen's tuned settings: "fastest" (512 px, fewer image tokens, flash attention, 8-bit KV cache) for scene and
+  relationship questions, 4.9 s, objects/counts/comparisons kept; "short answers" (7.0 s) for text questions. Its
+  GPU memory reading (5.8 GB shared) is measured again before it's relied on.
 
 ## Left to the builder
 
