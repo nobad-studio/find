@@ -121,7 +121,10 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `models_loaded`, `admin`, `roots`, `ocr` (`true`, or a sentence saying why Windows OCR isn't there), `drives`
   (`[{root, type, label, present}]`), `level`, `reason`, `paused`, `phase`, `plan`, `history` (the last 5 minutes:
   `[{t, cpu, gpu, find_cpu, find_mb, level}]`, one point per 2 s), `resources` (`{cpu, memory_mb, read_mb_s, gpu,
-  processes: [{name, pid, cpu, memory_mb}]}`), `phases` (`[{id: names|text|ocr|meaning|photos|watching, label,
+  processes: [{name, role, about, pid, cpu, memory_mb, private_mb, age_s|null, readable, note}]}`: every process of
+  NOBAD Find's own and nothing else, the engine first; `role` is `engine window bar text meaning photo turbo
+  open_with ending mp_helper client other`, `memory_mb` the working set, `private_mb` the committed memory, `note`
+  `""` or idle/starting/ending/not readable; sampled at most every 2 s; the totals count the UIs too), `phases` (`[{id: names|text|ocr|meaning|photos|watching, label,
   state: off|running|waiting|done, done, total|null, rate, eta_s|null}]`), `models` (cards: `[{id:
   meaning|photo|ocr, name, license, size_mb, on_disk, loaded, memory_mb|null, device, items, download:
   null|{got_mb, size_mb, mb_s}}]`), `activity` (newest first, at most 50: `[{t, kind, text}]`). Other keys may

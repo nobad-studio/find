@@ -23,7 +23,13 @@ void main() {
       expect(find.text('Reading documents'), findsOneWidget);
       expect(find.text('31,877 / 40,112'), findsOneWidget);
       expect(find.textContaining('done in about 9 min'), findsOneWidget);
-      expect(find.text('Text reader'), findsNWidgets(2));
+      expect(find.text('Processes'), findsOneWidget);
+      expect(find.text('Text reader worker'), findsNWidgets(2));
+      expect(find.text('Meaning worker'), findsOneWidget);
+      expect(find.text('Runs the AI model for text, so you can search by what files mean.'), findsOneWidget);
+      expect(find.text('Idle: waiting for work'), findsOneWidget);
+      expect(find.text('14 min'), findsOneWidget); // the window, 871 s
+      expect(find.textContaining("5 processes of NOBAD Find's own"), findsOneWidget);
       expect(find.textContaining('The index is encrypted on disk'), findsOneWidget);
       await tester.tap(find.text('Pause for 1 hour'));
       await tester.pumpAndSettle();
@@ -51,12 +57,16 @@ void main() {
       final engine = FakeEngine();
       await pumpApp(tester, engine, size: const Size(1080, 1600));
       await ctrl(tester, LogicalKeyboardKey.digit2);
+      await tester.ensureVisible(find.text('Download…').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Download…').first);
       await tester.pumpAndSettle();
       expect(find.text('Download the meaning model?'), findsOneWidget);
       await tester.tap(find.text('Not now'));
       await tester.pumpAndSettle();
       expect(engine.calls, isNot(contains('download_meaning')));
+      await tester.ensureVisible(find.text('Download…').first);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Download…').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Download'));

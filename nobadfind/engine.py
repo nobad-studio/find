@@ -472,6 +472,7 @@ def run(stop=None, open_ui=None, lock=None):
     api._turbo = turbo
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
     turbo._push = rpc.events.turbo
+    api._ui_pids = rpc.ui_pids                    # the Index page names the UIs connected to the pipe
     from .update import Updater
     updater = Updater(settings)
     updater.on_change = rpc.events.update

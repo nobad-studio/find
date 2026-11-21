@@ -83,7 +83,19 @@ void main() {
           'read_mb_s': 1.25,
           'gpu': null,
           'processes': [
-            {'name': 'Main', 'pid': 1, 'cpu': 1.0, 'memory_mb': 120},
+            {'name': 'Main', 'pid': 1, 'cpu': 1.0, 'memory_mb': 120}, // an older engine
+            {
+              'name': 'Turbo index helper (elevated)',
+              'role': 'turbo',
+              'about': 'Reads file names.',
+              'pid': 2,
+              'cpu': 0.0,
+              'memory_mb': 0,
+              'private_mb': 0,
+              'age_s': null,
+              'readable': false,
+              'note': 'Runs as administrator',
+            },
           ],
         },
         'history': [
@@ -131,7 +143,15 @@ void main() {
       expect(d.plan!.cpu, 16);
       expect(d.speedLabel, 'gentle');
       expect(d.speedHelp, "Speed: you're using the PC");
-      expect(d.resources.processes.single.name, 'Main');
+      final old = d.resources.processes.first, turbo = d.resources.processes.last;
+      expect(old.name, 'Main');
+      expect((old.role, old.privateMb, old.ageS, old.readable, old.note), ('', null, null, true, ''));
+      expect((turbo.role, turbo.readable, turbo.ageS, turbo.note), ('turbo', false, null, 'Runs as administrator'));
+      expect(runningFor(42), '42 s');
+      expect(runningFor(871), '14 min');
+      expect(runningFor(3 * 3600 + 300), '3 h 5 min');
+      expect(runningFor(86400), '1 day');
+      expect(runningFor(null), '–');
       expect(d.resources.gpu, isNull);
       expect(d.history.length, 2);
       expect(d.history.last.findCpu, 0);

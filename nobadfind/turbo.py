@@ -84,6 +84,11 @@ class Turbo:
         link = self._link
         return link is not None and getattr(link, "alive", True)
 
+    def helper_pid(self):
+        """The running helper's process id (the Index page's Processes), 0 when there is none."""
+        link = self._link
+        return int(getattr(link, "pid", 0) or 0) if link is not None and getattr(link, "alive", True) else 0
+
     def _is_ntfs(self, d):
         if d not in self._ntfs_cache:
             try:
@@ -512,6 +517,7 @@ class PipeLink:
     def __init__(self, turbo, conn, proc, server):
         self.turbo, self.conn, self.proc, self._server = turbo, conn, proc, server
         self.alive = True
+        self.pid = 0                        # start(): the helper's process id
         threading.Thread(target=self._read, daemon=True, name="turbo-pipe").start()
 
     @classmethod
@@ -556,7 +562,9 @@ class PipeLink:
             k.DisconnectNamedPipe(h)
             k.CloseHandle(h)
             raise PermissionError("the pipe's client isn't the helper NOBAD Find started")
-        return cls(turbo, srv.Conn(k, h), proc, srv)
+        link = cls(turbo, srv.Conn(k, h), proc, srv)
+        link.pid = pid
+        return link
 
     def send(self, msg):
         if not self.conn.send(msg):

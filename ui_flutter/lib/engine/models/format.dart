@@ -47,6 +47,19 @@ String span(num seconds) {
   return 'about ${(sec / 86400).round()} days';
 }
 
+/// How long a process has run: "40 s", "12 min", "3 h 5 min", "2 days", or "–" when unknown.
+String runningFor(int? seconds) {
+  if (seconds == null || seconds < 0) return '–';
+  if (seconds < 60) return '$seconds s';
+  if (seconds < 3600) return '${seconds ~/ 60} min';
+  if (seconds < 86400) {
+    final m = (seconds % 3600) ~/ 60;
+    return '${seconds ~/ 3600} h${m > 0 ? ' $m min' : ''}';
+  }
+  final d = seconds ~/ 86400;
+  return '$d ${d == 1 ? 'day' : 'days'}';
+}
+
 /// "12 files per second", "2.3 files per second", "6 files per minute", or "".
 String perTime(num? rate, String unit) {
   final r = _fin(rate);
