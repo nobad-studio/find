@@ -65,12 +65,13 @@ def _unit(v):
     return v / np.maximum(np.linalg.norm(v, axis=-1, keepdims=True), 1e-9)
 
 
-def build_features(folder, models_dir):
+def build_features(folder, models_dir, facts_file="facts-smolvlm2.json"):
     from nobadfind import embed, models
     queries, photos, qrels = eps.load_set(folder)
     res = os.path.join(folder, "results")
     base = json.load(open(os.path.join(res, "features-baseline.json"), encoding="utf-8"))
-    facts = json.load(open(os.path.join(res, "facts-smolvlm2.json"), encoding="utf-8"))
+    facts = json.load(open(os.path.join(res, facts_file), encoding="utf-8"))
+    facts.pop("_peak", None)
     sig = {(r["q"], r["photo"]): r["siglip"] for r in base["rows"]}
     ocr_text = {n: t for n, t in base["ocr_text"].items() if t and len(t.strip()) >= 3}
     names = sorted(photos)
@@ -181,6 +182,55 @@ def cross_validate(queries, qrels, feats, channels, folds=5, seed=13, l2=1e-2):
     return _agg(got), _agg(ref), per_q
 
 
+GROUPS = {  # the kinds of search the maintainer asked to see (2026-11-21), by query channel or id
+    "people and actions": lambda q: "R" in q["channels"] or "E" in q["channels"],
+    "relationships": lambda q: "R" in q["channels"],
+    "screenshots and documents": lambda q: q["id"] in ("q28", "q29", "q56"),
+    "text-heavy": lambda q: "T" in q["channels"],
+    "Hindi signs": lambda q: q["id"] == "q25",
+    "black and white": lambda q: q["id"] == "q54",
+    "ambiguous (mood)": lambda q: "E" in q["channels"],
+    "objects": lambda q: "O" in q["channels"],
+    "all": lambda q: True,
+}
+
+
+def _boot(d, seed=1, n=5000):
+    rng = random.Random(seed)
+    b = sorted(sum(rng.choice(d) for _ in d) / len(d) for _ in range(n))
+    return b[int(0.025 * n)], b[int(0.975 * n) - 1]
+
+
+def report(folder, queries, qrels, feats, folds):
+    """Cross-validated hybrid vs SigLIP alone vs ranking v2, per kind of search: nDCG@10, recall@10, searches
+    better/worse, paired bootstrap CI over all searches."""
+    v2 = json.load(open(os.path.join(folder, "results", "v2.json"), encoding="utf-8"))["variants"]["photo_v2"]
+    _g, _r, per_q = cross_validate(queries, qrels, feats, CHANNELS, folds)
+    ids = [q["id"] for q in queries]
+    sig = dict(zip(ids, siglip_only(ids, qrels, feats)))
+    print(f"{'kind of search':28}{'n':>3}  {'hybrid':>13}  {'SigLIP':>13}  {'v2':>6}  vs SigLIP +/-  vs v2 +/-")
+    for name, pick in GROUPS.items():
+        qs = [q["id"] for q in queries if pick(q)]
+        h = _agg([per_q[i] for i in qs])
+        s_ = _agg([sig[i] for i in qs])
+        v = round(sum(v2["per_query"][i] for i in qs) / len(qs), 3)
+        dn = [per_q[i][1] - sig[i][1] for i in qs]
+        dv = [per_q[i][1] - v2["per_query"][i] for i in qs]
+        print(f"{name:28}{len(qs):>3}  {h['ndcg10']!s:>6}/{h['recall10']!s:<6}  {s_['ndcg10']!s:>6}/{s_['recall10']!s:<6}"
+              f"  {v!s:>6}  {sum(x > 0.005 for x in dn):>5}/{sum(x < -0.005 for x in dn):<5}"
+              f"  {sum(x > 0.005 for x in dv):>4}/{sum(x < -0.005 for x in dv):<4}")
+    d = [per_q[i][1] - sig[i][1] for i in ids]
+    lo, hi = _boot(d)
+    print(f"hybrid - SigLIP alone, nDCG@10: {sum(d) / len(d):+.3f} (95 % CI {lo:+.3f} to {hi:+.3f})")
+    d = [per_q[i][1] - v2["per_query"][i] for i in ids]
+    lo, hi = _boot(d)
+    print(f"hybrid - v2,           nDCG@10: {sum(d) / len(d):+.3f} (95 % CI {lo:+.3f} to {hi:+.3f})")
+    T = {q["id"]: q["text"] for q in queries}
+    order = sorted(ids, key=lambda i: per_q[i][1] - sig[i][1])
+    print("helps most:", [(T[i], round(per_q[i][1] - sig[i][1], 2)) for i in order[-5:]])
+    print("hurts most:", [(T[i], round(per_q[i][1] - sig[i][1], 2)) for i in order[:5]])
+
+
 def main(argv=None):
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
@@ -188,8 +238,13 @@ def main(argv=None):
     ap.add_argument("--models-dir", default=os.path.join(os.environ.get("LOCALAPPDATA", ""), "NOBAD", "Find"))
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--out")
+    ap.add_argument("--facts", default="facts-smolvlm2.json", help="caption file in <set>/results")
+    ap.add_argument("--report", action="store_true", help="per kind of search vs SigLIP alone and v2 (results/v2.json)")
     a = ap.parse_args(argv)
-    queries, qrels, feats = build_features(a.folder, a.models_dir)
+    queries, qrels, feats = build_features(a.folder, a.models_dir, a.facts)
+    if a.report:
+        report(a.folder, queries, qrels, feats, a.folds)
+        return
     print(f"{len(queries)} searches; cross-validated over {a.folds} folds of searches (nDCG@10 / recall@10)")
     sets = {"SigLIP alone (calibrated)": ("look",),
             "look + caption + objects": ("look", "look_gap", "caption", "objects", "words"),

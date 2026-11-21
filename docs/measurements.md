@@ -4,6 +4,49 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: hybrid photo search, step 2: Qwen3-VL-2B captions vs SmolVLM2-500M, like for like
+
+Same 308 photos, same two questions (one-sentence caption, 48 tokens; object list, 40 tokens; repeat penalty
+1.3), same 60 searches, same channels and 5-fold cross-validation over searches (`tools/fit_hybrid.py --facts F
+--report`). Iris Xe Vulkan, llama.cpp b12602. Qwen with its Phase 0 "fastest" settings (512 px, <= 160 image
+tokens, flash attention, 8-bit KV cache). Memory sampled every 0.5 s by the vision bench's probes; process RAM
+(private) and GPU memory (shared, as Windows counts it on the Iris Xe) are separate counters: on an integrated
+GPU the shared pool is system memory too, so the two overlap and must not be added.
+
+| Captions from | compute a photo p50 / p90 | 10,000 photos | peak private RAM | peak GPU (shared) |
+|---|---|---|---|---|
+| SmolVLM2-500M Q8_0 | 3.0 / 3.5 s | ~8.4 h | 1,138 MB | 848 MB |
+| Qwen3-VL-2B Q4_K_M | 5.1 / 6.6 s | ~14 h | 3,056 MB | 2,532 MB |
+
+(Wall time 5.4 / 11.0 s: llama-mtmd-cli reloads the model per question; the product keeps it loaded.)
+
+nDCG@10 / recall@10 by kind of search (searches better/worse than SigLIP alone):
+
+| Kind of search (n) | SigLIP alone | v2 | + SmolVLM2 captions | + Qwen captions |
+|---|---|---|---|---|
+| people and actions (17) | 0.746 / 0.832 | 0.755 | 0.806 / 0.862 (11/5) | **0.839 / 0.891 (14/3)** |
+| relationships (14) | 0.771 / 0.851 | 0.781 | 0.827 / 0.895 (9/4) | **0.853 / 0.917 (12/2)** |
+| ambiguous / mood (4) | 0.648 / 0.807 | 0.648 | 0.658 / 0.782 (2/2) | **0.758 / 0.829 (3/1)** |
+| objects (39) | 0.876 / 0.908 | 0.870 | 0.874 / 0.897 (13/14) | 0.887 / 0.909 (16/14) |
+| text-heavy (8) | **0.875 / 0.902** | 0.737 | 0.819 / 0.885 (1/5) | 0.803 / 0.910 (1/4) |
+| screenshots and documents (3) | **0.815 / 0.850** | 0.482 | 0.795 / 0.833 (1/2) | 0.720 / 0.917 (0/1) |
+| Hindi signs (1) | 0.752 / 0.667 | 0.626 | 0.659 / 1.0 | 0.728 / 1.0 |
+| black and white (1) | 0.907 / 0.900 | 0.907 | 1.0 / 1.0 (saturation rule) | 1.0 / 1.0 (saturation rule) |
+| **all (60)** | 0.864 / 0.913 | 0.840 | 0.871 / 0.906 (25/22) | **0.884 / 0.926 (28/19)** |
+
+- **Against SigLIP alone (the baseline and fallback), neither passes:** SmolVLM2 +0.007 nDCG@10 (95 % CI -0.016
+  to +0.029), Qwen +0.020 (CI -0.006 to +0.046). Against v2, Qwen +0.044 (CI +0.007 to +0.091), but v2 is the
+  live mixed-file pipeline; SigLIP alone is the fair bar for a photos-only ranking.
+- **Where captions help is consistent across both models, more with Qwen:** people and actions +0.093,
+  relationships +0.082, mood +0.110 nDCG@10 over SigLIP alone ("a woman smiling" +0.29, "feeling lonely" +0.25,
+  "people dancing" +0.25).
+- **Where they hurt, also consistent:** text-heavy -0.07, screenshots -0.10 ("a screenshot ..." -0.28, "a sign
+  with writing on it" -0.24). SigLIP alone stays best for writing; a one-sentence caption says less about it.
+- Hindi: no model's reading of Hindi is used in any channel (captions only describe; the OCR channel is Windows
+  OCR). PaddleOCR Devanagari is not in this run yet. Qwen also invents text and people (an empty bench: "a red
+  sign that reads 'This seat is closed'", objects "bench, person, animal"; the sign says "Help Save Lives").
+- One search per kind for Hindi and black and white: too few to conclude anything about those two.
+
 ## 2026-11-21: photo ranking v2 (fix the existing ranking first; flag `NOBAD_FIND_PHOTO_V2=1`, off by default)
 
 Same 308 photos / 60 searches (`tools/eval_photo_search.py --variants`, one index build, each change measured
