@@ -1,6 +1,7 @@
 """Switching the text (or photo) model: new vectors are built next to the old ones, the old ones stay searchable,
 and they swap in one transaction once complete. Vectors from two models are never searched together."""
 import numpy as np
+import pytest
 
 from nobadfind import embed, indexer, models
 from nobadfind.store import Store
@@ -243,8 +244,75 @@ def test_a_photo_pass_running_through_a_switch_writes_nothing_under_the_new_id(t
         return [(fid, mtime, embed.to_blob(np.ones(768)), None) for fid, _p, mtime, _d in jobs]
     monkeypatch.setattr(indexer.photo, "embed_photos", embed_photos)
     ix._photo_vectors()
-    assert s.meta("pvec_model") == "siglip2-base"
+    assert s.meta("pvec_model") == models.vector_tag("siglip2-base")
     assert s.q("SELECT count(*) FROM pvecs")[0][0] == 0      # the old model's batch was thrown away
     ix._photo_vectors()                                      # the next pass: the new model's folder
     assert made_with[-1] == models.model_dir("siglip2-base")
     assert s.q("SELECT count(*) FROM pvecs")[0][0] == 20
+
+
+# ---------- SigLIP 2 re-pin (2026-11-22): fp16 vision; vectors from the old 8-bit vision are rebuilt ----------
+def test_siglip2_vision_is_the_fp16_file_and_text_stays_8bit():
+    m = models.get("siglip2-base")
+    assert m["files"]["vision.onnx"][0] == "onnx/vision_model_fp16.onnx"
+    assert m["files"]["vision.onnx"][1] == 186039516
+    assert m["files"]["text.onnx"][0] == "onnx/text_model_quantized.onnx"
+    assert models.PHOTO_CHOICE["balanced"] == "siglip-base" and models.DEFAULT_PHOTO == "siglip-base"
+
+
+def test_vectors_made_by_the_8bit_siglip2_vision_are_made_again(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    s.set_photo_vector(1, 1.0, embed.to_blob(np.ones(768)), None)
+    s.set_meta("pvec_model", "siglip2-base")                     # made with the 8-bit vision file
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: True)
+    monkeypatch.setattr(indexer.photo, "TextEncoder", lambda model_dir, style="siglip": object())
+    ix = indexer.Indexer(s, S(photo_meaning=True, photo_model="siglip2-base"), vindex=embed.VectorIndex())
+    ix._load_photo()
+    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 0
+    assert s.meta("pvec_model") == models.vector_tag("siglip2-base") == "siglip2-base#2"
+    assert ix.photo_model == "siglip2-base" and ix.pindex.model == "siglip2-base"
+    ix._load_photo()                                             # loading again keeps the new vectors' tag
+    assert s.meta("pvec_model") == "siglip2-base#2"
+
+
+def test_siglip_base_vectors_are_kept_by_the_repin(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    s.set_photo_vector(1, 1.0, embed.to_blob(np.ones(768)), None)
+    s.set_meta("pvec_model", "siglip-base")
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: True)
+    monkeypatch.setattr(indexer.photo, "TextEncoder", lambda model_dir, style="siglip": object())
+    ix = indexer.Indexer(s, S(photo_meaning=True, photo_model="siglip-base"), vindex=embed.VectorIndex())
+    ix._load_photo()
+    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 1 and s.meta("pvec_model") == "siglip-base"
+
+
+def test_a_graph_the_full_optimizer_cant_load_is_opened_with_basic_optimization(monkeypatch):
+    """fp16 exports fail ONNX Runtime 1.27's full optimizer (GetIndexFromName); basic loads them."""
+    from nobadfind import photo
+    import onnxruntime as ort
+    levels = []
+
+    def session(path, opts, providers):
+        levels.append(opts.graph_optimization_level)
+        if opts.graph_optimization_level != ort.GraphOptimizationLevel.ORT_ENABLE_BASIC:
+            raise RuntimeError("[ONNXRuntimeError] : 1 : FAIL : graph_utils.cc GetIndexFromName")
+        return "session"
+    monkeypatch.setattr(ort, "InferenceSession", session)
+    opts = ort.SessionOptions()
+    assert photo.open_session("x.onnx", opts) == "session"
+    assert levels[-1] == ort.GraphOptimizationLevel.ORT_ENABLE_BASIC and len(levels) == 2
+    assert opts.enable_cpu_mem_arena is False                # measured: the arena grew to 1.3 GB on fp16 vision
+    levels.clear()
+    monkeypatch.setattr(ort, "InferenceSession", lambda path, opts, providers: levels.append(1) or "ok")
+    assert photo.open_session("y.onnx", ort.SessionOptions()) == "ok" and levels == [1]   # no retry when it loads
+
+
+def test_other_load_errors_are_not_hidden_by_the_fallback(monkeypatch):
+    from nobadfind import photo
+    import onnxruntime as ort
+
+    def session(path, opts, providers):
+        raise RuntimeError("NO_SUCHFILE: file doesn't exist")
+    monkeypatch.setattr(ort, "InferenceSession", session)
+    with pytest.raises(RuntimeError, match="NO_SUCHFILE"):
+        photo.open_session("missing.onnx", ort.SessionOptions())

@@ -4,6 +4,32 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: SigLIP 2 "best" tier re-pinned: fp16 vision + 8-bit text (maintainer decision)
+
+Catalog `siglip2-base`: vision `onnx/vision_model_fp16.onnx` (186,039,516 bytes, SHA-256 a1959f7b…aabd95,
+rev ba1f3b08), text unchanged (8-bit), `"vectors": 2` so photo vectors from the old 8-bit vision are made again
+(`models.vector_tag` -> meta `pvec_model` "siglip2-base#2"); SigLIP base users keep their vectors. Download
+393 -> 481 MB. Default and balanced tier stay on SigLIP base.
+
+Resources on the reference PC, quiet (no other job), 4 threads, private memory of the process:
+
+| | vision RAM after 20 photos | photos/s | question (text) RAM | question p50 |
+|---|---|---|---|---|
+| SigLIP base (8-bit) | 148 MB (117 MB, arena off) | 4.0 | 149-156 MB | 94-99 ms |
+| SigLIP 2, fp16 vision, default session | **1,275 MB** | 3.4 | - | - |
+| **SigLIP 2, fp16 vision, basic opt + arena off (shipped)** | **207 MB** | **2.9** | 368-372 MB | 89-124 ms |
+| SigLIP 2, fp32 vision (not shipped), arena off | 370 MB | 4.6 | - | - |
+
+- fp16 and fp32 vision give the same vectors (cosine 1.00000 on 50 photos), so the held-out gain (+0.035
+  nDCG@10) holds for either; fp16 is shipped as the lighter one (background indexing), fp32 is the faster option
+  for a hardware-adaptive profile later.
+- `photo.open_session`: tries the full optimizer, and only on its `GetIndexFromName` failure reopens with basic
+  optimization and the memory arena off (the arena grew to 1.3 GB with basic optimization, measured).
+- `tests/test_siglip2_real.py` (runs with `NOBAD_FIND_SIGLIP2_DIR`): the pinned files' vectors for three drawn
+  pictures must be within cosine 0.995 of stored fp32 references. The old 8-bit vision fails it (0.92 / 0.88 /
+  0.92); fp16 passes (1.000).
+- SigLIP 2's question encoder holds 368 MB (its 256k-word vocabulary); arena off doesn't change that.
+
 ## 2026-11-22: caption enrichment, pre-registered held-out test (`tools/heldout_photo_rank.py`): FAILED
 
 Rules and candidates committed before grading (143b077). SigLIP base features; captions from SmolVLM2-500M and
