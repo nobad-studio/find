@@ -1,6 +1,9 @@
-/// What to index: the scope (Whole PC, My files, Custom), every category of place with what it is, example paths,
-/// how many files of it are in the index and its switch (nothing is skipped silently), how files are read, and
-/// the optional turbo index. An engine without `scope_info` keeps the older folder rows and says why.
+/// What to index: the scope (Whole PC, My files, Custom) and its folders, then every category of place as a card
+/// like the Models page's (a tile for what it is, its name and one line, the facts as chips: in or out, how many
+/// files of it are in the index, names only; its switch; the full explanation and example paths under Details), how
+/// files are read, and the optional turbo index. Nothing is skipped silently: every category the engine lists is
+/// shown. The page opens at once: the parts read from the settings are drawn straight away, the categories and
+/// their counts when `scope_info` answers. An engine without `scope_info` keeps the older folder rows and says why.
 library;
 
 import 'dart:async';
@@ -15,7 +18,10 @@ import '../../../engine/events.dart';
 import '../../../engine/models/format.dart';
 import '../../../engine/models/scope_info.dart';
 import '../../../state/settings_controller.dart' show errorText;
+import '../../../widgets/badges.dart';
 import '../../../widgets/controls.dart';
+import '../../../widgets/icons.dart';
+import '../../../widgets/motion.dart';
 import '../settings_parts.dart';
 
 class IndexingPage extends StatefulWidget {
@@ -102,16 +108,17 @@ class _IndexingPageState extends State<IndexingPage> {
   @override
   Widget build(BuildContext context) {
     return switch (_load) {
-      _Load.loading => const SizedBox(height: 200),
-      _Load.ready => _ready(context),
+      _Load.loading || _Load.ready => _page(context),
       _Load.needsNewer => _Older(note: 'Choosing what to index needs a newer engine. $_why'.trim()),
       _Load.offline => const _Older(),
     };
   }
 
-  Widget _ready(BuildContext context) {
+  Widget _page(BuildContext context) {
     final c = NbColors.of(context);
-    final scope = _scope.scope;
+    final ready = _load == _Load.ready;
+    // before the answer: the scope as saved in the settings, so the switches are there at once
+    final scope = ready ? _scope.scope : IndexScope.parse(_s!.settings.settings.text('scope'));
     final roots = _scope.roots;
     final turbo = _turbo;
     return Column(
@@ -138,8 +145,16 @@ class _IndexingPageState extends State<IndexingPage> {
                     onChanged: (x) => unawaited(_set('scope', x.wire)),
                   ),
                   if (scope != IndexScope.custom && roots.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(roots.join('   '), style: NbType.data(11.5, c.dim)),
+                    const SizedBox(height: 10),
+                    Semantics(
+                      label: 'Folders the walk starts from: ${roots.join(', ')}',
+                      excludeSemantics: true,
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [for (final r in roots) NbFact(NbGlyph.folder, r)],
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -155,7 +170,21 @@ class _IndexingPageState extends State<IndexingPage> {
         ),
         SettingsGroup(
           'What is included',
-          rows: [for (final k in _scope.categories) _CategoryRow(k, onSet: (on) => _set(k.setting, on))],
+          rows: [
+            Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+              child: Text(
+                'Each kind of place, whether it is indexed and how many of its files are in the index now.',
+                style: NbType.text(12.5, c.muted, height: 1.4),
+              ),
+            ),
+            if (!ready)
+              const _Counting()
+            else
+              for (final k in _scope.categories)
+                _CategoryCard(k, scope: scope, onSet: (on) => unawaited(_set(k.setting, on))),
+          ],
         ),
         const SettingsGroup(
           'Reading files',
@@ -181,23 +210,9 @@ class _IndexingPageState extends State<IndexingPage> {
         ),
         if (turbo != null)
           SettingsGroup(
-            'Turbo index (needs administrator once per session)',
+            'Turbo index',
             rows: [
-              SettingRow(
-                label: 'Turbo index',
-                help:
-                    "Reads NTFS's own list of files and its change journal: file names, sizes and dates, so a whole "
-                    'drive is listed in seconds and changes show up at once. Never file contents, and never other '
-                    "people's files. Windows asks for administrator permission (UAC) once each time NOBAD Find starts.",
-                control: _turboBusy
-                    ? Text('Waiting for Windows…', style: NbType.text(12, c.dim))
-                    : NbSwitch(
-                        value: turbo.enabled || turbo.running,
-                        label: 'Turbo index',
-                        onChanged: turbo.available ? (v) => unawaited(_setTurbo(v)) : null,
-                      ),
-                below: _TurboTable(turbo),
-              ),
+              _TurboCard(turbo, busy: _turboBusy, onSet: (v) => unawaited(_setTurbo(v))),
             ],
           ),
       ],
@@ -205,59 +220,266 @@ class _IndexingPageState extends State<IndexingPage> {
   }
 }
 
-class _CategoryRow extends StatelessWidget {
-  const _CategoryRow(this.k, {required this.onSet});
+/// While `scope_info` is on its way: placeholder cards and what is happening (no moving shimmer, nothing to settle).
+class _Counting extends StatelessWidget {
+  const _Counting();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    Widget card() => NbCard(
+      child: Row(
+        children: [
+          const Skeleton(width: 40, height: 40),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [Skeleton(width: 180, height: 13), SizedBox(height: 8), Skeleton(width: 300)],
+            ),
+          ),
+        ],
+      ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 4, 14, 2),
+          child: Semantics(
+            liveRegion: true,
+            child: Text('Counting what is in the index…', style: NbType.text(12, c.dim, height: 1.4)),
+          ),
+        ),
+        card(),
+        card(),
+        card(),
+      ],
+    );
+  }
+}
+
+/// One category as a card: its tile, name and one line, its switch (or "Always out"), the facts the engine gives
+/// as chips, and the full explanation with example paths under Details.
+class _CategoryCard extends StatelessWidget {
+  const _CategoryCard(this.k, {required this.scope, required this.onSet});
   final ScopeCategory k;
+  final IndexScope? scope;
   final ValueChanged<bool> onSet;
+
+  static (NbHue, NbGlyph) look(String id) => switch (id) {
+    'system' => (NbHue.page, NbGlyph.settings),
+    'caches' => (NbHue.text, NbGlyph.code),
+    'secrets' => (NbHue.meaning, NbGlyph.shield),
+    'other_profiles' => (NbHue.library, NbGlyph.close),
+    'removable' => (NbHue.folder, NbGlyph.drive),
+    'network' => (NbHue.use, NbGlyph.drive),
+    _ => (NbHue.library, NbGlyph.info),
+  };
+
+  /// Why a locked category can't be switched here: a chip, and a sentence under Details.
+  (String, String) get lockedWhy => switch (k.id) {
+    'system' => ('Whole PC only', 'My files and Custom cover only your own folders. Choose Whole PC to include it.'),
+    'removable' || 'network' => (
+      'Custom: use Folders',
+      'With Custom, only the folders you add are indexed: add the drive under Folders above.',
+    ),
+    'other_profiles' => ('Never indexed', "They aren't yours to search, so this can't be changed."),
+    _ => ("Can't be changed here", ''),
+  };
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     final canSwitch = !k.locked && k.setting.isNotEmpty;
-    final count = k.count == null ? 'not counted' : '${groupDigits(k.count!)} in the index';
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final (hue, glyph) = look(k.id);
+    final (lockChip, lockLine) = lockedWhy;
+    return NbCard(
+      active: k.included,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(child: NbAvatar(hue: hue, glyph: glyph, size: 40, dim: !k.included)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(k.name, style: NbType.text(13.5, c.text, weight: FontWeight.w600, height: 1.35)),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(count, style: NbType.data(11, k.included ? c.muted : c.dim)),
+                    Text(k.name, style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3)),
+                    if (k.line.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(k.line, style: NbType.text(12.5, c.muted, height: 1.4)),
+                      ),
                   ],
                 ),
-                if (k.why.isNotEmpty) Text(k.why, style: NbType.text(12, c.dim, height: 1.4)),
-                if (k.examples.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(k.examples.join('   '), style: NbType.data(11, c.dim, height: 1.5)),
+              ),
+              const SizedBox(width: 12),
+              if (canSwitch)
+                NbSwitch(value: k.included, label: k.name, onChanged: onSet)
+              else
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    k.included ? 'Always in' : 'Always out',
+                    style: NbType.text(12.5, c.dim, weight: FontWeight.w600),
                   ),
-                if (k.id == 'secrets' && (k.included || canSwitch))
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: Text(
-                      'Names only: the contents of these files are never read.',
-                      style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              // a locked one says "Always in / out" beside it already
+              if (!k.locked && k.included)
+                const NbFact(NbGlyph.check, 'Included', strong: true)
+              else if (!k.locked)
+                const NbFact(NbGlyph.close, 'Left out'),
+              NbFact(NbGlyph.rings, k.count == null ? 'Not counted' : '${groupDigits(k.count!)} in the index'),
+              if (k.namesOnly == NamesOnly.all)
+                const NbFact(NbGlyph.shield, 'Names only, never read')
+              else if (k.namesOnly == NamesOnly.some)
+                const NbFact(NbGlyph.shield, 'App databases: names only'),
+              if (k.locked) NbFact(NbGlyph.info, lockChip),
+            ],
+          ),
+          if (k.id == 'secrets' && (k.included || canSwitch))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'Names only: the contents of these files are never read.',
+                style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4),
+              ),
+            ),
+          const SizedBox(height: 6),
+          NbDetails(
+            about: k.name,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (k.why.isNotEmpty) NbDetailLine('What it is', NbDetailLine.text(context, k.why)),
+                  if (k.examples.isNotEmpty)
+                    NbDetailLine(
+                      'For example',
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final e in k.examples) Text(e, style: NbType.data(12, c.text, height: 1.45)),
+                        ],
+                      ),
                     ),
-                  ),
-              ],
+                  if (k.locked && lockLine.isNotEmpty) NbDetailLine('Why it is fixed', NbDetailLine.text(context, lockLine)),
+                ],
+              ),
             ),
           ),
-          const SizedBox(width: 12),
-          if (canSwitch)
-            NbSwitch(value: k.included, label: k.name, onChanged: onSet)
-          else
+        ],
+      ),
+    );
+  }
+}
+
+/// The turbo index as a card: what it reads, its switch (Windows asks first), its state and each drive as chips;
+/// the full explanation and the per-drive table under Details.
+class _TurboCard extends StatelessWidget {
+  const _TurboCard(this.t, {required this.busy, required this.onSet});
+  final TurboState t;
+  final bool busy;
+  final ValueChanged<bool> onSet;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final on = t.enabled || t.running;
+    return NbCard(
+      active: t.running,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(child: NbAvatar(hue: NbHue.use, glyph: NbGlyph.gauge, size: 40, dim: !on)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Turbo index', style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3)),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        "Lists NTFS drives from Windows' own file list and sees changes at once.",
+                        style: NbType.text(12.5, c.muted, height: 1.4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (busy)
+                Text('Waiting for Windows…', style: NbType.text(12, c.dim))
+              else
+                NbSwitch(value: on, label: 'Turbo index', onChanged: t.available ? onSet : null),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              const NbFact(NbGlyph.shield, 'Names, sizes and dates only'),
+              const NbFact(NbGlyph.info, 'Asks for administrator once per start'),
+              for (final v in t.volumes)
+                NbFact(
+                  NbGlyph.drive,
+                  [
+                    v.label,
+                    v.ntfs ? 'NTFS' : 'not NTFS',
+                    if (v.files > 0) '${groupDigits(v.files)} files',
+                  ].join(' · '),
+                ),
+            ],
+          ),
+          // its state, unless simply off (the Index page's "off" line points to this page)
+          if (t.running || t.enabled || t.error.isNotEmpty || !t.available)
             Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(k.included ? 'Always in' : 'Always out', style: NbType.text(12, c.dim)),
+              padding: const EdgeInsets.only(top: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(t.line, style: NbType.text(12, t.running ? c.orange : c.muted, weight: FontWeight.w600)),
+              ),
             ),
+          const SizedBox(height: 6),
+          NbDetails(
+            about: 'Turbo index',
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  NbDetailLine(
+                    'What it is',
+                    NbDetailLine.text(
+                      context,
+                      "Reads NTFS's own list of files and its change journal: file names, sizes and dates, so a whole "
+                      'drive is listed in seconds and changes show up at once. Never file contents, and never other '
+                      "people's files. Windows asks for administrator permission (UAC) once each time NOBAD Find "
+                      'starts.',
+                    ),
+                  ),
+                  if (t.volumes.isNotEmpty) NbDetailLine('Drives', _TurboTable(t)),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -282,12 +504,11 @@ class _TurboTable extends StatelessWidget {
       return d.inSeconds < 60 ? 'just now' : '${span(d.inSeconds)} ago';
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(t.line, style: NbType.text(12, t.running ? c.orange : c.muted, weight: FontWeight.w600)),
-        if (t.volumes.isNotEmpty) ...[
-          const SizedBox(height: 6),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             children: [
               cell('Drive', head: true, w: 60),
@@ -311,7 +532,7 @@ class _TurboTable extends StatelessWidget {
               ),
             ),
         ],
-      ],
+      ),
     );
   }
 }

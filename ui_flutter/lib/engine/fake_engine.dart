@@ -702,6 +702,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'system',
           name: 'Windows and programs',
+          summary: 'Windows itself and installed programs.',
           why: "Windows' own files and installed programs: rarely what you look for, and many of them.",
           examples: const [r'C:\Windows', r'C:\Program Files', r'C:\ProgramData'],
           included: sc == IndexScope.wholePc && on('include_system'),
@@ -711,6 +712,8 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'caches',
           name: 'App data and caches',
+          summary: 'What apps keep for themselves, temp folders and developer folders.',
+          namesOnly: NamesOnly.some,
           why: 'Settings, temporary files and build folders apps keep for themselves.',
           examples: const [r'C:\Users\me\AppData', r'C:\Users\me\AppData\Local\Temp', r'…\node_modules', r'…\.git'],
           included: on('include_caches'),
@@ -719,6 +722,8 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'secrets',
           name: 'Keys and password stores',
+          summary: 'Keys, saved browser passwords, sign-in tokens, password vaults and wallets.',
+          namesOnly: NamesOnly.all,
           why: 'SSH keys, password databases, wallets. Names only if you turn it on; their contents are never read.',
           examples: const [r'C:\Users\me\.ssh', r'…\*.kdbx', r'…\wallet.dat'],
           included: on('include_secrets'),
@@ -727,6 +732,7 @@ class FakeEngine implements EngineApi {
         const ScopeCategory(
           id: 'other_profiles',
           name: "Other people's files",
+          summary: 'Other accounts on this PC, recycle bins and restore points.',
           why: "Other accounts on this PC, recycle bins and System Volume Information: never indexed.",
           examples: [r'C:\Users\guest', r'C:\$Recycle.Bin', r'C:\System Volume Information'],
           locked: true,
@@ -734,6 +740,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'removable',
           name: 'USB and external drives',
+          summary: 'Drives you plug in, while they are connected.',
           why: 'Indexed while plugged in; their files stay findable, marked "not connected", when you unplug them.',
           examples: const [r'E:\'],
           included: on('index_removable'),
@@ -743,6 +750,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'network',
           name: 'Network drives',
+          summary: 'Mapped network drives.',
           why: 'Mapped network drives. Big shares take a while and use your network.',
           examples: const [r'Z:\'],
           included: on('index_network'),
@@ -764,8 +772,15 @@ class FakeEngine implements EngineApi {
   /// The answer at Windows' permission prompt (tests: false = "No").
   bool turboPromptYes = true;
 
+  /// Tests: scope_info answers only after this completes (an engine still counting).
+  Future<void>? scopeWait;
+
   @override
-  Future<ScopeInfo> scopeInfo() => _new('scope_info', () => scope);
+  Future<ScopeInfo> scopeInfo() async {
+    final w = scopeWait;
+    if (w != null && !old) await w;
+    return _new('scope_info', () => scope);
+  }
 
   @override
   Future<TurboState> turboState() => _new('turbo_state', () => turbo);

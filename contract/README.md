@@ -205,16 +205,18 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 ### What is indexed, and the turbo index
 
 - **`scope_info`** `{}` → `{scope: whole_pc|my_files|custom, roots: [string], categories: [Category]}`: what NOBAD Find
-  indexes, for Settings. Nothing is skipped silently: every category is listed. `Category` = `{id, name, why,
-  examples: [string], included: bool, locked: bool, count: int|null}`, `id` one of `system` (Windows, Program Files,
+  indexes, for Settings. Nothing is skipped silently: every category is listed. `Category` = `{id, name, summary, why,
+  examples: [string], included: bool, locked: bool, names_only: none|some|all, count: int|null}`, `id` one of `system` (Windows, Program Files,
   ProgramData: setting `include_system`), `caches` (AppData, temp, node_modules, .git, venv: `include_caches`),
   `secrets` (keys, browser passwords, cookies and history, Windows Credentials/Vault/Protect, chat and developer
   tokens, password vaults, wallets: `include_secrets`, **off by default, names only**, the content is never read;
   browser profiles and app databases are names only in `caches` too), `other_profiles` (other accounts' files, recycle bins, System Volume Information: always out, `locked`),
   `removable` (`index_removable`), `network` (`index_network`). `locked` = the user can't change it here (other
   people's files; system folders aren't part of My files; USB/network in Custom come from the folder list). `count`
-  = entries of that category in the index, `null` when it can't be counted cheaply. Show `name`, `why` and
-  `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
+  = entries of that category in the index, `null` when it can't be counted cheaply. `summary` = one short line for
+  its card, `why` the full explanation. `names_only` = `all` (only names are indexed, the contents are never read:
+  `secrets`), `some` (part of it is names only: browser profiles and app databases in `caches`) or `none`. Show
+  `name`, `summary`, `why` and `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string}`: the optional turbo index, an elevated helper that
   reads NTFS's own file list and change journal (names, sizes, times and changes only, never file contents).

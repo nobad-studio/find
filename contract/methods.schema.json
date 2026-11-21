@@ -2217,6 +2217,10 @@
         "name": {
           "type": "string"
         },
+        "summary": {
+          "type": "string",
+          "description": "One short line for the category's card (the full explanation is why)."
+        },
         "why": {
           "type": "string",
           "description": "A sentence or two for the user: what it is and why it's in or out."
@@ -2235,6 +2239,14 @@
           "type": "boolean",
           "description": "The user can't change it here (other people's files are always out; system folders aren't part of My files; USB/network drives in Custom come from the folder list)."
         },
+        "names_only": {
+          "enum": [
+            "none",
+            "some",
+            "all"
+          ],
+          "description": "all: only the names of these files are indexed, their contents are never read (secrets); some: part of it is names only (browser profiles and app databases in caches); none: read like any other file."
+        },
         "count": {
           "type": [
             "integer",
@@ -2246,10 +2258,12 @@
       "required": [
         "id",
         "name",
+        "summary",
         "why",
         "examples",
         "included",
         "locked",
+        "names_only",
         "count"
       ],
       "additionalProperties": false
