@@ -65,7 +65,7 @@ def main(argv=None):
         return [sys.executable, "-m", "tools.vision_bench", "--child", p]
     try:
         results = run.bench([i for i in items if not tasks or i["task"] in tasks], pairs(cands, devices, models),
-                            info["devices"], child_cmd)
+                            info["devices"], child_cmd, models_dir=a.models_dir)
     finally:
         shutil.rmtree(cfg_dir, ignore_errors=True)
     with open(os.path.join(a.out, "results.json"), "w", encoding="utf-8") as f:

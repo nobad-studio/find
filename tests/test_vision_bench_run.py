@@ -137,3 +137,11 @@ def test_florence_gpu_files_only_for_onnx_gpu_devices():
     m = {"files": {"onnx/a_int8.onnx": [1, "x"], "onnx/a_fp16.onnx": [1, "x"], "tokenizer.json": [1, "x"]}}
     assert sorted(run.wanted_files(m, ["cpu", "vulkan"])) == ["onnx/a_int8.onnx", "tokenizer.json"]
     assert sorted(run.wanted_files(m, ["directml"])) == ["onnx/a_fp16.onnx", "tokenizer.json"]
+
+
+def test_candidate_without_its_files_is_not_downloaded(tmp_path):
+    started = []
+    res = run.bench([], [("qwen3vl-2b-q4", "cpu", "llama")], _devs(),
+                    child_cmd=lambda c, d: started.append(c) or [sys.executable, FAKE, "ok"], timeout_s=30,
+                    models_dir=str(tmp_path))
+    assert res[0]["status"] == "not downloaded" and not started

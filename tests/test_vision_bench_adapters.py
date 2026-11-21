@@ -127,15 +127,24 @@ def _llama(tmp_path, monkeypatch, err, device):
     return a, str(img)
 
 
+USING_VK = ("0.00.103.296 I llama_prepare_model_devices: using device Vulkan0 (Intel(R) Iris(R) Xe Graphics) "
+            "(unknown id) - 7380 MiB free\n")
+
+
 def test_gpu_build_that_ran_on_cpu_is_not_available(tmp_path, monkeypatch):
-    for err in ("load_tensors: offloaded 0/29 layers to GPU\n", "no offload line at all\n"):
+    # b12602's CPU-only build also prints "offloaded 33/33 layers to GPU": only "using device <GPU>" proves a GPU
+    for err in ("load_tensors: offloaded 33/33 layers to GPU\n", "no device line at all\n"):
         a, img = _llama(tmp_path, monkeypatch, err, "vulkan")
         with pytest.raises(adapters.GpuNotUsed):
             a.run("caption", img, None, None)
         a.close()
-    a, img = _llama(tmp_path, monkeypatch, "load_tensors: offloaded 29/29 layers to GPU\n", "vulkan")
+    a, img = _llama(tmp_path, monkeypatch, USING_VK, "vulkan")
     assert a.run("caption", img, None, None) == "an answer"
     a.close()
+
+
+def test_llama_runs_verbose_for_its_timing_and_device_lines():
+    assert "-v" in llama_argv("C:/t/llama-cpu", "m", "p", ["a"], "x", gpu=False)
 
 
 def test_llama_temp_files_live_under_vbench_tmp_and_are_removed(tmp_path, monkeypatch):
@@ -155,3 +164,14 @@ def test_florence_uses_fp16_graphs_on_gpu():
     for dev in ("cpu", "directml"):
         for n in f.graphs(dev):
             assert "onnx/" + n in files
+
+
+def test_merge_cache_keeps_encoder_cache_when_graph_returns_an_empty_one():
+    import numpy as np
+    full = np.ones((1, 12, 587, 64), np.float32)
+    past = {"past_key_values.0.encoder.key": full, "past_key_values.0.decoder.key": np.ones((1, 12, 1, 64))}
+    new = {"past_key_values.0.encoder.key": np.zeros((0, 12, 1, 64)), "past_key_values.0.decoder.key": np.ones((1, 12, 2, 64))}
+    out = adapters.merge_cache(past, new)
+    assert out["past_key_values.0.encoder.key"] is full
+    assert out["past_key_values.0.decoder.key"].shape == (1, 12, 2, 64)
+    assert adapters.merge_cache(None, new) is new

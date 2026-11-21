@@ -233,7 +233,17 @@ def last_json(text):
     return None
 
 
-def bench(items, pairs, devs, child_cmd, timeout_s=None):
+def missing_files(cand, device, models_dir):
+    """The pinned files this candidate needs on this device that aren't in models_dir ([] for unknown ids, e.g.
+    test fakes)."""
+    m = models_json()["models"].get(cand)
+    if m is None:
+        return []
+    return [n for n in wanted_files(m, [device])
+            if not os.path.isfile(os.path.join(models_dir, cand, *n.split("/")))]
+
+
+def bench(items, pairs, devs, child_cmd, timeout_s=None, models_dir=None):
     """[(candidate, device, backend)] -> one result each, in order. child_cmd(candidate, device) -> argv."""
     avail = {(d["device"], d["backend"]): d for d in devs}
     gpu = GpuMemory()
@@ -243,6 +253,11 @@ def bench(items, pairs, devs, child_cmd, timeout_s=None):
         d = avail.get((device, backend))
         if not d or not d["available"]:
             results.append({**base, "status": "not available", "why": d["why"] if d else "unknown device"})
+            continue
+        missing = missing_files(cand, device, models_dir) if models_dir else []
+        if missing:
+            results.append({**base, "status": "not downloaded",
+                            "why": f"{len(missing)} file(s) missing, e.g. {missing[0]} (run with --download)"})
             continue
         peak = {"ram": 0.0, "gpu": None}
 

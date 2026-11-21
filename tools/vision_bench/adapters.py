@@ -84,7 +84,8 @@ def llama_argv(build_dir, model, mmproj, images, prompt, gpu, threads=None, max_
     argv = [os.path.join(build_dir, "llama-mtmd-cli.exe"), "-m", model, "--mmproj", mmproj]
     for im in images:
         argv += ["--image", im]
-    argv += ["-p", prompt, "--temp", "0", "-n", str(max_tokens), "-c", "4096", "-ngl", "99" if gpu else "0"]
+    # -v: b12602 prints its timing ("llama_perf_context_print") and device ("using device ...") lines only then
+    argv += ["-p", prompt, "--temp", "0", "-n", str(max_tokens), "-c", "4096", "-ngl", "99" if gpu else "0", "-v"]
     if threads:
         argv += ["-t", str(threads)]
     return argv
@@ -92,7 +93,7 @@ def llama_argv(build_dir, model, mmproj, images, prompt, gpu, threads=None, max_
 
 _MS = {"load": re.compile(r"llama_perf_context_print:\s+load time\s*=\s*([\d.]+)\s*ms"),
        "total": re.compile(r"llama_perf_context_print:\s+total time\s*=\s*([\d.]+)\s*ms")}
-_OFFLOAD = re.compile(r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers to GPU")
+_GPU_DEVICE = re.compile(r"using device ((?:Vulkan|CUDA)\d+)\s*\(([^)]*)\)")
 
 
 class GpuNotUsed(Exception):
@@ -110,11 +111,12 @@ def parse_llama_ms(stderr):
 
 
 def check_offload(stderr):
-    """GpuNotUsed unless llama.cpp says it put layers on the GPU (a GPU build falls back to the CPU silently)."""
-    m = _OFFLOAD.findall(stderr)
-    if not m or int(m[-1][0]) == 0:
-        raise GpuNotUsed("llama.cpp ran on the CPU: " + (f"offloaded {m[-1][0]}/{m[-1][1]} layers" if m
-                                                          else "no GPU offload reported"))
+    """The GPU llama.cpp used, e.g. "Vulkan0 (Intel(R) Iris(R) Xe Graphics)"; GpuNotUsed when it named none. Its
+    "offloaded N/N layers to GPU" line proves nothing: b12602's CPU-only build prints it too."""
+    m = _GPU_DEVICE.findall(stderr)
+    if not m:
+        raise GpuNotUsed("llama.cpp ran on the CPU: it reported no GPU device in use")
+    return f"{m[-1][0]} ({m[-1][1]})"
 
 
 def scratch_dir():
@@ -124,6 +126,19 @@ def scratch_dir():
     if base:
         os.makedirs(base, exist_ok=True)
     return tempfile.mkdtemp(prefix="vbench-", dir=base or None)
+
+
+def merge_cache(past, new):
+    """The decoder's cache for the next step. On the cached branch the merged graph returns EMPTY encoder caches
+    (shape (0, 12, 1, 64) with onnx-community's export); the encoder's keys/values never change, so the ones from
+    the first step are kept."""
+    if past is None:
+        return new
+    out = dict(new)
+    for k, v in past.items():
+        if ".encoder." in k and (out.get(k) is None or out[k].size == 0):
+            out[k] = v
+    return out
 
 
 class Adapter:
@@ -271,16 +286,12 @@ class Florence2(Adapter):
                                                  np.zeros((1, i.shape[1], 0, i.shape[3]), np.float32))
             outs = self.dec.run(None, feed)
             onames = [o.name for o in self.dec.get_outputs()]
-            nxt = int(outs[0][0, -1].argmax())
+            nxt = int(outs[onames.index("logits")][0, -1].argmax())
             if nxt == self.eos:
                 break
             out_ids.append(nxt)
-            new = {n.replace("present", "past_key_values"): v for n, v in zip(onames[1:], outs[1:])}
-            if past is not None:   # the merged graph returns empty encoder caches on the cached branch: keep ours
-                for k, v in past.items():
-                    if ".encoder." in k and new.get(k) is not None and new[k].shape[2] == 0:
-                        new[k] = v
-            past = new
+            past = merge_cache(past, {n.replace("present", "past_key_values"): v
+                                      for n, v in zip(onames, outs) if n.startswith("present")})
         self.last_ms = (time.perf_counter() - t0) * 1000
         text = self.tok.decode(out_ids[1:], skip_special_tokens=False)
         return re.sub(r"<loc_\d+>|</?s>|<pad>", " ", text).strip()
