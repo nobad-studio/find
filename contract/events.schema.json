@@ -145,7 +145,7 @@
       "$ref": "methods.schema.json#/$defs/models"
     },
     "update": {
-      "description": "An update was found, is downloading (got of size), ready, installing, or failed. Same shape as update_state.",
+      "description": "An update was found, is downloading (got of size at bps, at most 4 a second), verifying (size and SHA-256), ready, installing, or failed. Same shape as update_state.",
       "$ref": "methods.schema.json#/$defs/update_state"
     }
   },

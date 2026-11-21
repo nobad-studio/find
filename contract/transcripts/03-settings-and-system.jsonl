@@ -52,13 +52,27 @@
 {"recv": {"jsonrpc": "2.0", "id": 107, "result": {"changed": ["hotkey"], "settings": {"roots": [], "exclude": [], "content": true, "content_max_mb": 50, "semantic": false, "photo_meaning": false, "allow_photo_model_download": false, "allow_model_download": true, "src_mail": true, "ocr": true, "index_removable": false, "index_network": false, "pause_on_battery": true, "pause_fullscreen": true, "games_mode": "smart", "keep_background": false, "stay_running": true, "bar": true, "bar_hotkey": "ctrl+shift+space", "pause_on_call": true, "workers": 0, "power": "balanced", "safety_net": true, "hotkey": "win+shift+f", "autostart": false, "hide_after_open": false, "settings_rev": 3, "wsearch_prev": "", "theme": "light", "glass": true, "bg_notice_seen": false, "welcome_seen": false, "update_check": true, "models_stay_loaded": false, "tray": true, "text_model": "minilm-l6-v2", "photo_model": "siglip-base", "language_focus": "", "scope": "whole_pc", "include_system": true, "include_caches": true, "include_secrets": false, "turbo": false, "search_history": true}, "hotkeys": {"hotkey": {"spec": "win+shift+f", "state": "ok"}, "bar_hotkey": {"spec": "ctrl+shift+space", "state": "ok"}}}}}
 {"note": "0.9.0: in-app updates: the state, a check now, and Install only with INSTALL."}
 {"send": {"jsonrpc": "2.0", "id": 301, "method": "update_state", "params": {}}}
-{"recv": {"jsonrpc": "2.0", "id": 301, "result": {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
+{"recv": {"jsonrpc": "2.0", "id": 301, "result": {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 0, "bps": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
 {"send": {"jsonrpc": "2.0", "id": 302, "method": "update_check", "params": {}}}
 {"recv": {"jsonrpc": "2.0", "id": 302, "result": {"ok": true, "error": ""}}}
 {"send": {"jsonrpc": "2.0", "id": 303, "method": "update_install", "params": {"consent": "no"}}}
 {"recv": {"jsonrpc": "2.0", "id": 303, "result": {"ok": false, "error": "Nothing is installed without your OK."}}}
 {"send": {"jsonrpc": "2.0", "id": 304, "method": "update_install", "params": {"consent": "INSTALL"}}}
 {"recv": {"jsonrpc": "2.0", "id": 304, "result": {"ok": true, "error": ""}}}
+{"note": "Install's progress: bytes as they arrive (at most 4 events a second, the speed measured over the last few seconds), then verifying (size and SHA-256), then installing."}
+{"send": {"jsonrpc": "2.0", "id": 305, "method": "subscribe", "params": {"events": ["update"]}}}
+{"recv": {"jsonrpc": "2.0", "id": 305, "result": {"events": ["download", "update"]}}}
+{"engine": {"do": "update", "at": 0.0, "state": "downloading"}}
+{"recv": {"jsonrpc": "2.0", "method": "update", "params": {"state": "downloading", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 0, "bps": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
+{"engine": {"do": "update", "at": 0.0, "got": 2500000}}
+{"recv": {"jsonrpc": "2.0", "method": "update", "params": {"state": "downloading", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 2500000, "bps": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
+{"engine": {"do": "update", "at": 0.1, "got": 3000000}}
+{"engine": {"do": "update", "at": 1.0, "got": 5000000}}
+{"recv": {"jsonrpc": "2.0", "method": "update", "params": {"state": "downloading", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 5000000, "bps": 2500000, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
+{"engine": {"do": "update", "at": 1.5, "got": 41000000}}
+{"recv": {"jsonrpc": "2.0", "method": "update", "params": {"state": "verifying", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 41000000, "bps": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
+{"engine": {"do": "update", "at": 1.6, "state": "installing"}}
+{"recv": {"jsonrpc": "2.0", "method": "update", "params": {"state": "installing", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41000000, "got": 41000000, "bps": 0, "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "", "auto": true, "checked_at": 1763600000}}}
 {"note": "0.9.1: open what a search offered (a Windows Settings page); a path is never run."}
 {"send": {"jsonrpc": "2.0", "id": 401, "method": "run_action", "params": {"id": "set:bluetooth"}}}
 {"recv": {"jsonrpc": "2.0", "id": 401, "result": {"ok": true, "error": ""}}}

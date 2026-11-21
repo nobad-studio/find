@@ -246,6 +246,72 @@ class NbMeter extends StatelessWidget {
   }
 }
 
+/// A short step with no count to show (an update's checksum check, the installer starting): an orange segment
+/// sweeps along the [NbMeter] track. Only for steps that last seconds: it draws while it's on screen. With
+/// Windows' Animation effects off it is [NbMeter]'s still, tinted busy track.
+class NbSweep extends StatefulWidget {
+  const NbSweep({super.key});
+
+  @override
+  State<NbSweep> createState() => _NbSweepState();
+}
+
+class _NbSweepState extends State<NbSweep> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400));
+  var _still = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (_still) {
+      _c.stop();
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_still) return const NbMeter(fraction: 0, busy: true);
+    final c = NbColors.of(context);
+    return Semantics(
+      value: 'working',
+      child: SizedBox(
+        height: 6,
+        child: ClipRRect(
+          borderRadius: NbRadius.pillAll,
+          child: ColoredBox(
+            color: c.raised,
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) {
+                final t = NbMotion.curve.transform(_c.value);
+                return FractionallySizedBox(
+                  alignment: Alignment(-1.6 + 3.2 * t, 0),
+                  widthFactor: .32,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: NbRadius.pillAll,
+                      gradient: LinearGradient(colors: [c.orange.withValues(alpha: 0), c.orange, c.orange.withValues(alpha: 0)]),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A one-time notice with its action ("Got it"): an orange edge on the left, never a modal.
 class NoticeBar extends StatelessWidget {
   const NoticeBar({super.key, required this.text, required this.action, required this.onAction});

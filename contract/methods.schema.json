@@ -3137,6 +3137,7 @@
             "uptodate",
             "available",
             "downloading",
+            "verifying",
             "ready",
             "installing",
             "error"
@@ -3158,6 +3159,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "Bytes downloaded so far."
+        },
+        "bps": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Download speed in bytes per second, measured over the last few seconds; 0 when not downloading or not known yet."
         },
         "notes_url": {
           "type": "string"
@@ -3181,6 +3187,7 @@
         "latest",
         "size",
         "got",
+        "bps",
         "notes_url",
         "error",
         "auto",

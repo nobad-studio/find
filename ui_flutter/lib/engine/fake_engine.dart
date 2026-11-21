@@ -661,9 +661,27 @@ class FakeEngine implements EngineApi {
   @override
   Future<ActionResult> updateInstall() => _new('update_install', () {
     if (!updates.canInstall) return const ActionResult(false, 'Check for updates first.');
-    updates = UpdateState(state: 'installing', current: updates.current, latest: updates.latest, size: updates.size,
-        got: updates.size, auto: updates.auto);
+    // like the engine: downloading (got of size), then verifying, then installing; a ready one skips the download
+    updates = updates.copyWith(state: updates.state == 'ready' ? 'verifying' : 'downloading',
+        got: updates.state == 'ready' ? updates.size : 0, bps: 0);
     emit(UpdateEvent(updates));
+    if (live) {
+      // the demo: 4 progress events a second at about 6 MB/s, as the engine sends them
+      Timer.periodic(const Duration(milliseconds: 250), (t) {
+        final u = updates;
+        if (u.state == 'downloading') {
+          final got = u.got + 1572864;
+          updates = got >= u.size ? u.copyWith(state: 'verifying', got: u.size, bps: 0) : u.copyWith(got: got, bps: 6291456);
+        } else if (u.state == 'verifying') {
+          updates = u.copyWith(state: 'installing');
+          t.cancel();
+        } else {
+          t.cancel();
+          return;
+        }
+        emit(UpdateEvent(updates));
+      });
+    }
     return _ok;
   });
 

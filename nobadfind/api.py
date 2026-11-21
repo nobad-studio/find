@@ -888,8 +888,8 @@ class Api:
     def update_state(self):
         u = getattr(self, "_updater", None)
         if u is None:
-            return {"state": "idle", "current": APP_VER, "latest": "", "size": 0, "got": 0, "notes_url": "",
-                    "error": "", "auto": bool(self._settings.get("update_check")), "checked_at": 0}
+            return {"state": "idle", "current": APP_VER, "latest": "", "size": 0, "got": 0, "bps": 0,
+                    "notes_url": "", "error": "", "auto": bool(self._settings.get("update_check")), "checked_at": 0}
         return u.snapshot()
 
     def update_check(self):
@@ -911,7 +911,7 @@ class Api:
             return {"ok": False, "error": "Check for updates first."}
 
         def go():
-            if u.state != "ready" and not u.download():
+            if u.state != "ready" and not u.download(then_install=True):
                 return
             u.install()
         threading.Thread(target=go, daemon=True, name="update-install").start()

@@ -1,12 +1,14 @@
 """A deterministic engine for the contract transcripts: the real handlers and the real Events, over a fake Api
 whose answers never depend on the PC, the clock or the index. Transcripts are recorded from it and replayed
 against it (tests/test_rpc_contract.py), so the Dart side can parse exactly what the Python side produces."""
+import os
 from nobadfind.activity import Activity
 from nobadfind.const import DEFAULTS
 from nobadfind.rpc import handlers
 from nobadfind.rpc.events import Events
 from nobadfind.settings import coerce
 
+UPDATE_NOTES = "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0"
 RESULT = {"id": 7, "path": "C:\\Users\\me\\Documents\\tax 2025.pdf", "name": "tax 2025.pdf",
           "dir": "C:\\Users\\me\\Documents", "kind": "pdf", "size": 48213, "mtime": 1763400000.0,
           "ago": "2 days ago", "why": ["name matches"], "snippet": "", "weak": False}
@@ -258,7 +260,7 @@ class FakeApi:
 
     def update_state(self):
         """Like Api.update_state with an update found: this is 0.0.0-contract, the newest release 0.9.0."""
-        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0,
+        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0, "bps": 0,
                 "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "",
                 "auto": bool(self.settings["update_check"]), "checked_at": 1763600000}
 
@@ -439,6 +441,20 @@ class Engine:
         self.methods = handlers.methods(self.api, self.events,
                                         lambda: {"app": "NOBAD Find", "version": "0.0.0-contract", "pid": 4242})
 
+    _upd = None
+    _update_at = 0.0
+
+    def _updater(self):
+        if self._upd is None:
+            from nobadfind.update import Updater
+            u = Updater(self.api.settings, data_dir=os.devnull, get=lambda *a, **k: None, start=lambda a: None,
+                        current="0.0.0-contract", mono=lambda: self._update_at)
+            u.release = {"version": "0.9.0", "size": 41_000_000, "notes_url": UPDATE_NOTES}
+            u.checked_at = 1763600000
+            u.on_change = self.events.update
+            self._upd = u
+        return self._upd
+
     def trigger(self, t):
         do = t["do"]
         if do == "tick":
@@ -468,5 +484,16 @@ class Engine:
             if "volume" in t:
                 self.api.turbo["volumes"] = [dict(t["volume"])]
             self.events.turbo(self.api.turbo_state())
+        elif do == "update":
+            # a real update.Updater on a fake clock: the download's progress throttle and speed are the engine's own
+            u = self._updater()
+            if "at" in t:
+                self._update_at = t["at"]
+            if t.get("state") == "downloading":
+                u.got, u.bps, u._samples, u._sent_at = 0, 0, [], None
+            if "got" in t:
+                u._progress(t["got"])
+            elif "state" in t:
+                u._set(t["state"])
         else:
             raise ValueError(f"unknown engine trigger {do!r}")

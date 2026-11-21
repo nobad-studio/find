@@ -12,8 +12,9 @@ import '../../../app/theme/tokens.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
-import '../../../widgets/panels.dart';
+import '../../../widgets/motion.dart';
 import '../settings_parts.dart';
+import '../update_progress.dart';
 
 const sourceLink = 'github.com/nobad-studio/find';
 
@@ -149,7 +150,7 @@ class _UpdatesGroupState extends State<UpdatesGroup> {
           'checking' => ('Looking for a newer version…', c.muted),
           'uptodate' => ('NOBAD Find is up to date${u.current.isNotEmpty ? ' (${u.current})' : ''}.', c.muted),
           'available' => ('NOBAD Find ${u.latest} is available$mb.', c.orange),
-          'downloading' => ('Downloading ${u.latest}… ${(u.got / 1048576).round()} of ${(u.size / 1048576).round()} MB', c.muted),
+          'downloading' || 'verifying' => ('Updating to NOBAD Find ${u.latest}…', c.orange),
           'ready' => ('NOBAD Find ${u.latest} is downloaded and checked.', c.orange),
           'installing' => ('Installing ${u.latest}: NOBAD Find closes and starts again in a moment.', c.orange),
           'error' => (u.error.isNotEmpty ? u.error : "Couldn't check for updates.", c.warn),
@@ -170,10 +171,6 @@ class _UpdatesGroupState extends State<UpdatesGroup> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(line, style: NbType.text(12.5, color, height: 1.4)),
-                  if (u.state == 'downloading') ...[
-                    const SizedBox(height: 6),
-                    NbMeter(fraction: u.fraction, busy: u.size == 0),
-                  ],
                   if (u.canInstall)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -201,6 +198,7 @@ class _UpdatesGroupState extends State<UpdatesGroup> {
                   ),
                 ],
               ),
+              below: u.installing ? Appear(child: UpdateProgress(u)) : null,
             ),
           ],
         );

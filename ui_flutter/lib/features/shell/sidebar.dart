@@ -14,6 +14,8 @@ import '../../widgets/smooth_scroll.dart';
 import '../../widgets/common.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
+import '../../widgets/motion.dart';
+import '../../widgets/panels.dart';
 import '../../widgets/pressable.dart';
 
 const categoryGlyphs = {
@@ -130,6 +132,7 @@ class Sidebar extends StatelessWidget {
                       ],
                     )),
                   ),
+                  const _Updating(),
                   const _Status(),
                 ],
               );
@@ -208,6 +211,71 @@ class _Item extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// While Install runs (downloading, checking, installing): a small read-out above the status, the engine's own
+/// percent while bytes arrive; opens Settings > About, where the full progress is. Nothing at all otherwise.
+class _Updating extends StatelessWidget {
+  const _Updating();
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppScope.of(context);
+    final c = NbColors.of(context);
+    return ListenableBuilder(
+      listenable: s.status,
+      builder: (context, _) {
+        final u = s.status.update;
+        if (!u.installing) return const SizedBox.shrink();
+        final label = switch (u.state) {
+          'downloading' => u.size > 0 ? 'Updating · ${(u.fraction * 100).floor()}%' : 'Updating',
+          'verifying' => 'Checking the update',
+          _ => 'Installing the update',
+        };
+        return Appear(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Pressable(
+              key: const ValueKey('sidebar-update'),
+              onTap: () => s.nav.openSettings(SettingsPage.about),
+              semanticLabel: '$label. Open About',
+              ringRadius: const BorderRadius.all(Radius.circular(12)),
+              builder: (context, p) => Container(
+                padding: const EdgeInsets.fromLTRB(8, 7, 8, 8),
+                decoration: BoxDecoration(
+                  color: p.lit ? c.cardHover : null,
+                  borderRadius: const BorderRadius.all(Radius.circular(12)),
+                  border: Border.all(color: c.orange.withValues(alpha: .45)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        NbIcon(NbGlyph.download, size: 12, color: c.orange),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: NbType.text(11.5, p.lit ? c.text : c.muted, height: 1.2),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // the bytes that arrived; after the last byte the bar stays full (no animation in the sidebar)
+                    NbMeter(fraction: u.state == 'downloading' ? u.fraction : 1, busy: u.state == 'downloading' && u.size == 0),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

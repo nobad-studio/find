@@ -179,7 +179,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
 - **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command. `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
-- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, ready, installing or error.
+- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, bps, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, verifying, ready, installing or error. While `downloading`, `got` of `size` bytes have arrived and `bps` is the speed measured over the last few seconds (0 until known); `verifying`: every byte is in and its size and SHA-256 are being checked (again right before the installer runs).
 - **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
 - **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
 - **`model_folder`** `{id}` → `{ok, error}`: opens the folder that model is downloaded to in File Explorer (the models folder when it isn't there yet). Only a catalog id, never a path; each model in `models` also sends its `dir` ("" when built into Windows).
@@ -256,7 +256,8 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`download`** → `{id: meaning|photo|<model id>, state: missing|downloading|ready, got_mb, size_mb, mb_s, error}`: a model
   download moved on: progress up to twice a second while `downloading`, then `ready`, or `missing` with `error` saying
   why it failed.
-- **`update`** → `UpdateState`: an update was found, is downloading, ready, installing or failed.
+- **`update`** → `UpdateState`: an update was found, is downloading (progress at most 4 times a second while bytes
+  arrive), verifying, ready, installing or failed. Install goes downloading → verifying → installing.
 - **`notice`** → `{text}`: a sentence to show as a toast (for example a hotkey another app took). A notice nobody was
   subscribed to waits (the last 5) and goes to the first connection that subscribes to `notice`.
 - **`models`** → the `models` result: something in it changed (a download changed state, a model was chosen,
