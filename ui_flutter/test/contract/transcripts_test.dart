@@ -69,6 +69,12 @@ void main() {
             expect(e.info.pc, isNotNull);
           case TurboEvent():
             expect(e.state.available, isTrue);
+          case UpdateEvent(:final state):
+            // Install's progress: downloading (got of size, bps once measured), verifying, installing
+            expect(['downloading', 'verifying', 'installing'], contains(state.state));
+            expect(state.size, greaterThan(0));
+            expect(state.got, inInclusiveRange(0, state.size));
+            if (state.state != 'downloading') expect(state.bps, 0);
           default:
         }
       }
@@ -77,7 +83,7 @@ void main() {
       seen,
       containsAll([
         'status', 'status_full', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', //
-        'models', 'turbo',
+        'models', 'turbo', 'update',
       ]),
     );
   });
