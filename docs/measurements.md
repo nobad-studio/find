@@ -4,6 +4,41 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: Vision Phase 0, step 3: like-for-like Florence-2 runs and Qwen3-VL-2B speed-ups
+
+Same PC, tool and 32-question set. Objects (detection) and descriptions are scored separately (columns).
+
+**Same 768 px images, same tasks** (SmolVLM2 `--variant res768`; Florence-2 always takes 768 x 768):
+
+| candidate | device | ms per photo | peak RAM MB | objects | text | describe | count | yes/no | overall |
+|---|---|---|---|---|---|---|---|---|---|
+| Florence-2-base-ft int8 | CPU | 9,142 | 2,263 | 0.49 | 0.11 | 0.62 | - | - | 0.37 |
+| SmolVLM2-500M, 768 px | CPU | 5,596 | 1,174 | 0.76 | 0.69 | 0.92 | 1.00 | 0.75 | 0.78 |
+| SmolVLM2-500M, 768 px | Vulkan | 2,296 | 1,657 (+848 GPU) | 0.76 | 0.69 | 0.92 | 1.00 | 0.75 | 0.78 |
+| SmolVLM2-500M, 512 px (default) | Vulkan | 2,329 | 1,650 (+848 GPU) | 0.86 | 0.46 | 1.00 | 1.00 | 0.75 | 0.72 |
+
+- Florence-2 accelerated (DirectML, `onnxruntime-directml` 1.24.4, onnx-community fp16 files) **could not be
+  measured**: the fp16 merged decoder is an invalid graph for ONNX Runtime ("Subgraph output (logits) is an outer
+  scope value"); the two plain fp16 decoders load on DirectML but only with basic graph optimization (full
+  optimization fixes a dimension to 16), and then every answer is empty (fp16 numerics). The CPU int8 row is
+  the only Florence-2 number we have; at like-for-like resolution SmolVLM2 is ahead on every column.
+- SmolVLM2 at 768 px reads text better (0.46 -> 0.69) at the same speed on Vulkan, names fewer objects
+  (0.86 -> 0.76), and on CPU costs 1.8x the time.
+
+**Qwen3-VL-2B speed-ups on Vulkan** (`--variant`, see `tools/vision_bench/adapters.py` VARIANTS):
+
+| variant | what changes | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| base | 768 px, up to 256 new tokens | 10,060 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 1.00 | 0.91 |
+| short | answer length per task | 7,038 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 0.96 | 0.90 |
+| fewtok | short + at most 256 image tokens | 7,017 | 3,558 | 2,690 | 0.90 | 0.69 | 1.00 | 1.00 | 0.96 | 0.85 |
+| fast | fewtok + flash attention + 8-bit KV cache | 5,887 | 3,352 | 2,482 | 0.90 | 0.69 | 1.00 | 1.00 | 1.00 | 0.85 |
+| fastest | fast, 512 px, at most 160 image tokens | 4,862 | 3,328 | 5,793 | 1.00 | 0.69 | 1.00 | 1.00 | 0.96 | 0.87 |
+
+- `short` is free speed: -30 % time, same quality. `fastest` halves the time and keeps objects, counts and
+  comparisons perfect; only exact text reading drops (0.77 -> 0.69). Its peak GPU figure (5.8 GB shared) is
+  higher than the others' and is re-measured before it's relied on.
+
 ## 2026-11-21: Vision Phase 0, step 2 (Qwen3-VL-2B Q4_K_M) on the reference PC
 
 Same tool, PC and 32-question set as step 1 (below).
