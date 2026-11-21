@@ -62,7 +62,23 @@ def aggregate(rows):
             "mrr10": _mean(r["mrr"] for r in rows)}
 
 
-def build(root, home, data_dir, ocr=True):
+def _basic_graph_optimization():
+    """fp16 exports of SigLIP 2 fail ONNX Runtime 1.27's full graph optimizer (GetIndexFromName); basic loads them."""
+    import onnxruntime as ort
+    if getattr(ort.SessionOptions, "_basic", False):
+        return
+    orig = ort.SessionOptions
+
+    class Basic(orig):
+        _basic = True
+
+        def __init__(self):
+            super().__init__()
+            self.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    ort.SessionOptions = Basic
+
+
+def build(root, home, data_dir, ocr=True, photo_model="siglip-base", photo_dir=None):
     """The engine's own walk, text reading (with OCR) and vectors, like tools/eval_search.build_index."""
     from nobadfind import embed, extract, models, photo
     from nobadfind.store import Store
@@ -87,20 +103,31 @@ def build(root, home, data_dir, ocr=True):
         et.index_vectors(store, emb, vindex)
         ctx.update(embedder=embed.Embedder(d, threads=4, gpu=False, spec=spec, query=True), vindex=vindex)
         ctx["ran"].append("meaning")
-    pdir = os.path.join(data_dir, "photo-model")
-    if photo.model_ready(pdir):
-        pindex = embed.VectorIndex(photo.PHOTO_DIM, ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",))
+    spec = models.get(photo_model) or {}
+    pdir = os.path.join(data_dir, "photo-model") if photo_model == "siglip-base" else \
+        models.model_dir(photo_model, data_dir)
+    ready = photo.model_ready(pdir) if photo_model == "siglip-base" else models.ready(photo_model, data_dir)
+    if photo_dir:      # dev only: unpinned files (e.g. fp16 exports) to measure, never used by the app
+        _basic_graph_optimization()
+        pdir, ready = photo_dir, all(os.path.isfile(os.path.join(photo_dir, f))
+                                     for f in ("vision.onnx", "text.onnx", "tokenizer.json"))
+    if ready:
+        pindex = embed.VectorIndex(spec.get("dim", photo.PHOTO_DIM),
+                                   ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",))
+        t0 = time.perf_counter()
         for fid, p, mtime in store.q("SELECT id, path, mtime FROM files WHERE kind = 'image'"):
             _f, _m, blob, err = photo.embed_photo((fid, p, mtime, pdir))
             store.set_photo_vector(fid, mtime, blob, err)
-        pindex.reset(photo.PHOTO_DIM, "siglip-base")
+        ctx["photo_embed_s"] = round(time.perf_counter() - t0, 1)
+        pindex.reset(spec.get("dim", photo.PHOTO_DIM), photo_model)
         pindex.load(store)
-        ctx.update(photo_text=photo.TextEncoder(pdir, threads=4), pindex=pindex)
-        ctx["ran"].append("photo")
+        ctx.update(photo_text=photo.TextEncoder(pdir, threads=4, style=spec.get("style", "siglip")), pindex=pindex)
+        ctx["ran"].append("photo:" + photo_model)
     return ctx
 
 
-def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
+def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, photo_model="siglip-base",
+        photo_dir=None):
     from nobadfind import search
     queries, photos, qrels = load_set(folder)
     root = tempfile.mkdtemp(prefix="nobadfind-evalphoto-")
@@ -110,7 +137,7 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
     os.makedirs(pics)
     store = None
     try:
-        for sub in ("model", "photo-model"):
+        for sub in ("model", "photo-model", os.path.join("models", photo_model)):
             src = os.path.join(models_dir, sub)
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(data_dir, sub))
@@ -120,7 +147,7 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
             alias[f"IMG_{i + 1:04}.jpg"] = name
             shutil.copy2(os.path.join(folder, "photos", name), os.path.join(pics, f"IMG_{i + 1:04}.jpg"))
         t0 = time.perf_counter()
-        ctx = build(root, home, data_dir, ocr=ocr)
+        ctx = build(root, home, data_dir, ocr=ocr, photo_model=photo_model, photo_dir=photo_dir)
         build_s = time.perf_counter() - t0
         store = ctx["store"]
         name_of = {fid: alias.get(os.path.basename(p), "") for fid, p in store.q("SELECT id, path FROM files WHERE kind = 'image'")}
@@ -156,7 +183,7 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
                     feats.append({"q": item["id"], "photo": n, "grade": grades.get(n, 0), "siglip": sig.get(n),
                                   "find_rank": pos.get(n), "ocr_chars": len(txt),
                                   "ocr_word_hits": sum(1 for w in words if w in txt)})
-        rep = {"models": ctx["ran"], "ocr": ocr, "photos": len(photos), "queries": len(queries),
+        rep = {"models": ctx["ran"], "photo_embed_s": ctx.get("photo_embed_s"), "ocr": ocr, "photos": len(photos), "queries": len(queries),
                "build_s": round(build_s, 1), "rows": rows,
                "lat_p50_ms": round(statistics.median(lat), 1), "lat_max_ms": round(max(lat), 1),
                "ocr_photos": sum(1 for v in ocr_text.values() if v.strip())}
@@ -246,10 +273,13 @@ def main(argv=None):
     ap.add_argument("--json")
     ap.add_argument("--features")
     ap.add_argument("--no-ocr", action="store_true")
+    ap.add_argument("--photo-model", default="siglip-base", help="catalog id: siglip-base or siglip2-base")
+    ap.add_argument("--photo-dir", help="dev only: a folder with vision.onnx/text.onnx/tokenizer.json of that model")
     ap.add_argument("--variants", help='ranking variant sets to measure, e.g. ";photo_nofloor;noweak,noguess" ("" = today)')
     a = ap.parse_args(argv)
     sets = [[v for v in part.split(",") if v] for part in a.variants.split(";")] if a.variants else None
-    rep = run(a.folder, a.models_dir, ocr=not a.no_ocr, features_out=a.features, variant_sets=sets)
+    rep = run(a.folder, a.models_dir, ocr=not a.no_ocr, features_out=a.features, variant_sets=sets, photo_model=a.photo_model,
+              photo_dir=a.photo_dir)
     _print(rep)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

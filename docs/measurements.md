@@ -4,6 +4,33 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: SigLIP 2 base vs SigLIP base, side by side (separate indexes; nothing replaced)
+
+Same 556 photos / 155 searches, each model in its own throwaway index (`eval_photo_search --photo-model
+siglip2-base [--photo-dir DIR]`). Same 224 px squeeze, same question templates. Reference PC, CPU, measured
+while a Qwen caption job ran on the GPU (absolute times inflated for every row).
+
+| SigLIP 2 files (onnx-community rev ba1f3b08) | train nDCG@10 vs base | **held-out nDCG@10 vs base** | embed 556 photos |
+|---|---|---|---|
+| **pinned today**: 8-bit text + 8-bit vision | **-0.133** (CI -0.177..-0.090) | **-0.179** (CI -0.248..-0.114) | 148 s |
+| fp16 text + fp16 vision | +0.032 (+0.009..+0.057) | +0.025 (-0.001..+0.053) | 218 s; search 449 ms p50 (fp16 text slow on CPU) |
+| **8-bit text + fp16 vision** | **+0.038** (+0.020..+0.057) | **+0.035 (+0.005..+0.066)** | 242 s |
+| SigLIP base (default) | 0.756 | 0.723 | 151 s |
+
+- **The pinned SigLIP 2 is broken by its 8-bit vision model:** zero-shot margins (4 photos, cat/dog/laptop/bird)
+  8-bit+8-bit 0.040, fp16 text only 0.045, **fp16 vision 0.065**, both fp16 0.071, SigLIP base 0.063.
+  The "best" tier (`PHOTO_CHOICE["best"] = "siglip2-base"`) therefore gives WORSE photo search than the default
+  today.
+- fp16 exports load only with `GraphOptimizationLevel.ORT_ENABLE_BASIC` (ONNX Runtime 1.27's full optimizer
+  fails in `GetIndexFromName`); inputs and outputs stay float32.
+- **8-bit text + fp16 vision passes every held-out rule:** SigLIP alone +0.035 (CI above 0); in Find's v2
+  pipeline 0.712 -> 0.742 (+0.030, CI +0.001..+0.060); recall@10 +0.028 (CI -0.004..+0.065). Held-out per
+  category: text +0.099 (CI +0.050..+0.155), screenshots +0.100, mood +0.078, people +0.015, relationships
+  +0.008, attributes -0.005, scenes -0.010, ambiguous -0.033 (n=3, CI -0.243..+0.150): no regression by the
+  rule. Negatives: top-1 similarity gap real-vs-negative 0.059 (base 0.058): not more confident.
+- Chosen by the training searches too (0.794 vs 0.788 for fp16+fp16), so the held-out set didn't pick it.
+- Cost: vision file 177 MB (SigLIP base 99 MB), text 270 MB (111 MB); embedding about 1.6x slower.
+
 ## 2026-11-22: photo set expanded to 556 photos / 155 searches; v2 checked on held-out searches
 
 The set (`C:\Users\aassw\vbench\search`):
