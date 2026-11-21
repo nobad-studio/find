@@ -175,3 +175,19 @@ def test_meaning_floors_come_from_the_model():
         assert 0 < search.floors(mid)[0] < 1 and 0 < search.floors(mid)[1] < 0.5, mid
     e5 = models.get("multilingual-e5-small")
     assert search.floors("multilingual-e5-small")[0] == e5["min_score"]
+
+
+def test_missing_mb_counts_only_the_files_still_to_download(tmp_path):
+    import os
+    m = models.get("siglip2-base")
+    d = models.model_dir("siglip2-base", str(tmp_path))
+    os.makedirs(d)
+    assert models.missing_mb("siglip2-base", str(tmp_path)) == models.size_mb(m)          # nothing there
+    for name, (_p, size, _s) in m["files"].items():
+        if name != "vision.onnx":                                                      # the re-pinned file
+            with open(os.path.join(d, name), "wb") as f:
+                f.truncate(size)
+    with open(os.path.join(d, "vision.onnx"), "wb") as f:
+        f.truncate(94553333)                                                           # the old 8-bit file
+    assert models.missing_mb("siglip2-base", str(tmp_path)) == round(m["files"]["vision.onnx"][1] / 1048576) == 177
+    assert models.missing_mb("windows-ocr", str(tmp_path)) == 0

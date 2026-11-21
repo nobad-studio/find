@@ -4,6 +4,419 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: review fixes to photo ranking v2
+
+Found in review; fixed in `nobadfind/query.py` (intent) and `nobadfind/search.py` (tests in `tests/test_photo.py`).
+
+1. **"photos", "list all photos", "show me pictures" list every image again.** v2 had asked SigLIP the word
+   "photos". Collection intent now lives in query interpretation: `query.parse` sets `q.collection` (pictures
+   asked for as such: listed with the filters, not ranked) and `q.visual` (a clean description for the photo
+   model, "" when there is nothing to describe). "screenshot" counts as description ("show screenshots" is
+   screenshot retrieval); "photo/picture/image/pic" don't.
+2. **SigLIP gets the raw text (`q.visual`) only when it is a plain description:** nothing in it was read as a date, place,
+   folder, `dirs`, `here`, size, sort, extensions or Hinglish. The photo model is English-only, and those words go
+   to filters. Otherwise it gets the meaning words, as v1.
+3. **Loose meaning is dropped only for a photo's OCR text, never its name,** and only when a photo model is there
+   (without one, OCR is all there is).
+4. **Known, not changed:** with no floors, a keyword search ("lease") also lists up to 100 weak photos after the
+   sure results. Maintainer decision 2026-11-22: don't restore global floors; measure admission policies A
+   (current), B (minimum visual confidence for standalone visual matches), C (evidence-aware: a weak visual
+   match only with a filename, OCR or metadata signal) on a fresh held-out set (nDCG@10, recall@10,
+   precision@10, weak results after sure ones, keyword-only false positives, no-answer false positives,
+   filename-only and OCR-only regressions). C is the favoured candidate.
+5. **Download size:** the photo-model notice gives only what is still to download (`models.missing_mb`): an
+   existing SigLIP 2 user is asked for an update of 177 MB, not 481 MB.
+
+Re-measured after the fixes (final code): the 556-photo / 155-search set is unchanged search by search (0 of 146 searches changed; training 0.731, held-out 0.712 nDCG@10); the mixed-file benchmark is identical with v2 on and rolled back (keywords 1.0, photo 1.0, meaning MRR 0.495, all 0.951; no question changed). An intermediate run had shown meaning 0.533 vs 0.495; it did not hold on the final code.
+
+## 2026-11-22: SigLIP 2 "best" tier re-pinned: fp16 vision + 8-bit text (maintainer decision)
+
+Catalog `siglip2-base`: vision `onnx/vision_model_fp16.onnx` (186,039,516 bytes, SHA-256 a1959f7b…aabd95,
+rev ba1f3b08), text unchanged (8-bit), `"vectors": 2` so photo vectors from the old 8-bit vision are made again
+(`models.vector_tag` -> meta `pvec_model` "siglip2-base#2"); SigLIP base users keep their vectors. Download
+393 -> 481 MB. Default and balanced tier stay on SigLIP base.
+
+Resources on the reference PC, quiet (no other job), 4 threads, private memory of the process:
+
+| | vision RAM after 20 photos | photos/s | question (text) RAM | question p50 |
+|---|---|---|---|---|
+| SigLIP base (8-bit) | 148 MB (117 MB, arena off) | 4.0 | 149-156 MB | 94-99 ms |
+| SigLIP 2, fp16 vision, default session | **1,275 MB** | 3.4 | - | - |
+| **SigLIP 2, fp16 vision, basic opt + arena off (shipped)** | **207 MB** | **2.9** | 368-372 MB | 89-124 ms |
+| SigLIP 2, fp32 vision (not shipped), arena off | 370 MB | 4.6 | - | - |
+
+- fp16 and fp32 vision give the same vectors (cosine 1.00000 on 50 photos), so the held-out gain (+0.035
+  nDCG@10) holds for either; fp16 is shipped as the lighter one (background indexing), fp32 is the faster option
+  for a hardware-adaptive profile later.
+- `photo.open_session`: tries the full optimizer, and only on its `GetIndexFromName` failure reopens with basic
+  optimization and the memory arena off (the arena grew to 1.3 GB with basic optimization, measured).
+- `tests/test_siglip2_real.py` (runs with `NOBAD_FIND_SIGLIP2_DIR`): the pinned files' vectors for three drawn
+  pictures must be within cosine 0.995 of stored fp32 references. The old 8-bit vision fails it (0.92 / 0.88 /
+  0.92); fp16 passes (1.000).
+- SigLIP 2's question encoder holds 368 MB (its 256k-word vocabulary); arena off doesn't change that.
+
+## 2026-11-22: caption enrichment, pre-registered held-out test (`tools/heldout_photo_rank.py`): FAILED
+
+Rules and candidates committed before grading (143b077). SigLIP base features; captions from SmolVLM2-500M and
+Qwen3-VL-2B (Qwen with `-c 1024 -ub 256` for the new photos) on all 556 photos. 101 training searches,
+45 held-out, 4 held-out negatives.
+
+| | train CV nDCG@10 | **held-out nDCG@10** | held-out recall@10 |
+|---|---|---|---|
+| SigLIP alone | - | 0.723 | 0.815 |
+| H0 calibrated SigLIP + b/w rule | 0.756 | 0.716 | 0.807 |
+| H1 + SmolVLM2 captions | 0.757 | 0.703 | 0.769 |
+| **H2 + Qwen captions (chosen by training CV)** | **0.773** | **0.733** | 0.794 |
+| H3 query-dependent weights | 0.668 | 0.704 | 0.804 |
+
+- **H2 vs SigLIP alone, held-out: +0.010 (CI -0.037 to +0.058), 21 better / 19 worse: not supported.**
+- Category regression: similar scenes -0.059 (CI -0.113 to -0.004). Text +0.124 and mood +0.080 (CIs cross 0).
+- Negatives: H2 more confident on searches with no answer (top-3 calibrated probability 0.321 vs H0 0.175).
+- **Decision (maintainer rules): captions stay out of the default ranking.**
+- H3 is far below H0 even in training CV (0.668 vs 0.756). Cause found: the Newton solver in
+  `nobadfind/hybrid.py` diverged on the sparse `words` channel (89 % zeros, 12 distinct values; one weight swung
+  between 81 and -391). That killed the channel in H1 and H2 (and in the 2026-11-21 step-1 fits) and wrecked one
+  H3 fold (0.359). Fixed 2026-11-22 with a backtracking line search (`tests/test_hybrid.py`). The table above
+  is the pre-registered run, with the broken solver.
+- Qwen peak shared GPU memory read 7,347 MB over this 252-photo run (2,060 MB in the 10-photo test with the
+  same flags); cause not established yet (growth over the run, or the counter including another process).
+
+**Diagnostic re-run with a converging solver (by a reviewer; NOT pre-registered):**
+
+| | train CV nDCG@10 | held-out nDCG@10 |
+|---|---|---|
+| H0 | 0.756 | 0.716 |
+| H1 | 0.750 | 0.711 |
+| H2 | 0.786 | 0.749 |
+| H3 | 0.773 | 0.707 |
+
+- H2 vs SigLIP alone, held-out: +0.026 (CI -0.015 to +0.073). Still fails the CI rule, so the decision stands
+  (captions stay out). The pre-registered run understated the effect.
+- The held-out searches have now been used twice; a new test of captions or H3 needs fresh held-out searches.
+
+**Review notes (2026-11-22):**
+- H0 is not "SigLIP + b/w rule" only: it also has the OCR channels on searches asking for text.
+- The negatives rule compared absolute probabilities across candidates, with a base rate on a different label
+  scale. So "H2 more confident on negatives" is weak evidence: H2's negatives/real ratio is 0.58, H0's 0.61.
+- Category CIs rest on 3-8 searches each, with no multiple-comparison correction (the "similar scenes"
+  regression is n=5).
+
+## 2026-11-22: SigLIP 2 base vs SigLIP base, side by side (separate indexes; nothing replaced)
+
+Same 556 photos / 155 searches, each model in its own throwaway index (`eval_photo_search --photo-model
+siglip2-base [--photo-dir DIR]`). Same 224 px squeeze, same question templates. Reference PC, CPU, measured
+while a Qwen caption job ran on the GPU (absolute times inflated for every row).
+
+| SigLIP 2 files (onnx-community rev ba1f3b08) | train nDCG@10 vs base | **held-out nDCG@10 vs base** | embed 556 photos |
+|---|---|---|---|
+| **pinned today**: 8-bit text + 8-bit vision | **-0.133** (CI -0.177..-0.090) | **-0.179** (CI -0.248..-0.114) | 148 s |
+| fp16 text + fp16 vision | +0.032 (+0.009..+0.057) | +0.025 (-0.001..+0.053) | 218 s; search 449 ms p50 (fp16 text slow on CPU) |
+| **8-bit text + fp16 vision** | **+0.038** (+0.020..+0.057) | **+0.035 (+0.005..+0.066)** | 242 s |
+| SigLIP base (default) | 0.756 | 0.723 | 151 s |
+
+- **The pinned SigLIP 2 is broken by its 8-bit vision model:** zero-shot margins (4 photos, cat/dog/laptop/bird)
+  8-bit+8-bit 0.040, fp16 text only 0.045, **fp16 vision 0.065**, both fp16 0.071, SigLIP base 0.063.
+  The "best" tier (`PHOTO_CHOICE["best"] = "siglip2-base"`) therefore gives WORSE photo search than the default
+  today. *Superseded: the best tier was re-pinned to fp16 vision + 8-bit text the same day (see "SigLIP 2 'best'
+  tier re-pinned" above).*
+- fp16 exports load only with `GraphOptimizationLevel.ORT_ENABLE_BASIC` (ONNX Runtime 1.27's full optimizer
+  fails in `GetIndexFromName`); inputs and outputs stay float32.
+- **8-bit text + fp16 vision passes every held-out rule:** SigLIP alone +0.035 (CI above 0); in Find's v2
+  pipeline 0.712 -> 0.742 (+0.030, CI +0.001..+0.060); recall@10 +0.028 (CI -0.004..+0.065; a reviewer
+  recomputed +0.026, CI -0.006..+0.063, over 44 searches: the discrepancy is not resolved yet; recall averages
+  cover fewer searches than nDCG, because searches with only grade-1 photos have no recall). Held-out per
+  category: text +0.099 (CI +0.050..+0.155), screenshots +0.100, mood +0.078, people +0.015, relationships
+  +0.008, attributes -0.005, scenes -0.010, ambiguous -0.033 (n=3, CI -0.243..+0.150): no regression by the
+  rule. Negatives: top-1 similarity gap real-vs-negative 0.059 (base 0.058): not more confident.
+- Chosen by the training searches too (0.794 vs 0.788 for fp16+fp16), so the held-out set didn't pick it.
+- Cost: vision file 177 MB (SigLIP base 99 MB), text 270 MB (111 MB); embedding about 1.6x slower.
+
+## 2026-11-22: photo set expanded to 556 photos / 155 searches; v2 checked on held-out searches
+
+The set (`%USERPROFILE%\vbench\search`):
+- **Searches:** 95 new ones (people and actions, relationships, mood, English/German/Hindi text, screenshots,
+  attributes, similar scenes, ambiguous, 8 negatives).
+- **Photos:** 251 new photos from Wikimedia Commons; 556 usable after 4 were left out (two historical nudes,
+  left out as a conservative call; one duplicate; one flagged unusable).
+- **Grading:** 15 grading agents, each photo graded against every search.
+- **Split:** fixed before any grading (`split.json`, seed 20261122). Held-out = half of each category of the new
+  searches (49); the original 60 searches can't be a test (v2 was designed on them), so they are training.
+- 35 non-negative searches have fewer than 3 clearly relevant photos; they still count (grade 1 scores in nDCG)
+  but are noisier.
+
+**Bug found and fixed (v2 only):** when every word reads as a file kind ("a screenshot of program code" ->
+kinds code + image, no words left), photos were never asked and all images were listed newest first. In v2,
+SigLIP's own question decides. Found on training searches q114/q116.
+
+nDCG@10 (negatives excluded; questions as typed through `search.search`):
+
+| | all 146 | training 101 | **held-out 45** |
+|---|---|---|---|
+| v1 (rollback) | 0.628 | 0.642 | 0.596 |
+| **v2 (default, with the fix)** | **0.724** | **0.731** | **0.712** |
+| SigLIP alone | 0.745 | 0.756 | 0.723 |
+
+(Review note 2026-11-22: the "all 146" column actually averages 147 searches: it includes the negative q155,
+which has grade-1 photos. Over the true 146: SigLIP alone 0.746, v2 0.725.)
+
+- **v2 gains +0.116 over v1 on held-out searches it never saw.**
+- Mixed-file regression (`eval_search`), v2 vs rollback: identical (keywords 1.0/1.0, photo 1.0/1.0, meaning
+  MRR 0.495, all 0.951); no question changed rank.
+- Search time measured while a caption job ran on the same PC: v1 125 / v2 127 ms p50. Not comparable with
+  the quiet-PC 2.8 / 3.8 ms; re-measure idle.
+
+## 2026-11-22: Qwen3-VL-2B memory (llama.cpp flags only, 10 photos, Iris Xe Vulkan)
+
+On top of Qwen's "fastest" settings; same two caption questions; RAM = peak private, GPU = peak shared (separate
+counters that overlap on an integrated GPU; never added).
+
+| Flags | peak RAM | peak GPU | compute a photo | answers same as A |
+|---|---|---|---|---|
+| A: as in the 308-photo run (`-c 4096`, ubatch 512) | 3,056 MB | 2,532 MB | 5.7 s | - |
+| **B: `-c 1024 -ub 256`** | **2,411 MB (-21 %)** | **2,060 MB (-19 %)** | 5.5 s | **10/10 captions, 10/10 objects** |
+| C: B + `-lm none` (no memory map) | 2,415 MB | 2,053 MB | 5.0 s | 10/10 |
+| D: B + `--no-mmproj-offload` (vision encoder on CPU) | 2,378 MB | 1,588 MB | 8.3 s | 6/10 captions |
+| E: B + `--no-host` | 3,820 MB | 1,835 MB | 4.9 s | 10/10 |
+
+- **B is free:** about a fifth less of both, identical answers, same speed. Qwen's talk settings should carry it.
+- D trades 0.5 GB of GPU memory for 50 % more time and different answers: only for a GPU short of memory.
+- E moves memory from the GPU to process RAM (worse overall on a shared-memory GPU).
+
+## 2026-11-22: memory and speed of photo ranking v2, and leaner caption runs
+
+**v2 adds no model and no memory.** What a photo search uses, measured on the reference PC:
+- SigLIP text encoder (`text.onnx`, 111 MB file): **+148 MB private** when loaded, +156 MB after 60 questions;
+  96 ms a new question (p50), cached after. It sits in `embed.Lazy` (released when idle). ONNX Runtime's
+  `enable_cpu_mem_arena=False` / `enable_mem_pattern=False` saved nothing (+151 / +149 MB) and were slower
+  (113 / 203 ms): not used.
+- Photo vectors: float16, 768 values = 1.5 KB a photo (10,000 photos ~15 MB); scored in blocks, and a 64-number
+  first pass from 20,000 photos up, so the whole matrix is never converted at once.
+- Search time (`eval_photo_search --variants`, questions cached as while typing): today p50 2.8 ms (max 4.7),
+  **v2 p50 3.8 ms** (max 120 ms, one search). Today's speed came from its floors: a median of **6** photos
+  returned per search, v2 returns the full 60.
+
+**Captions with less memory (SmolVLM2, 20 photos, llama.cpp flags only):** `-c 1024 -fa on -ctk q8_0 -ctv q8_0
+-ub 256` instead of `-c 4096`: peak private RAM 1,138 -> **942 MB (-17 %)**, GPU shared 848 -> **658 MB (-22 %)**,
+same speed (2.92 s a photo); 14 of 20 answers identical, the other 6 differ in small details (8-bit cache). Use
+for background captions if captions ship.
+
+## 2026-11-22: hybrid photo search, step 2: Qwen3-VL-2B captions vs SmolVLM2-500M, like for like
+
+Same 308 photos, same two questions (one-sentence caption, 48 tokens; object list, 40 tokens; repeat penalty
+1.3), same 60 searches, same channels and 5-fold cross-validation over searches (`tools/fit_hybrid.py --facts F
+--report`). Iris Xe Vulkan, llama.cpp b12602. Qwen with its Phase 0 "fastest" settings (512 px, <= 160 image
+tokens, flash attention, 8-bit KV cache). Memory sampled every 0.5 s by the vision bench's probes; process RAM
+(private) and GPU memory (shared, as Windows counts it on the Iris Xe) are separate counters: on an integrated
+GPU the shared pool is system memory too, so the two overlap and must not be added.
+
+| Captions from | compute a photo p50 / p90 | 10,000 photos | peak private RAM | peak GPU (shared) |
+|---|---|---|---|---|
+| SmolVLM2-500M Q8_0 | 3.0 / 3.5 s | ~8.4 h | 1,138 MB | 848 MB |
+| Qwen3-VL-2B Q4_K_M | 5.1 / 6.6 s | ~14 h | 3,056 MB | 2,532 MB |
+
+(Wall time 5.4 / 11.0 s: llama-mtmd-cli reloads the model per question; the product keeps it loaded.)
+
+nDCG@10 / recall@10 by kind of search (searches better/worse than SigLIP alone):
+
+| Kind of search (n) | SigLIP alone | v2 | + SmolVLM2 captions | + Qwen captions |
+|---|---|---|---|---|
+| people and actions (17) | 0.746 / 0.832 | 0.755 | 0.806 / 0.862 (11/5) | **0.839 / 0.891 (14/3)** |
+| relationships (14) | 0.771 / 0.851 | 0.781 | 0.827 / 0.895 (9/4) | **0.853 / 0.917 (12/2)** |
+| ambiguous / mood (4) | 0.648 / 0.807 | 0.648 | 0.658 / 0.782 (2/2) | **0.758 / 0.829 (3/1)** |
+| objects (39) | 0.876 / 0.908 | 0.870 | 0.874 / 0.897 (13/14) | 0.887 / 0.909 (16/14) |
+| text-heavy (8) | **0.875 / 0.902** | 0.737 | 0.819 / 0.885 (1/5) | 0.803 / 0.910 (1/4) |
+| screenshots and documents (3) | **0.815 / 0.850** | 0.482 | 0.795 / 0.833 (1/2) | 0.720 / 0.917 (0/1) |
+| Hindi signs (1) | 0.752 / 0.667 | 0.626 | 0.659 / 1.0 | 0.728 / 1.0 |
+| black and white (1) | 0.907 / 0.900 | 0.907 | 1.0 / 1.0 (saturation rule) | 1.0 / 1.0 (saturation rule) |
+| **all (60)** | 0.864 / 0.913 | 0.840 | 0.871 / 0.906 (25/22) | **0.884 / 0.926 (28/19)** |
+
+- **Against SigLIP alone (the baseline and fallback), neither passes:** SmolVLM2 +0.007 nDCG@10 (95 % CI -0.016
+  to +0.029), Qwen +0.020 (CI -0.006 to +0.046). Against v2, Qwen +0.044 (CI +0.007 to +0.091), but v2 is the
+  live mixed-file pipeline; SigLIP alone is the fair bar for a photos-only ranking.
+- **Where captions help is consistent across both models, more with Qwen:** people and actions +0.093,
+  relationships +0.082, mood +0.110 nDCG@10 over SigLIP alone ("a woman smiling" +0.29, "feeling lonely" +0.25,
+  "people dancing" +0.25).
+- **Where they hurt, also consistent:** text-heavy -0.07, screenshots -0.10 ("a screenshot ..." -0.28, "a sign
+  with writing on it" -0.24). SigLIP alone stays best for writing; a one-sentence caption says less about it.
+- Hindi: no model's reading of Hindi is used in any channel (captions only describe; the OCR channel is Windows
+  OCR). PaddleOCR Devanagari is not in this run yet. Qwen also invents text and people (an empty bench: "a red
+  sign that reads 'This seat is closed'", objects "bench, person, animal"; the sign says "Help Save Lives").
+- One search per kind for Hindi and black and white: too few to conclude anything about those two.
+
+## 2026-11-21: photo ranking v2 (fix the existing ranking first; flag `NOBAD_FIND_PHOTO_V2=1`, off by default)
+
+*Superseded: v2 is on by default since 2026-11-22 (maintainer); rollback `NOBAD_FIND_PHOTO_V2=0`. See the
+556-photo section and the review fixes above.*
+
+Same 308 photos / 60 searches (`tools/eval_photo_search.py --variants`, one index build, each change measured
+alone). Diagnosis of today's 0.755 against SigLIP alone 0.864 (nDCG@10):
+
+| Change (alone) | nDCG@10 | recall@10 |
+|---|---|---|
+| today | 0.755 | 0.780 |
+| no photo score floors | **0.815** | **0.871** |
+| SigLIP reads the whole description | 0.767 | 0.795 |
+| no "sure first" reorder / no best guess | 0.752 / 0.755 | 0.780 / 0.780 |
+| photo list alone in the fusion (measurement only) | 0.754 | 0.773 |
+
+- **Floors were the main damage.** SigLIP similarities run 0.02-0.08 for right photos; `PHOTO_MIN` 0.04 and
+  the relative floors dropped true matches (two of four coffee cups at 0.030/0.033).
+- **Loose OCR meaning was the rest:** of the "text has a loosely related meaning" results in the top 10, 38 of
+  44 were wrong (garbled stadium-advert text matching gardens, boats, calm lakes).
+- The query parser drops kind words before SigLIP sees them ("a screenshot of a phone" -> "phone") and reads
+  "a handwritten note" as text documents only (no photo can match: the one empty search). Not changed: open item.
+
+**v2** = no photo floors (low photos kept in SigLIP's order, shown as less sure after the sure results) + SigLIP
+asked the whole description when it has no date/place/folder words + a photo's OCR text counts as a meaning
+match only when at least "related" (0.38, the existing label threshold; exact words still count).
+
+| Ranking | nDCG@10 | recall@10 | worse than SigLIP alone |
+|---|---|---|---|
+| today | 0.755 | 0.780 | 43 searches |
+| **v2** | **0.840** | **0.895** | 6 |
+| SigLIP alone (baseline and fallback) | 0.864 | 0.913 | - |
+
+- v2 vs today, paired per search: **+0.086 nDCG@10 (bootstrap 95 % CI +0.056 to +0.119), 41 better, 4 worse.**
+- v2 vs SigLIP alone: -0.024 (CI -0.064 to 0.000); the empty "handwritten note" search alone is -0.017.
+- Mixed-file regression check (`tools/eval_search.py`, documents + look-alike names + photos), v2 off / on:
+  keywords recall@1 1.0 / 1.0, photo 1.0 / 1.0, meaning MRR 0.495 / 0.495, all 0.951 / 0.951: no change.
+  (An earlier run's meaning 0.529 was run-to-run variation: the corpus is regenerated with fresh dates.)
+
+## 2026-11-21: hybrid photo search, step 1: calibrated channels with SmolVLM2-500M captions
+
+`python tools/fit_hybrid.py <set>`, same 308 photos and 60 searches. Captions and object lists from SmolVLM2-500M
+Q8_0 on Iris Xe Vulkan (two short questions, 48/40 tokens, repeat penalty 1.3): **3.0 s compute a photo** (5.4 s
+wall with llama-mtmd-cli reloading the model each run), 308/308 without errors. Channels calibrated per channel
+(Platt, log-odds over the base rate, missing = 0) and weighted by logistic regression; 5-fold cross-validation
+over SEARCHES (weights never see the searches they're scored on).
+
+| Ranking | nDCG@10 | recall@10 |
+|---|---|---|
+| Find today | 0.755 | 0.780 |
+| SigLIP alone | 0.864 | 0.913 |
+| SigLIP + caption + objects + words | 0.868 | 0.902 |
+| + black-and-white rule + text channels for searches asking for writing | **0.874** | 0.908 |
+| + every channel weighted apart for searches asking for writing | 0.871 | 0.906 |
+
+- **Not a real gain yet:** paired per search against SigLIP alone, nDCG@10 +0.007 (bootstrap 95 % CI -0.016 to
+  +0.029; 25 searches better, 22 worse), recall@10 -0.007. **Gate not passed; not wired into search.**
+- Captions help people and actions: "someone reading a book" +0.19, "people dancing" +0.19, "someone sitting
+  alone" +0.18, "a woman smiling" +0.15; by kind: actions 0.77 -> 0.83, mood 0.65 -> 0.68.
+- They hurt screens and text: "a screenshot ..." -0.26, "a restaurant menu" -0.22, frustrated laptop -0.19.
+  SigLIP base already reads signs well; Windows OCR found text in only 37 of 308 photos, so the OCR channels got
+  ~0 weight.
+- Black and white: mean HSV saturation < 30 marks every black-and-white/sepia photo graded relevant (a rule, not
+  learned: one judged search asks for it). Photo-type searches 0.815 -> 0.847 with it.
+- **"Facts in one pass" fails with SmolVLM2-500M:** asked for a 7-line CAPTION/OBJECTS/... format (with and
+  without a worked example) it echoed the template or wrote free prose, looped on a Hindi sign
+  ("kalalakalala..." to the token limit) and invented a green tree in a black-and-white photo. Two short
+  questions give usable answers.
+
+## 2026-11-21: photo search baseline (hybrid photo search, step 0)
+
+`python tools/eval_photo_search.py <set>`: 308 openly licensed Wikimedia Commons photos, 60 judged searches (graded
+0/1/2 from what is visible), copied under neutral camera names (`IMG_0001.jpg`) so file names give nothing away;
+the engine's own walk, Windows OCR (37 photos with text), MiniLM and SigLIP base. Reference PC, CPU.
+
+| Ranking | recall@10 (grade 2) | nDCG@10 | MRR@10 |
+|---|---|---|---|
+| Find today (`search.search`, RRF of names/text/meaning/photo) | 0.780 | 0.755 | 0.875 |
+| SigLIP similarity alone, no floors | **0.913** | **0.864** | **0.931** |
+
+nDCG@10 by what the search mostly needs (Find / SigLIP alone): look 0.80 / 0.91, objects 0.77 / 0.88, actions
+0.69 / 0.77, mood 0.50 / 0.65, text in photo 0.64 / 0.88, photo type 0.44 / 0.84.
+
+- **Today's fusion makes photo search worse than its own photo channel.** Two causes seen in the weakest searches:
+  the photo floors (`PHOTO_MIN`, `PHOTO_SPREAD`, `PHOTO_RATIO`) cut good photos ("a handwritten note" returns
+  none; the frustrated-laptop search returns one), and OCR/meaning words pull in look-alikes ("coffee" on a menu
+  ranks above a cup of coffee).
+- With the set's own names (`dog-01.jpg`) Find scored 0.812: the name channel was reading the answer. Always run
+  with neutral names.
+- **The hybrid ranker's gate is therefore SigLIP alone (0.864 nDCG@10), not today's 0.755.**
+- Index build 193 s for 308 photos (OCR + SigLIP + MiniLM, CPU); search p50 214 ms.
+
+## 2026-11-21: Vision Phase 0, step 3: like-for-like Florence-2 runs and Qwen3-VL-2B speed-ups
+
+Same PC, tool and 32-question set. Objects (detection) and descriptions are scored separately (columns).
+
+**Same 768 px images, same tasks** (SmolVLM2 `--variant res768`; Florence-2 always takes 768 x 768):
+
+| candidate | device | ms per photo | peak RAM MB | objects | text | describe | count | yes/no | overall |
+|---|---|---|---|---|---|---|---|---|---|
+| Florence-2-base-ft int8 | CPU | 9,142 | 2,263 | 0.49 | 0.11 | 0.62 | - | - | 0.37 |
+| SmolVLM2-500M, 768 px | CPU | 5,596 | 1,174 | 0.76 | 0.69 | 0.92 | 1.00 | 0.75 | 0.78 |
+| SmolVLM2-500M, 768 px | Vulkan | 2,296 | 1,657 (+848 GPU) | 0.76 | 0.69 | 0.92 | 1.00 | 0.75 | 0.78 |
+| SmolVLM2-500M, 512 px (default) | Vulkan | 2,329 | 1,650 (+848 GPU) | 0.86 | 0.46 | 1.00 | 1.00 | 0.75 | 0.72 |
+
+- Florence-2 accelerated (DirectML, `onnxruntime-directml` 1.24.4, onnx-community fp16 files) **could not be
+  measured**: the fp16 merged decoder is an invalid graph for ONNX Runtime ("Subgraph output (logits) is an outer
+  scope value"); the two plain fp16 decoders load on DirectML but only with basic graph optimization (full
+  optimization fixes a dimension to 16), and then every answer is empty (fp16 numerics). The CPU int8 row is
+  the only Florence-2 number we have; at like-for-like resolution SmolVLM2 is ahead on every column.
+- SmolVLM2 at 768 px reads text better (0.46 -> 0.69) at the same speed on Vulkan, names fewer objects
+  (0.86 -> 0.76), and on CPU costs 1.8x the time.
+
+**Qwen3-VL-2B speed-ups on Vulkan** (`--variant`, see `tools/vision_bench/adapters.py` VARIANTS):
+
+| variant | what changes | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| base | 768 px, up to 256 new tokens | 10,060 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 1.00 | 0.91 |
+| short | answer length per task | 7,038 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 0.96 | 0.90 |
+| fewtok | short + at most 256 image tokens | 7,017 | 3,558 | 2,690 | 0.90 | 0.69 | 1.00 | 1.00 | 0.96 | 0.85 |
+| fast | fewtok + flash attention + 8-bit KV cache | 5,887 | 3,352 | 2,482 | 0.90 | 0.69 | 1.00 | 1.00 | 1.00 | 0.85 |
+| fastest | fast, 512 px, at most 160 image tokens | 4,862 | 3,328 | 5,793 | 1.00 | 0.69 | 1.00 | 1.00 | 0.96 | 0.87 |
+
+- `short` is free speed: -30 % time, same quality. `fastest` halves the time and keeps objects, counts and
+  comparisons perfect; only exact text reading drops (0.77 -> 0.69). Its peak GPU figure (5.8 GB shared) is
+  higher than the others' and is re-measured before it's relied on.
+
+## 2026-11-21: Vision Phase 0, step 2 (Qwen3-VL-2B Q4_K_M) on the reference PC
+
+Same tool, PC and 32-question set as step 1 (below).
+
+| candidate | device | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall | 10,000 photos |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Qwen3-VL-2B Q4_K_M | Vulkan | 10,060 | 3,945 | 3,018 | 1.00 | 0.77 | 1.00 | 1.00 | 1.00 | 0.91 | 27.9 h |
+| Qwen3-VL-2B Q4_K_M | CPU | 16,395 | 3,120 | 0 | 1.00 | 0.77 | 1.00 | 1.00 | 0.96 | 0.90 | 45.5 h |
+
+Median seconds per answer on Vulkan, by task (generation length dominates):
+
+| | read text | objects | question | description | compare |
+|---|---|---|---|---|---|
+| SmolVLM2-500M | 1.5 | 7.0 | 1.2 | 6.0 | 2.6 |
+| Qwen3-VL-2B | 6.4 | 17.5 | 5.2 | 18.9 | 9.3 |
+
+- Qwen3-VL-2B read every English and German sign exactly (RAIL RESERVATION CENTRE, PARCEL OFFICE, EXIT,
+  Scentral Bark, Airtel, the full German dog-park text), named every expected object, and got all 3 comparisons.
+- **Hindi: it made text up.** On the Mirzapur shop photo it wrote fluent Devanagari that isn't on the sign
+  ("द एयरलाइन्स एंड टेक्नोलॉजी", "मुंबई"...), and it read the Hindi line of the trilingual sign as Urdu-script
+  gibberish. Its Hindi score is 0/3, the same as SmolVLM2, but it's confidently wrong, which is worse.
+- Cost: about 4x SmolVLM2's time per answer and about 2.4x its RAM (3.9 GB + 3 GB shared GPU memory on Vulkan).
+
+## 2026-11-21: Vision Phase 0, step 1 (Florence-2, SmolVLM2-500M) on the reference PC
+
+`python -m tools.vision_bench` (dev only, `tools/vision_bench/README.md`), llama.cpp b12602, ONNX Runtime 1.27.0
+(CPU build). PC: 12 cores / 16 threads, 15.7 GB RAM, Intel Iris Xe (shared memory; Vulkan used, proven by
+llama.cpp's "using device Vulkan0" line). Set: 32 questions over 17 openly licensed Wikimedia Commons photos
+(English, German and Hindi signs, objects, counts, questions, descriptions, comparisons); answers written by
+looking at each photo; the photos are not in the repo. Window closed, nothing else heavy running.
+
+| candidate | device | ms per photo | peak RAM MB | peak GPU MB | objects | text | count | yes/no | describe | overall | 10,000 photos |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SmolVLM2-500M Q8_0 | Vulkan | 2,329 | 1,650 | 848 | 0.86 | 0.46 | 1.00 | 0.75 | 1.00 | 0.72 | 6.5 h |
+| SmolVLM2-500M Q8_0 | CPU | 3,152 | 1,167 | 0 | 0.86 | 0.46 | 1.00 | 0.75 | 1.00 | 0.72 | 8.8 h |
+| Florence-2-base-ft int8 | CPU | 9,142 | 2,263 | - | 0.49 | 0.11 | - | - | 0.62 | 0.37 | 25.4 h |
+
+What the answers show (per-item answers in the run's `results.json`):
+- SmolVLM2 answered every question right (2 people, chess, red, snow, German, a photographer: 7/7), every
+  description, and 2 of 3 comparisons (it said two Tokyo night streets were not the same kind of place). Reading
+  text is its weak part: asked to copy a sign, it often describes it instead ("The signboard is green and
+  white..."); German came out garbled; **no Hindi text was read** (0/3).
+- Florence-2 int8 on CPU was 3-4x slower and used more RAM than SmolVLM2, and was weaker everywhere: its text
+  reading runs lines together ("ScentralBark", "Sairtel") and looped on the wide trilingual sign (repeated
+  Arabic-script tokens); objects missed signs and the motorcycle. Its int8 graphs may be part of the cause.
+- Hindi text needs a dedicated reader (not measured here; PaddleOCR Devanagari pinned in `models.json`).
+
 ## 2026-11-19 (late): 0.8.5 smart search (understood parts, best guess, autocomplete)
 
 **Quality** (`tools/eval_search.py`, generated corpus: 31 answer files in English, Hindi, Spanish, French and German

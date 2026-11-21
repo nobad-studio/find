@@ -178,3 +178,99 @@ def test_a_photo_search_says_what_it_needs(tmp_path, monkeypatch):
     assert "needs" not in a.search("black shirt image")             # every photo looked at: nothing to say
     assert models.size_mb(models.get(models.DEFAULT_PHOTO)) > 0
     s.close()
+
+
+def test_photo_v2_keeps_low_scoring_photos_in_siglips_order_and_marks_them_less_sure(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    vi = _pindex(s)
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")           # rollback: the earlier ranking, unchanged
+    v1 = [x["name"] for x in search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]]
+    assert v1 == ["IMG_0042.jpg"]                            # v1: the beach photo is under the floor, dropped
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)  # default: v2
+    r = search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]
+    assert [x["name"] for x in r] == ["IMG_0042.jpg", "IMG_0043.jpg"]
+    assert not r[0]["weak"] and r[1]["weak"]                 # kept, after the sure one, shown as less sure
+    assert search.search(s, "dog pdf", photo_text=_Text(), pindex=vi)["results"] == []   # still not photos
+    s.close()
+
+
+def test_photo_v2_asks_siglip_the_whole_description_unless_it_has_a_date_or_place(monkeypatch):
+    from nobadfind.query import parse
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert search._photo_question(parse("a screenshot of a phone")) == "phone"            # rollback (v1)
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search._photo_question(parse("a screenshot of a phone")) == "a screenshot of a phone"
+    assert search._photo_question(parse("beach photos from last week")) == parse("beach photos from last week").meaning
+
+
+def test_photo_v2_is_on_by_default_and_both_rollback_switches_work(monkeypatch):
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search.photo_v2()
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert not search.photo_v2()
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    monkeypatch.setattr(search, "VARIANTS", {"photo_v1"})
+    assert not search.photo_v2()
+    monkeypatch.setattr(search, "VARIANTS", {"photo_v2"})
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert search.photo_v2()                                 # the eval tools' explicit variant wins
+
+
+def test_photo_v2_drops_loose_ocr_meaning_on_photos_but_keeps_documents_and_close_matches(tmp_path):
+    s = _store(tmp_path)
+    ids = dict(s.q("SELECT name, id FROM files"))
+    photo_loose, photo_close, pdf_loose = ids["IMG_0042.jpg"], ids["IMG_0043.jpg"], ids["lease.pdf"]
+    best = {photo_loose: (0.30, "x", "text"), photo_close: (0.45, "y", "text"), pdf_loose: (0.30, "z", "text")}
+    kept = search._drop_loose_photo_text(s, [photo_loose, photo_close, pdf_loose], best)
+    assert kept == [photo_close, pdf_loose]
+    assert photo_loose not in best and pdf_loose in best
+    s.close()
+
+
+def test_photo_v2_searches_photos_when_every_word_reads_as_a_kind(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    vi = _pindex(s)
+
+    class _Shots(_Text):
+        def encode(self, text):
+            v = np.zeros(photo.PHOTO_DIM, np.float32)
+            v[1], v[2] = ("screenshot" in text), 1.0     # the beach photo stands in for the screenshot
+            return _unit(v)
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    r = search.search(s, "a screenshot of program code", photo_text=_Shots(), pindex=vi)["results"]
+    assert not any(any("picture" in w for w in x["why"]) for x in r)        # v1: photos never asked
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    r = search.search(s, "a screenshot of program code", photo_text=_Shots(), pindex=vi)["results"]
+    assert r and r[0]["name"] == "IMG_0043.jpg" and any("picture" in w for w in r[0]["why"])
+    s.close()
+
+
+def test_photo_v2_still_lists_every_image_when_the_question_only_asks_for_photos(tmp_path, monkeypatch):
+    """Review 2026-11-22: v2 asked SigLIP "photos" and returned only photos with vectors, all weak."""
+    s = _store(tmp_path)
+    vi = _pindex(s)
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    for q in ("photos", "list all photos", "show me pictures"):
+        r = search.search(s, q, photo_text=_Text(), pindex=vi)["results"]
+        assert sorted(x["name"] for x in r) == ["IMG_0042.jpg", "IMG_0043.jpg", "icon.png"], q
+        assert not any(x["weak"] for x in r), q                     # a listing: every image, all sure
+    s.close()
+
+
+def test_photo_v2_asks_the_meaning_words_when_filters_or_hinglish_were_read(monkeypatch):
+    from nobadfind.query import parse
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search._photo_question(parse("dog photos newest first")) == parse("dog photos newest first").meaning
+    assert search._photo_question(parse("kutte ki photo")) == "kutte"                 # Hinglish: not the sentence
+    assert search._photo_question(parse("a red car")) == "a red car"                  # a plain description
+    assert search._photo_question(parse("a screenshot of program code")) == "a screenshot of program code"
+    assert search._photo_question(parse("photos")) == ""                              # nothing to describe
+
+
+def test_photo_v2_keeps_loose_name_meaning_and_needs_a_photo_model_to_drop_ocr(tmp_path):
+    s = _store(tmp_path)
+    ids = dict(s.q("SELECT name, id FROM files"))
+    photo_id = ids["IMG_0042.jpg"]
+    best = {photo_id: (0.30, "", "name")}                            # "beach_trip.jpg" found for "seaside"
+    assert search._drop_loose_photo_text(s, [photo_id], best) == [photo_id]
+    s.close()

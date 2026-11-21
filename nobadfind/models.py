@@ -71,15 +71,19 @@ CATALOG = [
     {"id": "siglip2-base", "feature": "photo", "name": "SigLIP 2 base", "tier": "best", "licence": "Apache-2.0",
      "source": HF + "google/siglip2-base-patch16-224 (ONNX: onnx-community/siglip2-base-patch16-224-ONNX)",
      "rev": _SIGLIP2_REV, "repo": "onnx-community/siglip2-base-patch16-224-ONNX",
-     "files": {"vision.onnx": ("onnx/vision_model_quantized.onnx", 94553333,
-                               "5f2b401c1a4fc095702a5d45348e17ad46c4f87064085365b43c6e8eaa5c0070"),
+     # vision in fp16 (2026-11-22): the 8-bit vision file blurred the photo vectors (held-out nDCG@10 -0.18 against
+     # SigLIP base); fp16 vision + 8-bit text +0.035 (measurements.md). fp16 loads with basic graph optimization
+     # (photo.open_session). "vectors": 2 makes vectors from the old file be made again (vector_tag).
+     "files": {"vision.onnx": ("onnx/vision_model_fp16.onnx", 186039516,
+                               "a1959f7bd3993a607e48839f6d01e25b876fe76afda301b028b78eef68aabd95"),
                "text.onnx": ("onnx/text_model_quantized.onnx", 283438275,
                              "3a0603d3a00c05a80a6ded4743c16aaac7b1e62cdcc7e362e7ce418659b96400"),
                "tokenizer.json": ("tokenizer.json", 34363039,
                                   "cb9140fae3ac5122c972d37adf83e1248471a38147ad76f8215c8872c6fd8322")},
-     "dim": 768, "style": "siglip2", "languages": ["en", "hi", "multilingual"],
+     "dim": 768, "style": "siglip2", "vectors": 2, "languages": ["en", "hi", "multilingual"],
      "improves": "Finds photos with questions in many languages, Hindi included", "ram_mb": 370,
-     "speed_note": "about the same speed as SigLIP base; a question in about 63 ms", "builtin": False},
+     "speed_note": "about 3 photos a second on 4 threads (SigLIP base about 4); a question in about 90-125 ms",
+     "builtin": False},
     {"id": "windows-ocr", "feature": "ocr", "name": "Windows OCR", "tier": "light", "licence": "Windows",
      "source": "Windows (Windows.Media.Ocr)", "rev": "", "files": {}, "languages": ["the Windows language packs"],
      "improves": "Reads words in photos, screenshots and scans", "ram_mb": 0, "speed_note": "built into Windows",
@@ -108,6 +112,13 @@ def get(mid):
     return _BY_ID.get(mid)
 
 
+def vector_tag(mid):
+    """What photo vectors are stored under (meta pvec_model): the model id, plus "#<n>" once the catalog changed a
+    file that alters the vectors. A different tag means the photos are looked at again."""
+    m = get(mid) or {}
+    return f"{mid}#{m['vectors']}" if m.get("vectors") else mid
+
+
 def ids(feature=None):
     return [m["id"] for m in CATALOG if feature is None or m["feature"] == feature]
 
@@ -127,6 +138,18 @@ def ready(mid, data_dir=DATA_DIR):
     d = model_dir(mid, data_dir)
     return all(os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n)) == size
                for n, (_p, size, _sha) in m["files"].items())
+
+
+def missing_mb(mid, data_dir=DATA_DIR):
+    """MB still to download for this model: only the files not on disk at their exact size (a re-pinned file, e.g.
+    SigLIP 2's vision in 2026-11-22, is 177 MB to fetch, not the model's 481 MB). 0 when ready or built in."""
+    m = get(mid)
+    if m is None or m["builtin"]:
+        return 0
+    d = model_dir(mid, data_dir)
+    left = sum(size for name, (_p, size, _s) in m["files"].items()
+               if not (os.path.isfile(os.path.join(d, name)) and os.path.getsize(os.path.join(d, name)) == size))
+    return round(left / 1048576)
 
 
 def size_mb(m):

@@ -399,8 +399,53 @@ W_PHOTO_ASKED = 1.8
 PHOTO_FILTER_MAX = 200_000         # photos ranked one by one in a filtered photo search
 
 
+def photo_v2():
+    """Photo ranking v2 (measured 2026-11-21, docs/measurements.md "photo ranking v2"): no score floors on photos,
+    SigLIP reads the whole description, loose OCR meaning on photos doesn't count. On by default (maintainer,
+    2026-11-22). Rollback to the earlier ranking, kept unchanged: NOBAD_FIND_PHOTO_V2=0, or the "photo_v1"
+    variant in the eval tools ("photo_v2" forces it on)."""
+    if "photo_v2" in VARIANTS:
+        return True
+    if "photo_v1" in VARIANTS:
+        return False
+    return os.environ.get("NOBAD_FIND_PHOTO_V2", "1") != "0"
+
+
+PHOTO_TEXT_MEANING = 0.38      # = "related" in _closeness
+
+
+def _drop_loose_photo_text(store, meaning, best):
+    """v2: a photo's OCR text counts as a meaning match only when it is at least "related". Measured on 308 judged
+    photos: 38 of 44 "loosely related" OCR matches in the top 10 were wrong (garbled advert text in a stadium photo
+    "loosely" matches gardens, boats and calm lakes). Exact words inside the text still count (_text_hits)."""
+    loose = [fid for fid in meaning
+             if fid in best and best[fid][2] == "text" and best[fid][0] < PHOTO_TEXT_MEANING]
+    if not loose:
+        return meaning
+    images = set()
+    for i in range(0, len(loose), 900):
+        part = loose[i:i + 900]
+        images |= {r[0] for r in store.q(f"SELECT id FROM files WHERE kind = 'image' AND id IN "
+                                         f"({','.join('?' * len(part))})", part)}
+    for fid in images:
+        best.pop(fid, None)
+    return [fid for fid in meaning if fid not in images]
+
+
+def _photo_question(q):
+    """What the photo model is asked. v1: the meaning words ("a screenshot of a phone" -> "phone"). v2: the clean
+    visual description query.parse made (q.visual): the typed description when it is a plain one, never filter
+    words or Hinglish, "" for a collection request ("show me all photos": listed, not ranked)."""
+    if "photo_raw" in VARIANTS or photo_v2():
+        return q.visual
+    return q.meaning or q.text
+
+
 def _photo_hits(store, q, photo_text, pindex, limit):
-    if not photo_text or pindex is None or not pindex.n or not q.text.strip():
+    # v2: the visual description decides, not the leftover words. "a screenshot of program code" reads every word
+    # as a kind (code, image), leaving no terms; v1 then skipped photos and listed all images newest first
+    asked = _photo_question(q) if photo_v2() else q.text
+    if not photo_text or pindex is None or not pindex.n or not asked.strip():
         return [], {}
     model, asked = getattr(pindex, "model", None), getattr(photo_text, "model_id", None)
     if model and asked and model != asked:
@@ -409,7 +454,7 @@ def _photo_hits(store, q, photo_text, pindex, limit):
         return [], {}                                 # "pdf ..." isn't asking about photos
     # the description in the user's own order ("2 boys", "dog on the beach"), not the bag of keywords
     ask = getattr(photo_text, "encode_question", None) or photo_text.encode
-    qvec = ask(q.meaning or q.text)
+    qvec = ask(_photo_question(q))
     where, args = _filters(q)
     among = getattr(pindex, "search_among", None)
     exact_all = pindex.n < getattr(pindex, "FAST_FROM", 0)
@@ -439,6 +484,11 @@ def _photo_hits(store, q, photo_text, pindex, limit):
     if not hits:
         return [], {}
     floor = max(PHOTO_MIN, hits[0][1] - PHOTO_SPREAD, hits[0][1] * PHOTO_RATIO)
+    if "photo_nofloor" in VARIANTS or photo_v2():
+        # SigLIP similarities run on a small scale (right photos measured at 0.02-0.08): a fixed or relative floor
+        # dropped true matches ("a cup of coffee" at 0.03). v2 keeps them in SigLIP's order; photos far below the
+        # best one are still shown as less sure ("weak"), after the sure results
+        floor = -1.0
     hits = [(fid, s) for fid, s in hits if s >= floor]
     if not hits:
         return [], {}
@@ -673,10 +723,15 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
                            "looked at yet. Add a folder to narrow it.")
     lists.append((w_text, texts))
     meaning, best = _meaning_hits(store, q, embedder, vindex, 150)
+    if photo_v2() and meaning and photo_text is not None and pindex is not None and getattr(pindex, "n", 0):
+        # only when the photo channel can find those photos itself (without a photo model, OCR is all there is)
+        meaning = _drop_loose_photo_text(store, meaning, best)
     lists.append((w_meaning, meaning))
     photos, pbest = _photo_hits(store, q, photo_text, pindex, 100)
     # asking for photos ("beach photos", the Images filter): what's in the picture counts most
     lists.append((W_PHOTO_ASKED if "image" in q.kinds else W_PHOTO, photos))
+    if "photo_only" in VARIANTS and photos:         # measurement: the photo channel alone where it has answers
+        lists = [(1.0, photos)]
     # a file named exactly what was typed wins, even when part of it read as a filter ("invoices 2023" is a name,
     # not invoices from 2023)
     exact = _exact_name_hits(store, text, q) if q.has_filters() or q.dropped else []
