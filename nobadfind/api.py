@@ -11,7 +11,7 @@ import threading
 import time
 from collections import deque
 
-from . import embed, jobs, models, ocr, photo, scope, thumbs, wsearch, winapi
+from . import embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
 from . import hardware as hw
 from .const import APP_VER
 from .indexer import NAME_KINDS
@@ -49,7 +49,8 @@ class Api:
         self._refresher = None
         self._clock = time.monotonic      # tests replace it
         self._prev = None                 # (time, cpu_seconds, read_bytes) of the last status() call
-        self._pcpu = {}                   # pid -> (time, cpu_seconds)
+        self._sampler = procs.Sampler()   # Find's own processes, what each is and what it uses
+        self._ui_pids = None              # engine.py: the pipe's clients (Rpc.ui_pids)
         self._progress = {k: deque(maxlen=RATE_WINDOW) for k, _l in PHASES}
         self._rate = DownloadRate()       # the download speed on the model cards
         self._on_hide = None              # engine.py: what hiding the window means for indexing (lifecycle.after_hide)
@@ -337,36 +338,44 @@ class Api:
         st["models"] = self._models(now, st, st["resources"]["processes"])
         st["activity"] = self._activity.recent(50) if self._activity is not None else []
 
-    def _resources(self, now, gpu):
-        names = {os.getpid(): "Main"}
-        labels = {"text reader": "Text reader", "meaning worker": "Meaning worker", "photo worker": "Photo worker"}
+    def _known_roles(self):
+        """{pid: role id} the engine is sure of: its pools' workers and the turbo helper (procs.ROLES)."""
+        known = {}
         try:
-            names.update({pid: labels.get(n, n) for pid, n in self._indexer.worker_names().items()})
+            known.update({pid: procs.WORKER_NAMES.get(n, "other") for pid, n in self._indexer.worker_names().items()})
         except Exception:
             pass
-        pids = jobs.OUTER.pids() if jobs.OUTER is not None else []
-        if os.getpid() not in pids:
-            pids = [os.getpid()] + pids
-        cores = os.cpu_count() or 1
-        procs, seen = [], {}
-        for pid in pids:
-            info = jobs.process_info(pid)
-            last = self._pcpu.get(pid)
-            cpu = 0.0
-            if last and now > last[0]:
-                cpu = max(0.0, min(100.0, (info["cpu_seconds"] - last[1]) / (now - last[0]) / cores * 100))
-            seen[pid] = (now, info["cpu_seconds"])
-            procs.append({"name": names.get(pid, "Helper"), "pid": int(pid), "cpu": round(cpu, 1),
-                          "memory_mb": int(info["memory_mb"])})
-        self._pcpu = seen
+        try:
+            tpid = self._turbo.helper_pid() if self._turbo is not None else 0
+        except Exception:
+            tpid = 0
+        if tpid:
+            known[int(tpid)] = "turbo"
+        return known
+
+    def _resources(self, now, gpu):
+        """Totals and one row per process of Find's own (procs.Sampler): the workers in its job, the UIs, the
+        turbo helper, Python's helpers. Sampled at most every procs.EVERY seconds."""
+        job = jobs.OUTER.pids() if jobs.OUTER is not None else []
+        try:
+            ui = set(self._ui_pids() if self._ui_pids is not None else ())
+        except Exception:
+            ui = set()
+        rows = self._sampler.sample(now, os.getpid(), job, self._known_roles(), ui)
+        out = [{k: v for k, v in r.items() if k != "in_job"} for r in rows]
         use = jobs.OUTER.usage() if jobs.OUTER is not None else {"cpu_seconds": 0.0, "read_bytes": 0}
         prev, self._prev = self._prev, (now, use["cpu_seconds"], use["read_bytes"])
         cpu, read = 0.0, 0.0
         if prev and now > prev[0]:
+            cores = os.cpu_count() or 1
             cpu = max(0.0, min(100.0, (use["cpu_seconds"] - prev[1]) / (now - prev[0]) / cores * 100))
             read = max(0.0, (use["read_bytes"] - prev[2]) / (now - prev[0]) / 1048576)
-        return {"cpu": round(cpu, 1), "memory_mb": sum(p["memory_mb"] for p in procs), "read_mb_s": round(read, 2),
-                "gpu": gpu, "processes": procs}
+        if jobs.OUTER is not None:
+            cpu += sum(r["cpu"] for r in rows if not r["in_job"])      # the UIs run outside the job
+        else:
+            cpu = sum(r["cpu"] for r in rows)
+        return {"cpu": round(min(100.0, cpu), 1), "memory_mb": sum(p["memory_mb"] for p in out),
+                "read_mb_s": round(read, 2), "gpu": gpu, "processes": out}
 
     def _counts(self, now):
         """(total, still to do) for each phase that counts files (cached TOTALS_TTL seconds)."""
@@ -465,8 +474,8 @@ class Api:
         """Cards describe the model doing the work (its worker process), else the in-process query encoder."""
         ix = self._indexer
         emb, pho = getattr(ix, "embedder", None), getattr(ix, "photo_text", None)
-        worker = {p["name"]: p for p in procs}.get
-        mw, pw = worker("Meaning worker"), worker("Photo worker")
+        worker = {p["role"]: p for p in procs}.get
+        mw, pw = worker("meaning"), worker("photo")
         try:
             mdev = ix.meaning_device()
         except Exception:

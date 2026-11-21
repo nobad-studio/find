@@ -85,22 +85,30 @@ class _PidList(ctypes.Structure):
     _fields_ = [("Assigned", wintypes.DWORD), ("InList", wintypes.DWORD), ("Pids", ctypes.c_size_t * _MAX_PIDS)]
 
 
+_EPOCH_100NS = 116444736000000000    # 1601-01-01 to 1970-01-01 in FILETIME units (100 ns)
+
+
 def process_info(pid):
-    """{"pid", "cpu_seconds", "memory_mb"} for one process; zeros when it can't be read."""
-    out = {"pid": int(pid), "cpu_seconds": 0.0, "memory_mb": 0}
+    """{"pid", "cpu_seconds", "memory_mb" (working set), "private_mb" (committed), "started" (Unix time, 0.0 when
+    unknown), "ok" (it could be opened)} for one process; zeros when it can't be read."""
+    out = {"pid": int(pid), "cpu_seconds": 0.0, "memory_mb": 0, "private_mb": 0, "started": 0.0, "ok": False}
     if not winapi.WIN:
         return out
     h = _k.OpenProcess(_QUERY_LIMITED, False, int(pid))
     if not h:
         return out
     try:
+        out["ok"] = True
         ft = [ctypes.c_ulonglong() for _ in range(4)]
         if _k.GetProcessTimes(h, *[ctypes.byref(f) for f in ft]):
             out["cpu_seconds"] = (ft[2].value + ft[3].value) / 1e7      # kernel + user, 100 ns units
+            if ft[0].value > _EPOCH_100NS:
+                out["started"] = (ft[0].value - _EPOCH_100NS) / 1e7
         pmc = _PMC()
         pmc.cb = ctypes.sizeof(_PMC)
         if _psapi.GetProcessMemoryInfo(h, ctypes.byref(pmc), pmc.cb):
             out["memory_mb"] = round(pmc.WorkingSetSize / 1048576)
+            out["private_mb"] = round(pmc.PagefileUsage / 1048576)     # = PrivateUsage, the commit charge
     finally:
         _k.CloseHandle(h)
     return out

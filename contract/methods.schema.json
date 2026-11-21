@@ -1655,25 +1655,74 @@
     },
     "process": {
       "type": "object",
+      "description": "One of NOBAD Find's own processes (never another program's): what it is and what it uses.",
       "properties": {
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "What it is, in plain words (Text reader worker, The search bar)"
+        },
+        "role": {
+          "enum": [
+            "engine",
+            "window",
+            "bar",
+            "text",
+            "meaning",
+            "photo",
+            "turbo",
+            "open_with",
+            "ending",
+            "mp_helper",
+            "client",
+            "other"
+          ]
+        },
+        "about": {
+          "type": "string",
+          "description": "One line on what it does"
         },
         "pid": {
           "type": "integer"
         },
         "cpu": {
-          "type": "number"
+          "type": "number",
+          "description": "Percent of the whole PC since the last sample"
         },
         "memory_mb": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Working set"
+        },
+        "private_mb": {
+          "type": "integer",
+          "description": "Private (committed) memory"
+        },
+        "age_s": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Seconds since it started; null when Windows didn't say"
+        },
+        "readable": {
+          "type": "boolean",
+          "description": "false: Windows didn't let the engine read it (the elevated turbo helper); its numbers are 0"
+        },
+        "note": {
+          "type": "string",
+          "description": "Empty, or a short note: idle, starting, ending, not readable"
         }
       },
       "required": [
         "name",
+        "role",
+        "about",
         "pid",
         "cpu",
-        "memory_mb"
+        "memory_mb",
+        "private_mb",
+        "age_s",
+        "readable",
+        "note"
       ],
       "additionalProperties": false
     },
