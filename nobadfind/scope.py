@@ -296,7 +296,9 @@ def count_under(store, prefixes):
 
 
 def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
-    """scope_info: {scope, roots, categories: [{id, name, why, examples, included, locked, count}]}."""
+    """scope_info: {scope, roots, categories: [{id, name, summary, why, examples, included, locked, names_only,
+    count}]}. summary is one short line for a card, why the full explanation; names_only says whether the files are
+    only listed by name (all: never read; some: browser profiles and app databases inside it; none)."""
     rules = rules or Rules.from_settings(s)
     scope = setting(s, "scope")
     roots = roots_for(s, drives, known)
@@ -310,13 +312,15 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
         return count_under(store, prefixes) if store is not None else None
 
     cats = [
-        {"id": "system", "name": "Windows and programs",
+        {"id": "system", "name": "Windows and programs", "summary": "Windows itself and installed programs.",
+         "names_only": "none",
          "why": "Windows itself and installed programs: hundreds of thousands of files you rarely look for by name. "
                 "Turn off to keep the index small." + ("" if drive_walked else
                                                          " Not part of My files (it only covers your own folders)."),
          "examples": sysdirs[:3] + sysdirs[4:5], "included": rules.system and drive_walked,
          "locked": not drive_walked, "count": count(sysdirs)},
         {"id": "caches", "name": "App data, caches and code folders",
+         "summary": "What apps keep for themselves, temp folders and developer folders.", "names_only": "some",
          "why": "Settings and caches apps keep for themselves (AppData), temp folders and developer folders "
                 "(node_modules, .git, venv). Lots of small files that change all the time. Browser profiles and app "
                 "databases (SQLite, LevelDB) are listed by name only: NOBAD Find never reads what's inside them.",
@@ -324,6 +328,8 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
                       os.path.join("...", "node_modules"), os.path.join("...", ".git")],
          "included": rules.caches, "locked": False, "count": count([real_case(os.path.join(prof, "AppData"))])},
         {"id": "secrets", "name": "Keys and password stores",
+         "summary": "Keys, saved browser passwords, sign-in tokens, password vaults and wallets.",
+         "names_only": "all",
          "why": "SSH and GPG keys and certificates (.pem, .pfx, .key); browser passwords, cookies, history and form "
                 "data (Chrome, Edge, Brave and Opera Login Data, Cookies, History, Web Data, Local State; Firefox "
                 "key4.db, logins.json, cookies.sqlite, places.sqlite, formhistory.sqlite); Windows Credentials, "
@@ -339,6 +345,7 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
                       os.path.join("...", "wallet.dat")],
          "included": rules.secrets, "locked": False, "count": None},
         {"id": "other_profiles", "name": "Other people's files",
+         "summary": "Other accounts on this PC, recycle bins and restore points.", "names_only": "none",
          "why": "Other accounts on this PC (their profiles and recycle bins) and Windows' restore points (System "
                 "Volume Information) are never indexed, not even by the turbo index: they aren't yours to search.",
          "examples": [os.path.join(os.path.dirname(prof), "<another account>"), os.path.join(
@@ -346,11 +353,12 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
          "included": False, "locked": True,
          "count": count([real_case(o) for o in sorted(rules.others)])},
         {"id": "removable", "name": "USB sticks and SD cards",
+         "summary": "Drives you plug in, while they are connected.", "names_only": "none",
          "why": "Drives you plug in, indexed while they're connected (re-read every half hour, so Windows can "
                 "still eject them).",
          "examples": rem or ["E:\\"], "included": bool(setting(s, "index_removable")) and scope != "custom",
          "locked": scope == "custom", "count": count(rem) if rem else None},
-        {"id": "network", "name": "Network drives",
+        {"id": "network", "name": "Network drives", "summary": "Mapped network drives.", "names_only": "none",
          "why": "Mapped network drives. Slow on big shares, and the names leave your PC's disk only as far as the "
                 "share itself.",
          "examples": net or ["Z:\\"], "included": bool(setting(s, "index_network")) and scope != "custom",

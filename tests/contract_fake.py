@@ -362,20 +362,26 @@ class FakeApi:
 SCOPE_INFO = {
     "scope": "whole_pc", "roots": ["C:\\Users\\me", "C:\\"],
     "categories": [
-        {"id": "system", "name": "Windows and programs", "why": "Windows itself and installed programs.",
+        {"id": "system", "name": "Windows and programs",
+         "summary": "Windows itself and installed programs.", "names_only": "none", "why": "Windows itself and installed programs.",
          "examples": ["C:\\Windows", "C:\\Program Files"], "included": True, "locked": False, "count": 412000},
-        {"id": "caches", "name": "App data, caches and code folders", "why": "Settings and caches apps keep.",
+        {"id": "caches", "name": "App data, caches and code folders",
+         "summary": "What apps keep for themselves.", "names_only": "some", "why": "Settings and caches apps keep.",
          "examples": ["C:\\Users\\me\\AppData", "...\\node_modules"], "included": True, "locked": False,
          "count": 230000},
-        {"id": "secrets", "name": "Keys and password stores", "why": "Off by default; names only when on.",
+        {"id": "secrets", "name": "Keys and password stores",
+         "summary": "Keys and password vaults.", "names_only": "all", "why": "Off by default; names only when on.",
          "examples": ["C:\\Users\\me\\.ssh", "...\\vault.kdbx"], "included": False, "locked": False,
          "count": None},
-        {"id": "other_profiles", "name": "Other people's files", "why": "Never indexed, not even by turbo.",
+        {"id": "other_profiles", "name": "Other people's files",
+         "summary": "Other accounts on this PC.", "names_only": "none", "why": "Never indexed, not even by turbo.",
          "examples": ["C:\\Users\\<another account>", "C:\\System Volume Information"], "included": False,
          "locked": True, "count": 0},
-        {"id": "removable", "name": "USB sticks and SD cards", "why": "Indexed while plugged in.",
+        {"id": "removable", "name": "USB sticks and SD cards",
+         "summary": "Drives you plug in.", "names_only": "none", "why": "Indexed while plugged in.",
          "examples": ["E:\\"], "included": False, "locked": False, "count": None},
-        {"id": "network", "name": "Network drives", "why": "Mapped network drives.", "examples": ["Z:\\"],
+        {"id": "network", "name": "Network drives", "summary": "Mapped network drives.",
+         "names_only": "none", "why": "Mapped network drives.", "examples": ["Z:\\"],
          "included": False, "locked": False, "count": None}]}
 
 STATUS_FULL = {

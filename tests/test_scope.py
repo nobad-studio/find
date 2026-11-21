@@ -216,6 +216,8 @@ def test_scope_info_lists_every_category(tmp_path):
     for c in cats.values():
         assert c["name"] and c["why"] and isinstance(c["examples"], list) and c["examples"]
         assert isinstance(c["included"], bool) and isinstance(c["locked"], bool)
+        assert c["summary"] and len(c["summary"]) < 90 and c["names_only"] in ("none", "some", "all")
+    assert cats["secrets"]["names_only"] == "all" and cats["caches"]["names_only"] == "some"
     assert cats["system"]["included"] and not cats["system"]["locked"] and cats["system"]["count"] == 2
     assert cats["secrets"]["included"] is False and "never" in cats["secrets"]["why"].lower()
     assert cats["other_profiles"] == dict(cats["other_profiles"], included=False, locked=True, count=0)

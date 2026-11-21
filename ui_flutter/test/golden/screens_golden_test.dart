@@ -71,6 +71,19 @@ void main() {
         });
       }
 
+      testWidgets('what to index', (tester) async {
+        // tall, so every category card, Reading files and the turbo card are in one picture
+        await pumpApp(tester, engineFor(theme), size: const Size(1180, 1900));
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('What to index').last);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Details').at(2)); // Keys and password stores, opened
+        await shoot(tester, 'what_to_index_1180_$theme');
+      });
+
       testWidgets('Devanagari names and snippets', (tester) async {
         final engine = FakeEngine(
           files: const [
