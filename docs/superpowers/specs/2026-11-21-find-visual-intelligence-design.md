@@ -65,6 +65,20 @@ custom by user pref … not overweight even in bg")
   ETA, what it's doing right now, and its live CPU / GPU / RAM; Settings -> Models shows every downloaded item
   and Remove. No vision work happens that isn't listed there.
 
+- **Window closed, work continues (maintainer, 2026-11-21):** when the user opted into background work, vision
+  work keeps running in the engine's worker processes after the window closes, and the system tray icon (engine-
+  owned, `tray.py`) shows it: a tooltip with what's running ("Understanding photos: 1,240 left"), and menu items
+  Pause vision work / Resume / Open Find. Opted out: closing the window stops vision work (queue kept).
+- **No data leaves the PC:** the only outbound connections are the consented downloads (pinned, hashed); models
+  run fully offline, never call home, and no photo, caption, answer or label is ever sent anywhere. The vision
+  worker has no network code; a test asserts the vision modules import no network library.
+- **Everything stays encrypted:** captions, objects, text, descriptions, labels, prototypes and the usage pattern
+  live only in the SQLCipher index (DPAPI key), never in plain files, logs or temp files (talk answers are not
+  logged; the decoder passes pixels to the model in memory).
+- **Better meaning search:** captions, region text and descriptions are embedded with the active text model into
+  the same vectors as other text, so meaning search ("someone celebrating a birthday") finds photos by what's in
+  them as well as by SigLIP's look.
+
 ## Constraints
 
 - Windows 10/11 x64. Python engine (`NobadFind.exe`, PyInstaller one-folder) + Flutter UI (`nobad_find.exe`)
