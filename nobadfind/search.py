@@ -442,7 +442,10 @@ def _photo_question(q):
 
 
 def _photo_hits(store, q, photo_text, pindex, limit):
-    if not photo_text or pindex is None or not pindex.n or not q.text.strip():
+    # v2: SigLIP's own question decides. "a screenshot of program code" reads every word as a kind (code, image),
+    # leaving no terms; v1 then skipped photos and listed all images newest first
+    asked = _photo_question(q) if photo_v2() else q.text
+    if not photo_text or pindex is None or not pindex.n or not asked.strip():
         return [], {}
     model, asked = getattr(pindex, "model", None), getattr(photo_text, "model_id", None)
     if model and asked and model != asked:

@@ -225,3 +225,21 @@ def test_photo_v2_drops_loose_ocr_meaning_on_photos_but_keeps_documents_and_clos
     assert kept == [photo_close, pdf_loose]
     assert photo_loose not in best and pdf_loose in best
     s.close()
+
+
+def test_photo_v2_searches_photos_when_every_word_reads_as_a_kind(tmp_path, monkeypatch):
+    s = _store(tmp_path)
+    vi = _pindex(s)
+
+    class _Shots(_Text):
+        def encode(self, text):
+            v = np.zeros(photo.PHOTO_DIM, np.float32)
+            v[1], v[2] = ("screenshot" in text), 1.0     # the beach photo stands in for the screenshot
+            return _unit(v)
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    r = search.search(s, "a screenshot of program code", photo_text=_Shots(), pindex=vi)["results"]
+    assert not any(any("picture" in w for w in x["why"]) for x in r)        # v1: photos never asked
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    r = search.search(s, "a screenshot of program code", photo_text=_Shots(), pindex=vi)["results"]
+    assert r and r[0]["name"] == "IMG_0043.jpg" and any("picture" in w for w in r[0]["why"])
+    s.close()

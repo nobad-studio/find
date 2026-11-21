@@ -4,6 +4,37 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: photo set expanded to 556 photos / 155 searches; v2 checked on held-out searches
+
+The set (`C:\Users\aassw\vbench\search`):
+- **Searches:** 95 new ones (people and actions, relationships, mood, English/German/Hindi text, screenshots,
+  attributes, similar scenes, ambiguous, 8 negatives).
+- **Photos:** 251 new photos from Wikimedia Commons; 556 usable after 4 were left out (two historical nudes,
+  left out as a conservative call; one duplicate; one flagged unusable).
+- **Grading:** 15 grading agents, each photo graded against every search.
+- **Split:** fixed before any grading (`split.json`, seed 20261122). Held-out = half of each category of the new
+  searches (49); the original 60 searches can't be a test (v2 was designed on them), so they are training.
+- 35 non-negative searches have fewer than 3 clearly relevant photos; they still count (grade 1 scores in nDCG)
+  but are noisier.
+
+**Bug found and fixed (v2 only):** when every word reads as a file kind ("a screenshot of program code" ->
+kinds code + image, no words left), photos were never asked and all images were listed newest first. In v2,
+SigLIP's own question decides. Found on training searches q114/q116.
+
+nDCG@10 (negatives excluded; questions as typed through `search.search`):
+
+| | all 146 | training 101 | **held-out 45** |
+|---|---|---|---|
+| v1 (rollback) | 0.628 | 0.642 | 0.596 |
+| **v2 (default, with the fix)** | **0.724** | **0.731** | **0.712** |
+| SigLIP alone | 0.745 | 0.756 | 0.723 |
+
+- **v2 gains +0.116 over v1 on held-out searches it never saw.**
+- Mixed-file regression (`eval_search`), v2 vs rollback: identical (keywords 1.0/1.0, photo 1.0/1.0, meaning
+  MRR 0.495, all 0.951); no question changed rank.
+- Search time measured while a caption job ran on the same PC: v1 125 / v2 127 ms p50. Not comparable with
+  the quiet-PC 2.8 / 3.8 ms; re-measure idle.
+
 ## 2026-11-22: Qwen3-VL-2B memory (llama.cpp flags only, 10 photos, Iris Xe Vulkan)
 
 On top of Qwen's "fastest" settings; same two caption questions; RAM = peak private, GPU = peak shared (separate
