@@ -110,4 +110,21 @@ DEFAULTS = {
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.
     "search_history": True,
+    # 2026-11-21: heavy creative apps (video, 3D, audio). While one is in front NOBAD Find works at Light and leaves
+    # the graphics card alone, like for a game. Program file names; the user can edit the list.
+    "creative_apps": [],            # filled from CREATIVE_APPS below
 }
+
+CREATIVE_APPS = [
+    # video editing and encoding
+    "resolve.exe", "adobe premiere pro.exe", "afterfx.exe", "adobe media encoder.exe", "capcut.exe",
+    "shotcut.exe", "kdenlive.exe", "handbrake.exe", "obs64.exe",
+    # 3D and game engines
+    "blender.exe", "3dsmax.exe", "maya.exe", "cinema 4d.exe", "houdinifx.exe", "unity.exe", "unrealeditor.exe",
+    # audio (DAWs)
+    "fl64.exe", "reaper.exe", "ableton live 12 suite.exe", "bitwig studio.exe", "studio one.exe",
+    # photo
+    "photoshop.exe", "lightroom.exe",
+]
+DEFAULTS["creative_apps"] = list(CREATIVE_APPS)
+CREATIVE_MAX = 100              # at most this many names in the list

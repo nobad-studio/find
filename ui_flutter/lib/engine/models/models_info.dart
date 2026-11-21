@@ -236,3 +236,90 @@ class AutoConfig {
     );
   }
 }
+
+/// The live numbers behind [CapabilityState] (contract `capability_state.budget`); null = unknown right now.
+class CapabilityBudget {
+  const CapabilityBudget({
+    this.live = false,
+    this.installedMb,
+    this.freeMb,
+    this.reserveMb = 0,
+    this.usableMb,
+    this.commitPct,
+    this.commitFreeMb,
+    this.gpuKind,
+    this.gpuFreeMb,
+    this.gpuBudgetMb,
+    this.cpu,
+    this.gpu,
+    this.battery = false,
+    this.batterySaver = false,
+  });
+  final bool live;
+  final int? installedMb;
+  final int? freeMb;
+  final int reserveMb;
+  final int? usableMb;
+  final double? commitPct;
+  final int? commitFreeMb;
+
+  /// 'dedicated' (a graphics card's own memory) or 'shared' (an integrated GPU such as Intel Iris Xe), or null.
+  final String? gpuKind;
+  final int? gpuFreeMb;
+  final int? gpuBudgetMb;
+  final double? cpu;
+  final double? gpu;
+  final bool battery;
+  final bool batterySaver;
+
+  static CapabilityBudget fromJson(Object? v) {
+    final m = jMap(v);
+    final kind = jStr(m['gpu_kind']);
+    return CapabilityBudget(
+      live: jBool(m['live']),
+      installedMb: jIntOrNull(m['installed_mb']),
+      freeMb: jIntOrNull(m['free_mb']),
+      reserveMb: jInt(m['reserve_mb']),
+      usableMb: jIntOrNull(m['usable_mb']),
+      commitPct: jNumOrNull(m['commit_pct']),
+      commitFreeMb: jIntOrNull(m['commit_free_mb']),
+      gpuKind: kind.isEmpty ? null : kind,
+      gpuFreeMb: jIntOrNull(m['gpu_free_mb']),
+      gpuBudgetMb: jIntOrNull(m['gpu_budget_mb']),
+      cpu: jNumOrNull(m['cpu']),
+      gpu: jNumOrNull(m['gpu']),
+      battery: jBool(m['battery']),
+      batterySaver: jBool(m['battery_saver']),
+    );
+  }
+}
+
+/// `capability_state` (2026-11-21): which models this PC can run RIGHT NOW, from free memory, commit, graphics
+/// memory, load and battery, not the installed memory alone. A model the engine didn't list is unknown (null).
+class CapabilityState {
+  const CapabilityState({
+    this.canRun = const {},
+    this.why = const {},
+    this.device = const {},
+    this.budget = const CapabilityBudget(),
+  });
+  final Map<String, bool> canRun;
+  final Map<String, String> why;
+  final Map<String, String> device;
+  final CapabilityBudget budget;
+
+  bool? runsNow(String id) => canRun[id];
+
+  static CapabilityState fromJson(Object? v) {
+    final m = jMap(v);
+    return CapabilityState(
+      canRun: {
+        for (final e in jMap(m['can_run']).entries)
+          if (e.value is bool) e.key: e.value as bool,
+      },
+      why: {for (final e in jMap(m['why']).entries) e.key: jStr(e.value)},
+      device: {for (final e in jMap(m['device']).entries) e.key: jStr(e.value)},
+      budget: CapabilityBudget.fromJson(m['budget']),
+    );
+  }
+}

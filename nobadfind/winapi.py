@@ -756,60 +756,76 @@ _PDH_MORE_DATA = 0x800007D2
 _PDH_FMT_DOUBLE = 0x200
 
 
-class GpuSampler:
-    """Busiest 3D engine's utilisation in percent (Windows performance counters); None if unavailable.
+_PDH_FMT_NOCAP100 = 0x8000
 
-    Like CpuSampler, the first call only starts the measurement."""
 
-    def __init__(self):
-        self._query = None
-        self._counter = None
-        self._pdh = None
+def _pdh_dll():
+    pdh = ctypes.WinDLL("pdh")
+    pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_void_p,
+                                          ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+    pdh.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                                                 ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+    pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
+    return pdh
+
+
+class PdhArray:
+    """One Windows performance-counter query over a few English counter paths with `(*)` instances (the pattern
+    GpuSampler always used). read() -> {path: {instance: value}} for the counters that answered (one collect, about
+    1-3 ms); None when the query couldn't be made or nothing answered. Rate counters need two reads: like
+    CpuSampler, the first one only starts the measurement. Nothing here ever raises."""
+
+    def __init__(self, paths, fmt=_PDH_FMT_DOUBLE | _PDH_FMT_NOCAP100):
+        self._pdh, self._query, self._counters, self._fmt = None, None, {}, fmt
         if not WIN:
             return
         try:
-            pdh = ctypes.WinDLL("pdh")
-            pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-            pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_void_p,
-                                                  ctypes.POINTER(ctypes.c_void_p)]
-            pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
-            pdh.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, wintypes.DWORD,
-                                                         ctypes.POINTER(wintypes.DWORD),
-                                                         ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
-            pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
-            q, c = ctypes.c_void_p(), ctypes.c_void_p()
+            pdh = _pdh_dll()
+            q = ctypes.c_void_p()
             if pdh.PdhOpenQueryW(None, None, ctypes.byref(q)) != 0:
                 return
-            if pdh.PdhAddEnglishCounterW(q, _PDH_GPU_PATH, None, ctypes.byref(c)) != 0:
+            for p in paths:
+                c = ctypes.c_void_p()
+                if pdh.PdhAddEnglishCounterW(q, p, None, ctypes.byref(c)) == 0:
+                    self._counters[p] = c
+            if not self._counters:
                 pdh.PdhCloseQuery(q)
                 return
-            self._pdh, self._query, self._counter = pdh, q, c
+            self._pdh, self._query = pdh, q
             pdh.PdhCollectQueryData(q)
         except Exception:
-            self._pdh = self._query = self._counter = None
+            self._pdh = self._query = None
+            self._counters = {}
 
-    def percent(self):
+    def read(self):
         pdh = self._pdh
         if not WIN or pdh is None:
             return None
         try:
             if pdh.PdhCollectQueryData(self._query) != 0:
                 return None
-            size, count = wintypes.DWORD(0), wintypes.DWORD(0)
-            r = pdh.PdhGetFormattedCounterArrayW(self._counter, _PDH_FMT_DOUBLE, ctypes.byref(size),
-                                                 ctypes.byref(count), None)
-            if (r & 0xFFFFFFFF) != _PDH_MORE_DATA or not size.value:
-                return None
-            buf = ctypes.create_string_buffer(size.value)
-            if pdh.PdhGetFormattedCounterArrayW(self._counter, _PDH_FMT_DOUBLE, ctypes.byref(size),
-                                                ctypes.byref(count), buf) != 0:
-                return None
-            items = ctypes.cast(buf, ctypes.POINTER(_PDH_ITEM))
-            vals = [items[i].FmtValue.doubleValue for i in range(count.value)
-                    if items[i].FmtValue.CStatus in (0, 1)]          # valid data / new data
+            out = {}
+            for path, c in self._counters.items():
+                size, count = wintypes.DWORD(0), wintypes.DWORD(0)
+                r = pdh.PdhGetFormattedCounterArrayW(c, self._fmt, ctypes.byref(size), ctypes.byref(count), None)
+                if (r & 0xFFFFFFFF) != _PDH_MORE_DATA or not size.value:
+                    continue
+                buf = ctypes.create_string_buffer(size.value)
+                if pdh.PdhGetFormattedCounterArrayW(c, self._fmt, ctypes.byref(size), ctypes.byref(count), buf) != 0:
+                    continue
+                items = ctypes.cast(buf, ctypes.POINTER(_PDH_ITEM))
+                vals = {}
+                for i in range(count.value):
+                    if items[i].FmtValue.CStatus in (0, 1):            # valid data / new data
+                        name = ctypes.wstring_at(items[i].szName) if items[i].szName else ""
+                        vals[name] = float(items[i].FmtValue.doubleValue)
+                if vals:
+                    out[path] = vals
         except Exception:
             return None
-        return max(0.0, min(100.0, max(vals))) if vals else None
+        return out or None
 
     def __del__(self):
         try:
@@ -817,6 +833,154 @@ class GpuSampler:
                 self._pdh.PdhCloseQuery(self._query)
         except Exception:
             pass
+
+
+class GpuSampler:
+    """Busiest 3D engine's utilisation in percent (Windows performance counters); None if unavailable.
+
+    Like CpuSampler, the first call only starts the measurement."""
+
+    def __init__(self):
+        self._pdh = PdhArray([_PDH_GPU_PATH], fmt=_PDH_FMT_DOUBLE)
+
+    def percent(self):
+        if not WIN:
+            return None
+        vals = (self._pdh.read() or {}).get(_PDH_GPU_PATH)
+        return max(0.0, min(100.0, max(vals.values()))) if vals else None
+
+
+_PDH_DISK_IDLE = "\\PhysicalDisk(*)\\% Idle Time"
+_PDH_DISK_SEC = "\\PhysicalDisk(*)\\Avg. Disk sec/Transfer"
+
+
+class DiskSampler:
+    """How busy the physical disks holding the given drive letters are: read(letters) -> (busy percent, average
+    milliseconds per transfer), the worst disk of those drives, each None when Windows can't say. Instances are
+    named like "0 C: E:"; with no letters (or none that match) every physical disk counts, never "_Total"."""
+
+    def __init__(self):
+        self._pdh = PdhArray([_PDH_DISK_IDLE, _PDH_DISK_SEC])
+
+    @staticmethod
+    def _pick(vals, letters):
+        disks = {k: v for k, v in (vals or {}).items() if k and k != "_Total"}
+        want = {(x or "")[:2].upper() for x in (letters or ()) if x}
+        mine = {k: v for k, v in disks.items() if want & set(k.upper().split()[1:])}
+        return list((mine or disks).values())
+
+    def read(self, letters=()):
+        if not WIN:
+            return None, None
+        data = self._pdh.read() or {}
+        idle = self._pick(data.get(_PDH_DISK_IDLE), letters)
+        sec = self._pick(data.get(_PDH_DISK_SEC), letters)
+        busy = round(max(0.0, min(100.0, 100.0 - min(idle))), 1) if idle else None
+        ms = round(max(0.0, max(sec)) * 1000.0, 1) if sec else None
+        return busy, ms
+
+
+_PDH_PASSIVE = "\\Thermal Zone Information(*)\\% Passive Limit"
+_PDH_THROTTLE = "\\Thermal Zone Information(*)\\Throttle Reasons"
+
+
+class ThermalSampler:
+    """Thermal pressure from Windows' ACPI thermal zones: read() -> the lowest "% Passive Limit" (100 = the zone
+    isn't holding the processor back; lower = Windows is cooling it passively, i.e. throttling), forced below 100
+    when a zone reports a throttle reason. None when the PC has no thermal zone counters (many desktops and some
+    laptops) or they didn't answer: unknown, never "hot". The zone's Temperature isn't used: on many PCs it is a
+    coarse or fixed ACPI value. "% Performance Limit" isn't used either: it moves with the power plan too."""
+
+    def __init__(self):
+        self._pdh = PdhArray([_PDH_PASSIVE, _PDH_THROTTLE])
+
+    def read(self):
+        if not WIN:
+            return None
+        data = self._pdh.read() or {}
+        passive = list((data.get(_PDH_PASSIVE) or {}).values())
+        if not passive:
+            return None
+        lowest = max(0.0, min(100.0, min(passive)))
+        if any(v for v in (data.get(_PDH_THROTTLE) or {}).values()) and lowest >= 100.0:
+            lowest = 99.0                       # a zone says it throttles, even if its limit shows 100
+        return lowest
+
+
+_PDH_GPU_DEDICATED = "\\GPU Adapter Memory(*)\\Dedicated Usage"
+_PDH_GPU_SHARED = "\\GPU Adapter Memory(*)\\Shared Usage"
+
+
+class GpuMemorySampler:
+    """Graphics memory in use on every adapter, all apps together: read() -> {luid: {"dedicated_mb", "shared_mb"}}
+    (luid as "0x00000000_0x0000DD85", lower case, as hardware.adapter_memory names them), None if unavailable.
+    Intel and other integrated GPUs use (almost) only shared memory: their "dedicated" is a small carve-out."""
+
+    def __init__(self):
+        self._pdh = PdhArray([_PDH_GPU_DEDICATED, _PDH_GPU_SHARED])
+
+    @staticmethod
+    def _luid(instance):
+        parts = instance.lower().split("_")          # luid_0x00000000_0x0000dd85_phys_0
+        return f"{parts[1]}_{parts[2]}" if len(parts) >= 3 and parts[0] == "luid" else ""
+
+    def read(self):
+        if not WIN:
+            return None
+        data = self._pdh.read()
+        if not data:
+            return None
+        out = {}
+        for key, path in (("dedicated_mb", _PDH_GPU_DEDICATED), ("shared_mb", _PDH_GPU_SHARED)):
+            for inst, v in (data.get(path) or {}).items():
+                luid = self._luid(inst)
+                if luid:
+                    row = out.setdefault(luid, {"dedicated_mb": 0, "shared_mb": 0})
+                    row[key] += int(max(0.0, v) // 1048576)
+        return out or None
+
+
+class _PerfInfo(ctypes.Structure):
+    _fields_ = [("cb", wintypes.DWORD), ("CommitTotal", ctypes.c_size_t), ("CommitLimit", ctypes.c_size_t),
+                ("CommitPeak", ctypes.c_size_t), ("PhysicalTotal", ctypes.c_size_t),
+                ("PhysicalAvailable", ctypes.c_size_t), ("SystemCache", ctypes.c_size_t),
+                ("KernelTotal", ctypes.c_size_t), ("KernelPaged", ctypes.c_size_t),
+                ("KernelNonpaged", ctypes.c_size_t), ("PageSize", ctypes.c_size_t),
+                ("HandleCount", wintypes.DWORD), ("ProcessCount", wintypes.DWORD), ("ThreadCount", wintypes.DWORD)]
+
+
+def commit_status():
+    """(commit charge in percent of the commit limit, MB Windows can still promise) from GetPerformanceInfo:
+    memory programs were promised (RAM plus the page file). Near 100% new allocations fail, whatever the free RAM.
+    (None, None) if Windows can't say."""
+    if not WIN:
+        return None, None
+    try:
+        pi = _PerfInfo()
+        pi.cb = ctypes.sizeof(pi)
+        psapi = ctypes.WinDLL("psapi")
+        psapi.GetPerformanceInfo.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        if not psapi.GetPerformanceInfo(ctypes.byref(pi), pi.cb) or not pi.CommitLimit or not pi.PageSize:
+            return None, None
+        pct = round(100.0 * pi.CommitTotal / pi.CommitLimit, 1)
+        free = int(max(0, pi.CommitLimit - pi.CommitTotal) * pi.PageSize // 1048576)
+        return max(0.0, min(100.0, pct)), free
+    except Exception:
+        return None, None
+
+
+def battery_saver():
+    """True while Windows' battery saver (energy saver) is on (GetSystemPowerStatus SystemStatusFlag), False when
+    it's off, None if Windows can't say."""
+    if not WIN:
+        return None
+    try:
+        s = _SPS()
+        if not k32.GetSystemPowerStatus(ctypes.byref(s)):
+            return None
+        return bool(s.SystemStatusFlag & 1)
+    except Exception:
+        return None
 
 
 def foreground_exe():

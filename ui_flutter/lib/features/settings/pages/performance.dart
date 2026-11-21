@@ -60,6 +60,12 @@ class PerformancePage extends StatelessWidget {
                   'pause NOBAD Find.',
               [('smart', 'Smart (recommended)'), ('always', 'Always pause'), ('off', "Don't change")],
             ),
+            NamesSetting(
+              'creative_apps',
+              'Creative apps',
+              'Video, 3D and music apps (program file names, separated by commas). While one is in front, NOBAD Find '
+                  'uses 1 worker and leaves the graphics card to it.',
+            ),
             SwitchSetting('pause_on_battery', 'Pause on battery', ''),
             SwitchSetting('pause_on_call', 'Pause during calls', 'While an app uses the microphone or camera.'),
             SwitchSetting(

@@ -175,6 +175,11 @@ class _PcAndTier extends StatelessWidget {
       'Your PC',
       rows: [
         Padding(padding: const EdgeInsets.all(12), child: HardwareTiles(info.pc)),
+        if (m.capability != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: LiveTiles(m.capability!, models: info.models.length),
+          ),
         if (rec.isNotEmpty)
           SettingRow(
             label: 'Recommended for this PC: ${tierLabel(rec)}',
@@ -322,6 +327,14 @@ class _ModelRow extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(x.capableReason, style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4)),
+              )
+            else if (x.capable && m.capability?.runsNow(x.id) == false)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  m.capability!.why[x.id] ?? 'Not now.',
+                  style: NbType.text(12, c.warn, weight: FontWeight.w600, height: 1.4),
+                ),
               ),
             if (x.state == ModelUseState.failed && p == null)
               Padding(
@@ -603,6 +616,61 @@ class _LegacyModelRow extends StatelessWidget {
               },
             ),
       below: m.downloading ? NbMeter(fraction: m.percent / 100) : null,
+    );
+  }
+}
+
+/// "Your PC, now" (capability_state, 2026-11-21): free memory, commit, graphics memory and power right now, and how
+/// many models can run now. Live: the page asks again every few seconds. Unknown readings show a dash.
+class LiveTiles extends StatelessWidget {
+  const LiveTiles(this.cap, {super.key, required this.models});
+  final CapabilityState cap;
+  final int models;
+
+  static String mb(int? v) => v == null ? '–' : (v >= 1024 ? '${(v / 1024).toStringAsFixed(1)} GB' : '$v MB');
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final b = cap.budget;
+    final runs = cap.canRun.values.where((v) => v).length;
+    final shared = b.gpuKind == 'shared';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            b.live ? 'Right now' : 'Right now: not measured yet',
+            style: NbType.text(12.5, c.muted, weight: FontWeight.w600),
+          ),
+        ),
+        TileGrid(
+          min: 130,
+          children: [
+            StatTile(
+              value: mb(b.freeMb),
+              label: 'Memory free${b.installedMb != null ? ' of ${mb(b.installedMb)}' : ''}, '
+                  '${mb(b.reserveMb)} kept for Windows',
+            ),
+            StatTile(
+              value: b.commitPct == null ? '–' : '${b.commitPct!.round()}%',
+              label: 'Of the memory Windows can promise programs',
+            ),
+            StatTile(
+              value: mb(b.gpuFreeMb),
+              label: b.gpuKind == null
+                  ? 'Graphics memory free'
+                  : (shared ? 'Graphics memory free (shared with the PC)' : 'Video memory free'),
+            ),
+            StatTile(
+              value: b.batterySaver ? 'Battery saver' : (b.battery ? 'On battery' : 'Plugged in'),
+              label: 'Power',
+            ),
+            StatTile(value: '$runs of ${cap.canRun.isEmpty ? models : cap.canRun.length}', label: 'Models that can run now'),
+          ],
+        ),
+      ],
     );
   }
 }

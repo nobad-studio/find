@@ -39,8 +39,9 @@ def _release(obj):
     _method(obj, 2)(obj)
 
 
-def adapters():
-    """[(name, dedicated video memory in bytes, flags)] for every graphics adapter DXGI lists; [] if it fails."""
+def adapters(full=False):
+    """[(name, dedicated video memory in bytes, flags)] for every graphics adapter DXGI lists; [] if it fails.
+    full=True: dicts with the shared system memory and the adapter's LUID too (adapter_memory)."""
     if not winapi.WIN:
         return []
     out = []
@@ -61,7 +62,13 @@ def adapters():
                 try:
                     desc = _AdapterDesc1()
                     if _method(ad, 10, ctypes.POINTER(_AdapterDesc1))(ad, ctypes.byref(desc)) == 0:   # GetDesc1
-                        out.append((desc.Description, int(desc.DedicatedVideoMemory), int(desc.Flags)))
+                        if full:
+                            out.append({"name": desc.Description.strip(), "flags": int(desc.Flags),
+                                        "dedicated_mb": int(desc.DedicatedVideoMemory) // 1048576,
+                                        "shared_mb": int(desc.SharedSystemMemory) // 1048576,
+                                        "luid": f"0x{desc.LuidHigh & 0xFFFFFFFF:08x}_0x{desc.LuidLow:08x}"})
+                        else:
+                            out.append((desc.Description, int(desc.DedicatedVideoMemory), int(desc.Flags)))
                 finally:
                     _release(ad)
         finally:
@@ -70,6 +77,44 @@ def adapters():
         log(f"graphics card check failed: {type(e).__name__}", "warn")
         return []
     return out
+
+
+INTEGRATED_MB = 512      # less dedicated memory than this: an integrated GPU, which lives on shared memory
+_mem_cache = None
+
+
+def adapter_memory():
+    """The real graphics adapter with the most video memory, for the live GPU memory budget:
+    {"name", "luid", "dedicated_mb", "shared_mb", "integrated"} (dedicated_mb / shared_mb = what Windows gives it,
+    its budget; integrated: an iGPU such as Intel Iris Xe, which uses shared memory only). None if there is none.
+    Read once per run, like scan()."""
+    global _mem_cache
+    with _lock:
+        if _mem_cache is None:
+            try:
+                real = [a for a in adapters(full=True) if not a["flags"] & _DXGI_SOFTWARE]
+            except Exception:
+                real = []
+            best = max(real, key=lambda a: (a["dedicated_mb"], a["shared_mb"])) if real else None
+            _mem_cache = [dict(best, integrated=best["dedicated_mb"] < INTEGRATED_MB) if best else None]
+        return _mem_cache[0]
+
+
+def gpu_memory_free(adapter, used):
+    """Free graphics memory now for the adapter (adapter_memory) from a GpuMemorySampler reading: {"kind":
+    "dedicated" | "shared", "free_mb", "used_mb", "budget_mb"}, or None when either is unknown. An integrated GPU
+    is judged on its shared memory (system RAM it may use), a discrete one on its dedicated memory."""
+    if not adapter or not used:
+        return None
+    row = used.get(adapter.get("luid", ""))
+    if row is None:
+        return None
+    kind = "shared" if adapter.get("integrated") else "dedicated"
+    budget = int(adapter.get(f"{kind}_mb") or 0)
+    if budget <= 0:
+        return None
+    use = int(row.get(f"{kind}_mb") or 0)
+    return {"kind": kind, "free_mb": max(0, budget - use), "used_mb": use, "budget_mb": budget}
 
 
 def _gpu():

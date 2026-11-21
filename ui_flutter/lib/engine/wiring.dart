@@ -155,6 +155,8 @@ class PipeEngine implements EngineApi {
   @override
   Future<ModelsInfo> models() => _pipe.models();
   @override
+  Future<CapabilityState> capabilityState() => _pipe.capabilityState();
+  @override
   Future<ModelUse> modelUse(String feature, String id) => _pipe.modelUse(feature, id);
   @override
   Future<ActionResult> modelDownload(String id) => _pipe.modelDownload(id);
