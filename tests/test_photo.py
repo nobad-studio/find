@@ -183,10 +183,10 @@ def test_a_photo_search_says_what_it_needs(tmp_path, monkeypatch):
 def test_photo_v2_keeps_low_scoring_photos_in_siglips_order_and_marks_them_less_sure(tmp_path, monkeypatch):
     s = _store(tmp_path)
     vi = _pindex(s)
-    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
-    today = [x["name"] for x in search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]]
-    assert today == ["IMG_0042.jpg"]                         # today: the beach photo is under the floor, dropped
-    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "1")
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")           # rollback: the earlier ranking, unchanged
+    v1 = [x["name"] for x in search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]]
+    assert v1 == ["IMG_0042.jpg"]                            # v1: the beach photo is under the floor, dropped
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)  # default: v2
     r = search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]
     assert [x["name"] for x in r] == ["IMG_0042.jpg", "IMG_0043.jpg"]
     assert not r[0]["weak"] and r[1]["weak"]                 # kept, after the sure one, shown as less sure
@@ -196,11 +196,24 @@ def test_photo_v2_keeps_low_scoring_photos_in_siglips_order_and_marks_them_less_
 
 def test_photo_v2_asks_siglip_the_whole_description_unless_it_has_a_date_or_place(monkeypatch):
     from nobadfind.query import parse
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert search._photo_question(parse("a screenshot of a phone")) == "phone"            # rollback (v1)
     monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
-    assert search._photo_question(parse("a screenshot of a phone")) == "phone"            # today
-    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "1")
     assert search._photo_question(parse("a screenshot of a phone")) == "a screenshot of a phone"
     assert search._photo_question(parse("beach photos from last week")) == parse("beach photos from last week").meaning
+
+
+def test_photo_v2_is_on_by_default_and_both_rollback_switches_work(monkeypatch):
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search.photo_v2()
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert not search.photo_v2()
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    monkeypatch.setattr(search, "VARIANTS", {"photo_v1"})
+    assert not search.photo_v2()
+    monkeypatch.setattr(search, "VARIANTS", {"photo_v2"})
+    monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")
+    assert search.photo_v2()                                 # the eval tools' explicit variant wins
 
 
 def test_photo_v2_drops_loose_ocr_meaning_on_photos_but_keeps_documents_and_close_matches(tmp_path):

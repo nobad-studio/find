@@ -400,10 +400,15 @@ PHOTO_FILTER_MAX = 200_000         # photos ranked one by one in a filtered phot
 
 
 def photo_v2():
-    """Photo ranking v2 (measured 2026-11-21, docs/measurements.md "photo ranking v2"): no score floors on photos
-    and SigLIP reads the whole description. Off until the maintainer turns it on (NOBAD_FIND_PHOTO_V2=1, or the
-    "photo_v2" variant in the eval tools); today's ranking is kept as it is."""
-    return "photo_v2" in VARIANTS or os.environ.get("NOBAD_FIND_PHOTO_V2") == "1"
+    """Photo ranking v2 (measured 2026-11-21, docs/measurements.md "photo ranking v2"): no score floors on photos,
+    SigLIP reads the whole description, loose OCR meaning on photos doesn't count. On by default (maintainer,
+    2026-11-22). Rollback to the earlier ranking, kept unchanged: NOBAD_FIND_PHOTO_V2=0, or the "photo_v1"
+    variant in the eval tools ("photo_v2" forces it on)."""
+    if "photo_v2" in VARIANTS:
+        return True
+    if "photo_v1" in VARIANTS:
+        return False
+    return os.environ.get("NOBAD_FIND_PHOTO_V2", "1") != "0"
 
 
 PHOTO_TEXT_MEANING = 0.38      # = "related" in _closeness

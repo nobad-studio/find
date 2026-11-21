@@ -4,6 +4,23 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: Qwen3-VL-2B memory (llama.cpp flags only, 10 photos, Iris Xe Vulkan)
+
+On top of Qwen's "fastest" settings; same two caption questions; RAM = peak private, GPU = peak shared (separate
+counters that overlap on an integrated GPU; never added).
+
+| Flags | peak RAM | peak GPU | compute a photo | answers same as A |
+|---|---|---|---|---|
+| A: as in the 308-photo run (`-c 4096`, ubatch 512) | 3,056 MB | 2,532 MB | 5.7 s | - |
+| **B: `-c 1024 -ub 256`** | **2,411 MB (-21 %)** | **2,060 MB (-19 %)** | 5.5 s | **10/10 captions, 10/10 objects** |
+| C: B + `-lm none` (no memory map) | 2,415 MB | 2,053 MB | 5.0 s | 10/10 |
+| D: B + `--no-mmproj-offload` (vision encoder on CPU) | 2,378 MB | 1,588 MB | 8.3 s | 6/10 captions |
+| E: B + `--no-host` | 3,820 MB | 1,835 MB | 4.9 s | 10/10 |
+
+- **B is free:** about a fifth less of both, identical answers, same speed. Qwen's talk settings should carry it.
+- D trades 0.5 GB of GPU memory for 50 % more time and different answers: only for a GPU short of memory.
+- E moves memory from the GPU to process RAM (worse overall on a shared-memory GPU).
+
 ## 2026-11-22: memory and speed of photo ranking v2, and leaner caption runs
 
 **v2 adds no model and no memory.** What a photo search uses, measured on the reference PC:
