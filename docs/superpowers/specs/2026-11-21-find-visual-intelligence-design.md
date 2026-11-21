@@ -360,7 +360,7 @@ hand-set weights (1.3 / 1.0 / 0.8 / 1.0), tuned on a synthetic file corpus. Phot
 - **Gate:** it ships only if it beats both today's RRF and SigLIP alone (baseline 2026-11-21: 0.755 and 0.864
   nDCG@10, `docs/measurements.md`; today's fusion is worse than its own photo channel) on recall@10 and nDCG@10 on the photo search test set: 60
   searches x about 300 openly licensed Wikimedia Commons photos graded 0/1/2 from what is visible
-  (`C:\Users\aassw\vbench\search\`, outside the repo; licences in `photos\sources.json`).
+  (`%USERPROFILE%\vbench\search\`, outside the repo; licences in `photos\sources.json`).
 
 ## Still open
 

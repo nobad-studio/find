@@ -83,7 +83,7 @@ while a Qwen caption job ran on the GPU (absolute times inflated for every row).
 
 ## 2026-11-22: photo set expanded to 556 photos / 155 searches; v2 checked on held-out searches
 
-The set (`C:\Users\aassw\vbench\search`):
+The set (`%USERPROFILE%\vbench\search`):
 - **Searches:** 95 new ones (people and actions, relationships, mood, English/German/Hindi text, screenshots,
   attributes, similar scenes, ambiguous, 8 negatives).
 - **Photos:** 251 new photos from Wikimedia Commons; 556 usable after 4 were left out (two historical nudes,
