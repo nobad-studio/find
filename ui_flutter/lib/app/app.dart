@@ -13,6 +13,7 @@ import '../features/bar/bar_window.dart';
 import '../features/shell/shell.dart';
 import '../platform/demo.dart';
 import '../platform/window.dart';
+import '../state/notifications_controller.dart';
 import '../state/recent_searches.dart';
 import '../state/search_controller.dart';
 import '../state/settings_controller.dart';
@@ -68,6 +69,7 @@ class _NobadFindAppState extends State<NobadFindApp> {
     ..onUpdateFound = (u) => toasts.show('NOBAD Find ${u.latest} is available. Settings > About installs it.');
   late final find = FindController(widget.engine, toasts: toasts, recent: widget.recent);
   late final nav = AppNav(widget.startPage);
+  late final notifications = widget.mode == AppMode.main ? NotificationsController(widget.engine) : null;
   bool _glass = false;
   (bool, bool)? _applied;
   late bool _motionOff = widget.reduceMotion ?? systemAnimationsOff();
@@ -152,6 +154,7 @@ class _NobadFindAppState extends State<NobadFindApp> {
     widget.engine.link.removeListener(_relink);
     find.dispose();
     status.dispose();
+    notifications?.dispose();
     settings.dispose();
     toasts.dispose();
     nav.dispose();
@@ -183,6 +186,7 @@ class _NobadFindAppState extends State<NobadFindApp> {
               nav: nav,
               window: widget.window,
               version: appVersion,
+              notifications: notifications,
               child: MediaQuery(
                 data: MediaQuery.of(context).copyWith(disableAnimations: _motionOff),
                 child: TickerMode(

@@ -5,7 +5,8 @@
 - `level` when the work level, its reason or the pause changes; `download` when a model download moves on.
   Both are noticed by a cheap look every TICK seconds at values the engine already holds.
 - `activity` for each entry added (Activity.listen), sent by the ticker: the governor thread that adds an entry
-  never waits for a slow client. `show` / `here` / `notice` / `quitting` go out when they happen.
+  never waits for a slow client; `notification` (notify.Center.listen) the same way. `show` / `here` / `notice` /
+  `quitting` go out when they happen.
 - A `notice` nobody hears waits (the last MAX_NOTICES) and goes to the first client that subscribes to notices.
 """
 import threading
@@ -16,7 +17,7 @@ from ..api import DownloadRate
 from ..log import log
 
 EVENTS = {"status", "status_full", "level", "activity", "download", "notice", "show", "here", "quitting",
-          "turbo", "models", "update"}
+          "turbo", "models", "update", "notification"}
 MODELS_EVERY = 1.0                 # seconds between looks for a changed models answer (it reads the model folders)
 STATUS_EVERY = 2.0                 # seconds between status events
 TICK = 0.5                         # seconds between looks for level and download changes
@@ -41,6 +42,7 @@ class Events:
         self._rate = DownloadRate()
         self._notices = deque(maxlen=MAX_NOTICES)
         self._activity = deque(maxlen=50)          # entries added since the last tick
+        self._notifications = deque(maxlen=50)     # notifications posted since the last tick (notify.Center)
         self.on_show = None                        # called before each show event (Server.allow_foreground)
 
     # ----- subscriptions -----
@@ -81,6 +83,10 @@ class Events:
     def activity(self, item):
         """Activity.listen: called on the thread that added the entry; the next tick sends it."""
         self._activity.append({"t": float(item["t"]), "kind": str(item["kind"]), "text": str(item["text"])})
+
+    def notification(self, item, unread):
+        """notify.Center.listen: called on the posting thread; the next tick sends it."""
+        self._notifications.append({"item": dict(item), "unread": int(unread)})
 
     def show(self, what, text=None):
         if self.on_show is not None:
@@ -164,6 +170,10 @@ class Events:
                 item = self._activity.popleft()
                 if "activity" in wanted:
                     out.append(("activity", item))
+            while self._notifications:
+                n = self._notifications.popleft()
+                if "notification" in wanted:
+                    out.append(("notification", n))
             if "level" in wanted or "status" in wanted:
                 self._safe("level", self._step_level, wanted, out)
             if "download" in wanted:

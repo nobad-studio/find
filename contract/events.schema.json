@@ -147,6 +147,24 @@
     "update": {
       "description": "An update was found, is downloading (got of size at bps, at most 4 a second), verifying (size and SHA-256), ready, installing, or failed. Same shape as update_state.",
       "$ref": "methods.schema.json#/$defs/update_state"
+    },
+    "notification": {
+      "description": "A new notification was posted (sent on the next tick); unread is the count with it.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "methods.schema.json#/$defs/notification"
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "item",
+        "unread"
+      ],
+      "additionalProperties": false
     }
   },
   "$defs": {

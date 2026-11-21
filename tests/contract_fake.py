@@ -36,8 +36,24 @@ class FakeApi:
         self.turbo = {"available": True, "enabled": False, "running": False, "error": "", "helper": "not_installed",
                       "volumes": [{"drive": "C:\\", "ntfs": True, "files": 0, "usn_ok": False, "last_scan": None}]}
 
+        from nobadfind.notify import Center
+        # the real notification center, in memory, on a fixed clock, with no Windows toast
+        self.notify = Center(self.settings, toast=None, clock=lambda: 1763400000.0, run=lambda fn: fn())
+
     def _note(self, *call):
         self.calls.append(call)
+
+    # notifications
+    def notifications_list(self):
+        return self.notify.list()
+
+    def notifications_read(self, ids=None, all=False):
+        self._note("notifications_read", ids, all)
+        return self.notify.read(ids=ids, all=all)
+
+    def notifications_clear(self):
+        self._note("notifications_clear")
+        return self.notify.clear()
 
     # search
     def search(self, text, filters=None, client=None, channel="main"):
@@ -462,6 +478,7 @@ class Engine:
         self.events = Events(lambda: [self.conn], lambda c: None, self.api, every=2.0)
         self.activity.listen(self.events.activity)
         self.api.on_quit = self.events.quitting
+        self.api.notify.listen(self.events.notification)
         self.methods = handlers.methods(self.api, self.events,
                                         lambda: {"app": "NOBAD Find", "version": "0.0.0-contract", "pid": 4242})
 
@@ -519,5 +536,8 @@ class Engine:
                 u._progress(t["got"])
             elif "state" in t:
                 u._set(t["state"])
+        elif do == "notify":
+            self.api.notify.post(t["kind"], t["title"], t["body"], t.get("severity", "info"),
+                                 action=t.get("action"), key=t.get("key"), detail=t.get("detail", ""))
         else:
             raise ValueError(f"unknown engine trigger {do!r}")
