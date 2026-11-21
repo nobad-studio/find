@@ -48,6 +48,12 @@ class ModelsController extends ChangeNotifier {
   LanguageFocus? _suggested;
   bool _suggestedRead = false;
 
+  CapabilityState? _cap;
+  int _beats = 0;
+
+  /// What this PC can run RIGHT NOW (`capability_state`); null from an older engine or before the first answer.
+  CapabilityState? get capability => _cap;
+
   ModelsLoad get load => _load;
   ModelsInfo get info => _info;
 
@@ -82,6 +88,7 @@ class ModelsController extends ChangeNotifier {
     try {
       _info = await engine.models();
       _load = ModelsLoad.ready;
+      unawaited(refreshCapability());
     } on EngineOffline {
       _load = ModelsLoad.offline;
     } on RpcException catch (e) {
@@ -93,8 +100,26 @@ class ModelsController extends ChangeNotifier {
     _changed();
   }
 
+  /// Ask the engine again what runs now. An older engine (-32601) or a dropped pipe: no live part, the installed
+  /// facts stay.
+  Future<void> refreshCapability() async {
+    try {
+      _cap = await engine.capabilityState();
+    } on Object {
+      _cap = null;
+    }
+    _changed();
+  }
+
+  /// The live part follows the engine's status beat (one `status` event every 2 s): asked again every
+  /// [capabilityEveryBeats] beats, about every 6 s.
+  static const capabilityEveryBeats = 3;
+
   void _event(EngineEvent e) {
     switch (e) {
+      case StatusEvent():
+        if (_load == ModelsLoad.ready && ++_beats % capabilityEveryBeats == 0) unawaited(refreshCapability());
+        return;
       case ModelsEvent(:final info):
         _info = info;
         _load = ModelsLoad.ready;

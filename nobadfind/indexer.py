@@ -44,6 +44,7 @@ IDLE_AFTER = 120                 # seconds without keyboard or mouse input: you'
 
 STATS_EVERY = 30                 # seconds between index counts while watching (_refresh_stats)
 NAME_BATCH = 2000                # rows per batch of the names walk (Walker's default)
+IO_SLOW_WAIT = 0.5               # seconds the names walk waits per batch while the disk is slow (Decision.io_slow)
 
 
 def drive_root(path):
@@ -497,13 +498,16 @@ class Indexer:
                     self._wait_while_paused()
                 else:
                     self._breathe()
+                    if self._io_slow():
+                        self.stop_ev.wait(IO_SLOW_WAIT)     # the disk is slow: the walk gives it room
 
         read, caught = set(), set()
         if self.turbo is not None and not only:
             read, caught = self.turbo.scan(roots, gen, batch, self.stop_ev)
         covered = read | caught
         walk = [r for r in roots if drive_root(r) not in covered]
-        w = Walker(walk, exclude=self.settings.get("exclude"), threads=self.status["plan"]["walk_threads"],
+        threads = max(1, self._op_limit("walk", self.status["plan"]["walk_threads"]))
+        w = Walker(walk, exclude=self.settings.get("exclude"), threads=threads,
                    gen=gen, on_batch=batch, stop=self.stop_ev, rules=self.rules())
         w.run()
         if self.stop_ev.is_set():
@@ -582,7 +586,8 @@ class Indexer:
                 # after a reader crashed, the files that were being read run one at a time to find the culprit
                 careful = bool(self._suspects)
                 if self.governor is not None:
-                    limit = 1 if careful else max(1, workers_for(level, plan_))
+                    limit = 1 if careful else max(1, min(workers_for(level, plan_),
+                                                         self._op_limit("readers", size)))
                 else:
                     limit = 1 if careful else (full if away else gentle)
                 if careful:
@@ -834,7 +839,8 @@ class Indexer:
         if not self._vectors_in_worker:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
-        gpu = level == FULL
+        # not with battery saver on or a creative app in front (Decision.gpu): processor only
+        gpu = level == FULL and (self.governor is None or getattr(self.governor.decision, "gpu", True))
         plan_now = self.status.get("plan") or {}
         if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid
                                         or getattr(self, "_mpool_plan", None) != plan_now.get("model_threads")):
@@ -924,6 +930,7 @@ class Indexer:
         level = self.governor.decision.level if self.governor is not None else FULL
         most = plan_.get("model_threads") or max(1, (os.cpu_count() or 2) // 2)
         threads = min(most, max(1, workers_for(level, plan_))) if plan_ else 2      # as the meaning worker
+        threads = max(1, min(threads, self._op_limit("photo", threads)))
         pool = cf.ProcessPoolExecutor(max_workers=1, initializer=photo.init_worker, initargs=(threads,))
         self._photo_pool = pool
         made_with = self.photo_model                 # every batch of this pass is made with this model
@@ -1072,6 +1079,17 @@ class Indexer:
             self.vindex.load(self.store)
         if self.photo_text and self.pindex.n > 1.3 * self.status.get("photo_vectors", 0) + 200:
             self.pindex.load(self.store)            # photos that changed were added again
+
+    def _op_limit(self, op, default):
+        """The governor's effective limit for one operation (governor.op_limits: walk, readers, photo, vision),
+        or default without a governor."""
+        row = (getattr(self.governor, "limits", None) or {}).get(op) or {}
+        v = row.get("effective")
+        return v if isinstance(v, int) and not isinstance(v, bool) else default
+
+    def _io_slow(self):
+        d = getattr(self.governor, "decision", None)
+        return bool(getattr(d, "io_slow", False))
 
     def _breathe(self):
         if not self._away():

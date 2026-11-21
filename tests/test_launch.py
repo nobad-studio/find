@@ -148,8 +148,12 @@ def test_watchdog_hooks_are_safe_before_the_pieces_exist():
     class Ix:
         def worker_names(self):
             return {7: "text reader"}
+    assert hooks["plan"]() is None and hooks["drives"]() == []
     pieces["indexer"] = Ix()
     assert hooks["names"]() == {7: "text reader"}
+    Ix.status = {"plan": {"walk_threads": 4}}
+    Ix.drive_list = [{"root": "C:\\", "present": True}, {"root": "E:\\", "present": False}]
+    assert hooks["plan"]() == {"walk_threads": 4} and hooks["drives"]() == ["C:\\"]
 
 
 def test_logging_starts_before_the_job_setup():

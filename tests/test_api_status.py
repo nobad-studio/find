@@ -406,3 +406,26 @@ def test_the_first_status_never_waits_for_the_counts(tmp_path):
     ph = {p["id"]: p for p in a.status()["phases"]}
     assert ph["text"]["total"] == 2
     s.close()
+
+
+def test_status_shows_the_governors_limits_and_a_default_without_them(tmp_path):
+    a, s = make(tmp_path)
+    assert set(a.status()["limits"]) == {"walk", "readers", "photo", "vision"}          # Gov has no limits yet
+    a._governor.limits = {"walk": {"effective": 3}}
+    assert a.status()["limits"] == {"walk": {"effective": 3}}
+    s.close()
+
+
+def test_capability_state_uses_the_governors_last_reading(tmp_path, monkeypatch):
+    from nobadfind.governor import Sample
+    monkeypatch.setattr(hardware, "scan", lambda: {"ram_gb": 15.7, "cores": 8, "threads": 16, "directml": False,
+                                                   "vram_gb": 0.1, "disk_free_gb": 100.0})
+    a, s = make(tmp_path)
+    r = a.capability_state()
+    assert r["budget"]["live"] is False and all(r["can_run"].values())       # no reading yet: installed facts
+    a._governor.sample = Sample(t=0.0, cpu=20.0, gpu=None, mem_load=80, free_mb=1700, find_cpu=0.0, foreground="",
+                                game=False, presentation=False, hung=False, battery=False, call=False, idle_s=0.0)
+    r = a.capability_state()
+    assert r["budget"]["free_mb"] == 1700 and r["can_run"]["multilingual-e5-base"] is False
+    assert r["can_run"]["windows-ocr"] is True
+    s.close()
