@@ -4,6 +4,30 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: caption enrichment, pre-registered held-out test (`tools/heldout_photo_rank.py`): FAILED
+
+Rules and candidates committed before grading (143b077). SigLIP base features; captions from SmolVLM2-500M and
+Qwen3-VL-2B (Qwen with `-c 1024 -ub 256` for the new photos) on all 556 photos. 101 training searches,
+45 held-out, 4 held-out negatives.
+
+| | train CV nDCG@10 | **held-out nDCG@10** | held-out recall@10 |
+|---|---|---|---|
+| SigLIP alone | - | 0.723 | 0.815 |
+| H0 calibrated SigLIP + b/w rule | 0.756 | 0.716 | 0.807 |
+| H1 + SmolVLM2 captions | 0.757 | 0.703 | 0.769 |
+| **H2 + Qwen captions (chosen by training CV)** | **0.773** | **0.733** | 0.794 |
+| H3 query-dependent weights | 0.668 | 0.704 | 0.804 |
+
+- **H2 vs SigLIP alone, held-out: +0.010 (CI -0.037 to +0.058), 21 better / 19 worse: not supported.**
+- Category regression: similar scenes -0.059 (CI -0.113 to -0.004). Text +0.124 and mood +0.080 (CIs cross 0).
+- Negatives: H2 more confident on searches with no answer (top-3 calibrated probability 0.321 vs H0 0.175).
+- **Decision (maintainer rules): captions stay out of the default ranking.**
+- H3 is far below H0 even in training CV (0.668 vs 0.756): likely a defect in how its channels are split, not a
+  property of query-dependent weighting. Not re-tested on these held-out searches (used once now); a fixed H3
+  needs fresh held-out searches.
+- Qwen peak shared GPU memory read 7,347 MB over this 252-photo run (2,060 MB in the 10-photo test with the
+  same flags); cause not established yet (growth over the run, or the counter including another process).
+
 ## 2026-11-22: SigLIP 2 base vs SigLIP base, side by side (separate indexes; nothing replaced)
 
 Same 556 photos / 155 searches, each model in its own throwaway index (`eval_photo_search --photo-model
