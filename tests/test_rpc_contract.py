@@ -138,6 +138,8 @@ BAD = {
     "turbo_helper": [{"action": "delete"}, {"action": 1}, {}],
     "subscribe": [{"events": "status"}, {"events": [1]}, {}],
     "unsubscribe": [{"events": "status"}, {}],
+    "notifications_read": [{}, {"ids": "1"}, {"ids": [True]}, {"ids": [1.5]}, {"all": False}, {"all": 1},
+                           {"ids": [1], "all": True}],
     "ui_shown": [{"window": "desktop"}],
     "ui_hidden": [{"window": 3}],
 }

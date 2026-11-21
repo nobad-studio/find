@@ -1,11 +1,14 @@
-/// Surfaces and read-outs: panels, page and section titles, stat tiles, meters, notices, the toast.
+/// Surfaces and read-outs: panels, page and section titles (with the notification bell), stat tiles, meters, notices,
+/// the toast.
 library;
 
 import 'package:flutter/widgets.dart';
 
+import '../app/scope.dart';
 import '../app/theme/colors.dart';
 import '../app/theme/tokens.dart';
 import '../app/theme/typography.dart';
+import '../features/notifications/notification_bell.dart';
 import '../state/toast_controller.dart';
 import 'controls.dart';
 import 'glass.dart';
@@ -124,6 +127,7 @@ class PageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    final bell = AppScope.maybeOf(context)?.notifications; // the main window's bell, on every page
     return Padding(
       padding: padding,
       child: Row(
@@ -142,6 +146,10 @@ class PageHeader extends StatelessWidget {
             ),
           ),
           ?trailing,
+          if (bell != null) ...[
+            if (trailing != null) const SizedBox(width: NbSpace.x2),
+            NotificationBell(controller: bell),
+          ],
         ],
       ),
     );

@@ -34,7 +34,7 @@ import threading
 import time
 from ctypes import wintypes
 
-from . import ntfs, turbosvc, winapi
+from . import notify, ntfs, turbosvc, winapi
 from .kinds import kind_of
 from .log import log
 from .walker import Walker
@@ -295,6 +295,11 @@ class Turbo:
                 if why == turbosvc.OTHER_ACCOUNT else NOT_SET_UP)
             if why:
                 log(f"turbo: {why}")
+            if st == turbosvc.NEEDS_UPDATE:
+                notify.post("turbo_needs_ok", "Turbo needs your OK",
+                            "The turbo index helper changed with this version of NOBAD Find. Until you OK the "
+                            "update (Windows asks once), NOBAD Find uses its normal folder walk.", "warning",
+                            action="open_turbo", key="turbo-needs-ok", every=86400)
             return self._failed(True)
         try:
             self.setup.install()

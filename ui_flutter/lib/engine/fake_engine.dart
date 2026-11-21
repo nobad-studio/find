@@ -872,6 +872,35 @@ class FakeEngine implements EngineApi {
     return _ok;
   });
 
+  // ---------- notifications: the bell ----------
+  /// Newest first, as the engine keeps them (tests add some with [notify]).
+  final notifications = <AppNotification>[];
+  int get _unread => notifications.where((n) => !n.read).length;
+
+  /// The engine posted one: it goes on top and the `notification` event goes out.
+  void notify(AppNotification n) {
+    notifications.insert(0, n);
+    emit(NotificationEvent(n, unread: _unread));
+  }
+
+  @override
+  Future<NotificationList> notificationsList() =>
+      _answer('notifications_list', () => NotificationList(List.of(notifications), _unread));
+
+  @override
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false}) => _answer('notifications_read', () {
+    for (var i = 0; i < notifications.length; i++) {
+      if (all || ids.contains(notifications[i].id)) notifications[i] = notifications[i].asRead();
+    }
+    return _unread;
+  });
+
+  @override
+  Future<ActionResult> notificationsClear() => _answer('notifications_clear', () {
+    notifications.clear();
+    return _ok;
+  });
+
   @override
   void dispose() {
     _ticker?.cancel();

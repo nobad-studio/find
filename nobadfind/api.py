@@ -57,6 +57,7 @@ class Api:
         self._on_show = None              # engine.py: the UI's main window came up (indexing resumes)
         self._folder_dialog = None        # engine.py: Windows' own folder dialog
         self._turbo = None                # engine.py: turbo.Turbo, the optional elevated NTFS index helper
+        self._notify = None               # engine.py: notify.Center, the notifications (None: none kept)
         self._timer, self._exit = threading.Timer, os._exit     # tests replace them
 
     # ---------- search ----------
@@ -520,6 +521,22 @@ class Api:
              "download": None},
         ]
 
+    # ---------- notifications (notify.py) ----------
+    def notifications_list(self):
+        if self._notify is None:
+            return {"items": [], "unread": 0}
+        return self._notify.list()
+
+    def notifications_read(self, ids=None, all=False):
+        if self._notify is None:
+            return {"ok": True, "error": "", "unread": 0}
+        return self._notify.read(ids=ids, all=all)
+
+    def notifications_clear(self):
+        if self._notify is None:
+            return {"ok": True, "error": ""}
+        return self._notify.clear()
+
     # ---------- governor controls ----------
     def pause_for(self, seconds):
         if self._governor is None or not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0:
@@ -559,6 +576,8 @@ class Api:
             set_autostart(self._settings.get("autostart"))
         # 0.9.3: work on the index waits for its write lock (an indexing batch can hold it for seconds), so it
         # runs after the answer: the switch takes at once and the work follows in order (self._later).
+        if "notify_show_names" in changed and not self._settings.get("notify_show_names")                 and self._notify is not None:
+            self._notify.forget_names()              # off: the file names kept so far go too
         if "search_history" in changed and not self._settings.get("search_history"):
             self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):

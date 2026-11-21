@@ -35,6 +35,10 @@ enum NbGlyph {
   keyboard,
   info,
   more,
+  // notifications
+  bell,
+  warning,
+  error,
 }
 
 /// Windows 11's own outline icons (the Segoe Fluent Icons font that ships with Windows; nothing bundled), one set
@@ -78,6 +82,9 @@ class NbIcon extends StatelessWidget {
     NbGlyph.shield: 0xEA18,
     NbGlyph.keyboard: 0xE765,
     NbGlyph.info: 0xE946,
+    NbGlyph.bell: 0xEA8F, // Ringer
+    NbGlyph.warning: 0xE7BA,
+    NbGlyph.error: 0xEA39, // ErrorBadge
     NbGlyph.more: 0xE712,
   };
 
