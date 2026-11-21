@@ -275,9 +275,66 @@ library, run inside Find's own worker process, as decided by Phase 0.
   DirectML pack comes from PyPI the same way. New outbound host (files.pythonhosted.org) gets its setting and its
   SYSTEM-INTEGRATION.md entry.
 
-## Still open (after Phase 0)
+## Phase 0 results and the upgrades they led to (maintainer, 2026-11-21)
 
-- Which L2 model is the default on mid PCs, and whether WeVisOne-VL-2B replaces either default.
+Measured on the reference PC (`docs/measurements.md`, "Vision Phase 0" sections). The maintainer approved the
+following; they override earlier sections where they differ.
+
+**Models (every candidate stays in the catalog as a choice; nothing is removed):**
+- **Background understanding (L1 captions/objects, and the deep pass): SmolVLM2-500M** on every PC that may run
+  it (Iris Xe Vulkan: 2.3 s a photo, 6.5 h per 10,000; overall 0.72; 7/7 questions, 6/6 descriptions).
+- **Talking:** SmolVLM2-500M answers first; **Qwen3-VL-2B Q4** (overall 0.91, exact English/German text, all
+  objects and comparisons) is offered as **deeper analysis** when the capability assessment says loading it is
+  safe right now (see escalation below), with its tuned settings from the Phase 0 speed-up runs.
+- **Text:** Windows OCR for the languages it has; PaddleOCR Devanagari (ONNX) for Hindi. **No vision model's
+  reading of Hindi text is ever shown as fact** (Qwen3-VL-2B invented fluent Hindi that isn't on the sign).
+- Florence-2 and WeVisOne-VL-2B stay as user choices; Florence's place is decided by the like-for-like runs
+  (same resolution, CPU vs CPU, DirectML vs Vulkan, detection scored apart from description).
+- Note: `onnxruntime-directml` stops at 1.24.4 while the CPU build is 1.27.0; the DirectML GPU pack pins its own.
+- One model process stays loaded while it works (never one load per photo, which only the benchmark does), and
+  **only one large vision model is ever resident**; one inference stream on a constrained (shared-memory) GPU.
+
+**Capability assessment (replaces "tiers by installed RAM" for vision):** `capability.assess` from live values:
+free physical RAM, commit pressure, free/budget GPU memory, measured speed per model on this PC, current CPU/GPU
+load, battery and battery saver. A model is allowed only if its measured need + margin fits now. Example that
+must hold: a 16 GB PC with 3 GB free never starts Qwen. Shown live in Settings -> Models "Your PC".
+
+**Intelligent model escalation:** a question SmolVLM2 answers well is answered at once; a harder one ("what is
+the relationship between the people, what does this scene say?"), or the user's "Deeper analysis", offers Qwen
+with its live cost ("about 5 s, 4 GB while answering"). If allowed: SmolVLM2 unloads, Qwen loads, answers,
+unloads. If not allowed, the reason is shown ("only 3 GB free; close something or try later").
+
+**In-app benchmark ("Test my PC", Settings -> Models):** the Phase 0 harness, trimmed: a few of the user's own
+photos (chosen by the user, never uploaded), each available model on each available device, about a minute;
+results stored in the encrypted index and fed to the capability assessment and the time estimates.
+
+**Governor inputs added:** commit pressure, disk latency/busy, battery saver, thermal pressure (where a reliable
+cheap source exists), GPU memory budget, "heavy creative app in front" (editable list; treated like a game in
+Light). Each with hysteresis and a minimum time in state.
+
+**Concurrency:** per-operation limits recomputed every governor tick, effective = min(user, CPU, memory,
+governor), for names walk, text readers, photo decode/embed, and vision (max 1 stream on a constrained GPU);
+one logical SQLite writer with batched transactions.
+
+**Vision pipeline (new code only; the working indexer is not rewritten):** bounded queues with backpressure
+(decode -> embed -> OCR -> semantic -> persistence), never the whole PC in RAM; a per-photo job ledger in the
+encrypted index (discovered, embedded, OCR done, understood, indexed; failures with attempt count and backoff, a
+permanently unreadable file is not retried forever), so a crash never redoes finished work.
+
+**Workers:** one program (no extra executables: install-size budget); each worker process has a role, an id, its
+creation time, current job, loaded model, memory, last heartbeat and last exit code, tracked by the engine and
+shown on the Indexing page's Processes list; job objects stay the final cleanup. Exit: stop new work, stop
+discovery, cancel at a safe boundary, flush, unload models, wait a bounded grace period, then terminate.
+
+**Notifications:** an in-app notification list (bell with unread count) and local Windows toasts (no push
+service, nothing over the network) for: a worker crashed / was restarted, a model fell back or was released for
+memory, an internal error, suggestions (a better model fits now, turbo needs its OK, an update), long pauses.
+Deduplicated and rate-limited, quiet during games and calls, no file names unless the user allows it, history
+capped and kept inside the encrypted index. (Built separately on `find-notifications`.)
+
+## Still open
+
+- Florence-2's place after the like-for-like runs; Qwen's tuned settings after the speed-up runs.
 
 ## Left to the builder
 
