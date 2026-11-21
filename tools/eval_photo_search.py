@@ -177,10 +177,18 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
             search.VARIANTS.clear()
             search.VARIANTS.update(vs)
             try:
-                vrows = []
-                for item in queries:
-                    r = search.search(store, item["text"], embedder=ctx["embedder"], vindex=ctx["vindex"], limit=60,
-                                      roots=[home], photo_text=ctx["photo_text"], pindex=ctx["pindex"])
+                vrows, vlat = [], []
+                for rep_i in range(2):      # pass 1 warms the question caches; pass 2 is timed and scored
+                    vrows = []
+                    for item in queries:
+                        t = time.perf_counter()
+                        r = search.search(store, item["text"], embedder=ctx["embedder"], vindex=ctx["vindex"],
+                                          limit=60, roots=[home], photo_text=ctx["photo_text"], pindex=ctx["pindex"])
+                        if rep_i:
+                            vlat.append((time.perf_counter() - t) * 1000)
+                        vrows.append((item, r))
+                vrows, pairs = [], vrows
+                for item, r in pairs:
                     ranked = [n for n in (alias.get(os.path.basename(x["path"]), "") for x in r["results"])
                               if n in photos]
                     rec, ndcg, mrr = metrics(ranked, qrels.get(item["id"], {}))
@@ -194,7 +202,9 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None):
             d = [r["ndcg"] - sig_by_q[r["id"]][1] for r in vrows if r["ndcg"] is not None]
             a.update(vs_siglip_better=sum(x > 0.005 for x in d), vs_siglip_worse=sum(x < -0.005 for x in d),
                      empty=sum(1 for r in vrows if not r["found"]), per_query={r["id"]: r["ndcg"] for r in vrows},
-                     tops={r["id"]: r["top"] for r in vrows})
+                     tops={r["id"]: r["top"] for r in vrows},
+                     lat_p50_ms=round(statistics.median(vlat), 1), lat_max_ms=round(max(vlat), 1),
+                     results_p50=statistics.median(r["found"] for r in vrows))
             rep["variants"]["+".join(sorted(vs)) or "today"] = a
         if features_out:
             with open(features_out, "w", encoding="utf-8") as f:
@@ -220,7 +230,8 @@ def _print(rep):
         print("ranking variants (nDCG@10 / recall@10; searches better/worse than SigLIP alone; empty results):")
         for k, v in rep["variants"].items():
             print(f"  {k:40} {v['ndcg10']!s:>6} / {v['recall10']!s:<6} {v['vs_siglip_better']:>3}/{v['vs_siglip_worse']:<3}"
-                  f" empty {v['empty']}")
+                  f" empty {v['empty']}  search p50 {v['lat_p50_ms']} ms, max {v['lat_max_ms']} ms,"
+                  f" {v['results_p50']:g} photos returned")
     worst = sorted((r for r in rep["rows"] if r["ndcg"] is not None), key=lambda r: r["ndcg"])[:8]
     print("weakest searches (nDCG@10):")
     for r in worst:

@@ -4,6 +4,24 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: memory and speed of photo ranking v2, and leaner caption runs
+
+**v2 adds no model and no memory.** What a photo search uses, measured on the reference PC:
+- SigLIP text encoder (`text.onnx`, 111 MB file): **+148 MB private** when loaded, +156 MB after 60 questions;
+  96 ms a new question (p50), cached after. It sits in `embed.Lazy` (released when idle). ONNX Runtime's
+  `enable_cpu_mem_arena=False` / `enable_mem_pattern=False` saved nothing (+151 / +149 MB) and were slower
+  (113 / 203 ms): not used.
+- Photo vectors: float16, 768 values = 1.5 KB a photo (10,000 photos ~15 MB); scored in blocks, and a 64-number
+  first pass from 20,000 photos up, so the whole matrix is never converted at once.
+- Search time (`eval_photo_search --variants`, questions cached as while typing): today p50 2.8 ms (max 4.7),
+  **v2 p50 3.8 ms** (max 120 ms, one search). Today's speed came from its floors: a median of **6** photos
+  returned per search, v2 returns the full 60.
+
+**Captions with less memory (SmolVLM2, 20 photos, llama.cpp flags only):** `-c 1024 -fa on -ctk q8_0 -ctv q8_0
+-ub 256` instead of `-c 4096`: peak private RAM 1,138 -> **942 MB (-17 %)**, GPU shared 848 -> **658 MB (-22 %)**,
+same speed (2.92 s a photo); 14 of 20 answers identical, the other 6 differ in small details (8-bit cache). Use
+for background captions if captions ship.
+
 ## 2026-11-22: hybrid photo search, step 2: Qwen3-VL-2B captions vs SmolVLM2-500M, like for like
 
 Same 308 photos, same two questions (one-sentence caption, 48 tokens; object list, 40 tokens; repeat penalty
