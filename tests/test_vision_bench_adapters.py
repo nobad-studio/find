@@ -3,6 +3,8 @@ import json
 import os
 import re
 
+import importlib.util
+
 import pytest
 
 from tools.vision_bench import adapters
@@ -11,6 +13,12 @@ from tools.vision_bench.adapters import (ADAPTERS, DecodeError, NotSupported, de
 
 MODELS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "vision_bench",
                       "models.json")
+
+
+# Pillow is a dev-only dependency of the vision bench (tools/vision_bench/requirements.txt); CI installs the app's
+# requirements only, so the tests that decode pictures through the bench skip there.
+needs_pil = pytest.mark.skipif(importlib.util.find_spec("PIL") is None,
+                               reason="Pillow (vision bench dev dependency) not installed")
 
 
 def test_prompt_templates_fixed():
@@ -38,6 +46,7 @@ def test_every_candidate_has_an_adapter():
     assert set(ADAPTERS) <= set(models)
 
 
+@needs_pil
 def test_decode_refuses_corrupt_and_empty(tmp_path):
     empty = tmp_path / "empty.jpg"
     empty.write_bytes(b"")
@@ -48,6 +57,7 @@ def test_decode_refuses_corrupt_and_empty(tmp_path):
             decode(str(p), 768)
 
 
+@needs_pil
 def test_decode_refuses_too_many_pixels(tmp_path, monkeypatch):
     from PIL import Image
     p = tmp_path / "big.png"
@@ -57,6 +67,7 @@ def test_decode_refuses_too_many_pixels(tmp_path, monkeypatch):
         decode(str(p), 768)
 
 
+@needs_pil
 def test_decode_refuses_big_file(tmp_path, monkeypatch):
     from PIL import Image
     p = tmp_path / "a.png"
@@ -66,6 +77,7 @@ def test_decode_refuses_big_file(tmp_path, monkeypatch):
         decode(str(p), 768)
 
 
+@needs_pil
 def test_decode_fits_max_side(tmp_path):
     from PIL import Image
     p = tmp_path / "wide.png"
@@ -131,6 +143,7 @@ USING_VK = ("0.00.103.296 I llama_prepare_model_devices: using device Vulkan0 (I
             "(unknown id) - 7380 MiB free\n")
 
 
+@needs_pil
 def test_gpu_build_that_ran_on_cpu_is_not_available(tmp_path, monkeypatch):
     # b12602's CPU-only build also prints "offloaded 33/33 layers to GPU": only "using device <GPU>" proves a GPU
     for err in ("load_tensors: offloaded 33/33 layers to GPU\n", "no device line at all\n"):
@@ -147,6 +160,7 @@ def test_llama_runs_verbose_for_its_timing_and_device_lines():
     assert "-v" in llama_argv("C:/t/llama-cpu", "m", "p", ["a"], "x", gpu=False)
 
 
+@needs_pil
 def test_llama_temp_files_live_under_vbench_tmp_and_are_removed(tmp_path, monkeypatch):
     a, img = _llama(tmp_path, monkeypatch, "", "cpu")
     a.run("caption", img, None, None)
