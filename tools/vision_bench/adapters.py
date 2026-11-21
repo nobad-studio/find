@@ -90,19 +90,40 @@ def llama_argv(build_dir, model, mmproj, images, prompt, gpu, threads=None, max_
     return argv
 
 
-_MS = {"enc": re.compile(r"image slice encoded in\s+([\d.]+)\s*ms"),
-       "dec": re.compile(r"image decoded.*?in\s+([\d.]+)\s*ms"),
+_MS = {"load": re.compile(r"llama_perf_context_print:\s+load time\s*=\s*([\d.]+)\s*ms"),
        "total": re.compile(r"llama_perf_context_print:\s+total time\s*=\s*([\d.]+)\s*ms")}
+_OFFLOAD = re.compile(r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers to GPU")
+
+
+class GpuNotUsed(Exception):
+    """A GPU device was asked for, but the work ran on the CPU (the run is "not available", never a GPU number)."""
 
 
 def parse_llama_ms(stderr):
-    """Compute time of one llama-mtmd-cli run (image encode + decode + generation), without the model load; None
-    when the timing lines aren't there."""
-    total = _MS["total"].findall(stderr)
+    """Compute time of one llama-mtmd-cli run without the model load: llama.cpp's "total time" counts from the
+    start of loading, so it's total - load (image encode, decode and generation are inside both). None when the
+    timing lines aren't there (the caller then uses wall time)."""
+    total, load = _MS["total"].findall(stderr), _MS["load"].findall(stderr)
     if not total:
         return None
-    return (sum(float(x) for x in _MS["enc"].findall(stderr)) + sum(float(x) for x in _MS["dec"].findall(stderr))
-            + float(total[-1]))
+    return float(total[-1]) - (float(load[-1]) if load else 0.0)
+
+
+def check_offload(stderr):
+    """GpuNotUsed unless llama.cpp says it put layers on the GPU (a GPU build falls back to the CPU silently)."""
+    m = _OFFLOAD.findall(stderr)
+    if not m or int(m[-1][0]) == 0:
+        raise GpuNotUsed("llama.cpp ran on the CPU: " + (f"offloaded {m[-1][0]}/{m[-1][1]} layers" if m
+                                                          else "no GPU offload reported"))
+
+
+def scratch_dir():
+    """A temp folder for resized photo copies, under VBENCH_TMP when the parent set one (it deletes that tree
+    even if this process is killed)."""
+    base = os.environ.get("VBENCH_TMP")
+    if base:
+        os.makedirs(base, exist_ok=True)
+    return tempfile.mkdtemp(prefix="vbench-", dir=base or None)
 
 
 class Adapter:
@@ -131,7 +152,7 @@ class LlamaAdapter(Adapter):
         self.dir = os.path.join(models_dir, self.candidate)
         self.build = os.path.join(self.tools_dir or "", f"llama-{device}")
         self.gpu = device != "cpu"
-        self.tmp = tempfile.mkdtemp(prefix="vbench-")
+        self.tmp = scratch_dir()
 
     def run(self, task, image, image2, question):
         paths = []
@@ -146,7 +167,11 @@ class LlamaAdapter(Adapter):
         err = r.stderr.decode("utf-8", "replace")
         if r.returncode != 0:
             raise RuntimeError(f"llama-mtmd-cli exit {r.returncode}: {err[-300:]}")
+        if self.gpu:
+            check_offload(err)
         self.last_ms = parse_llama_ms(err)
+        for q in paths:
+            os.remove(q)
         return r.stdout.decode("utf-8", "replace").strip()
 
     def close(self):
@@ -179,6 +204,18 @@ class Florence2(Adapter):
     def __init__(self, tools_dir=None):
         pass
 
+    @staticmethod
+    def graphs(device):
+        """The four graphs for a device: int8 on CPU; fp16 on a GPU, where the int8 graphs' dynamic quantization
+        ops would fall back to the CPU while the session still reports the GPU."""
+        q = "int8" if device == "cpu" else "fp16"
+        return [f"{g}_{q}.onnx" for g in ("vision_encoder", "encoder_model", "decoder_model_merged", "embed_tokens")]
+
+    def _arr(self, sess, name, a):
+        """a in the dtype the session's input wants (fp16 graphs take float16)."""
+        t = next(i.type for i in sess.get_inputs() if i.name == name)
+        return a.astype(np.float16) if t == "tensor(float16)" else a.astype(np.float32) if t == "tensor(float)" else a
+
     def load(self, models_dir, device):
         import onnxruntime as ort
         from tokenizers import Tokenizer
@@ -187,11 +224,14 @@ class Florence2(Adapter):
                 "cuda": ["CUDAExecutionProvider", "CPUExecutionProvider"]}[device]
         so = ort.SessionOptions()
         so.log_severity_level = 3
+        if device == "directml":          # what ONNX Runtime asks for with DirectML
+            so.enable_mem_pattern = False
+            so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         mk = lambda n: ort.InferenceSession(os.path.join(d, "onnx", n), so, providers=prov)  # noqa: E731
-        self.vis, self.enc = mk("vision_encoder_int8.onnx"), mk("encoder_model_int8.onnx")
-        self.dec, self.emb = mk("decoder_model_merged_int8.onnx"), mk("embed_tokens_int8.onnx")
-        if device != "cpu" and self.vis.get_providers()[0] == "CPUExecutionProvider":
-            raise RuntimeError(f"{device} provider not used by ONNX Runtime")
+        self.vis, self.enc, self.dec, self.emb = (mk(n) for n in self.graphs(device))
+        if device != "cpu" and any(s.get_providers()[0] == "CPUExecutionProvider"
+                                   for s in (self.vis, self.enc, self.dec, self.emb)):
+            raise GpuNotUsed(f"ONNX Runtime didn't use the {device} provider")
         self.tok = Tokenizer.from_file(os.path.join(d, "tokenizer.json"))
         self.bos, self.eos = self.tok.token_to_id("<s>"), self.tok.token_to_id("</s>")
 
@@ -206,15 +246,18 @@ class Florence2(Adapter):
     def run(self, task, image, image2, question):
         prompt = _FLORENCE_TEXT[prompt_for(task, question, self.candidate)]
         t0 = time.perf_counter()
-        feats = self.vis.run(None, {self.vis.get_inputs()[0].name: self._pixels(image)})[0]
+        vin = self.vis.get_inputs()[0].name
+        feats = self.vis.run(None, {vin: self._arr(self.vis, vin, self._pixels(image))})[0]
         ids = self.tok.encode(prompt).ids
         x = np.concatenate([feats, self._embed(ids)], axis=1)
         mask = np.ones(x.shape[:2], np.int64)
-        hidden = self.enc.run(None, {"inputs_embeds": x, "attention_mask": mask})[0]
+        hidden = self.enc.run(None, {"inputs_embeds": self._arr(self.enc, "inputs_embeds", x),
+                                     "attention_mask": mask})[0]
         out_ids, past = [self.eos], None   # Florence-2 (BART) starts decoding from </s>
         names = [i.name for i in self.dec.get_inputs()]
         for _ in range(256):
-            feed = {"inputs_embeds": self._embed([out_ids[-1]]), "encoder_attention_mask": mask}
+            feed = {"inputs_embeds": self._arr(self.dec, "inputs_embeds", self._embed([out_ids[-1]])),
+                    "encoder_attention_mask": mask}
             if "encoder_hidden_states" in names:
                 feed["encoder_hidden_states"] = hidden
             if "use_cache_branch" in names:
@@ -224,7 +267,8 @@ class Florence2(Adapter):
                     if past is not None:
                         feed[i.name] = past[i.name]
                     else:   # first step: empty caches (use_cache_branch False computes them)
-                        feed[i.name] = np.zeros((1, i.shape[1], 0, i.shape[3]), np.float32)
+                        feed[i.name] = self._arr(self.dec, i.name,
+                                                 np.zeros((1, i.shape[1], 0, i.shape[3]), np.float32))
             outs = self.dec.run(None, feed)
             onames = [o.name for o in self.dec.get_outputs()]
             nxt = int(outs[0][0, -1].argmax())

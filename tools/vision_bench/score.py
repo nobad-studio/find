@@ -18,7 +18,8 @@ def normalize(text):
     """NFC, case-folded, punctuation as spaces (letters, digits and combining marks such as Hindi matras kept),
     whitespace collapsed."""
     text = unicodedata.normalize("NFC", str(text)).casefold()
-    out = [ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text]
+    # format characters (ZWJ/ZWNJ inside Hindi words) are dropped, not turned into word breaks
+    out = [ch if unicodedata.category(ch)[0] in "LNM" else " " for ch in text if unicodedata.category(ch) != "Cf"]
     return " ".join("".join(out).split())
 
 
@@ -30,7 +31,7 @@ def _has(haystack, needle):
 
 def _first_number(answer):
     for tok in answer.split():
-        if tok.isdigit():
+        if tok.isdecimal():          # not isdigit(): "²" and "①" are digits int() can't read
             return int(tok)
         if tok in NUMBER_WORDS:
             return NUMBER_WORDS[tok]

@@ -7,6 +7,7 @@ the chosen candidates and devices, each checked by size and SHA-256.
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 
@@ -49,9 +50,7 @@ def main(argv=None):
     os.makedirs(a.out, exist_ok=True)
     info = probe.probe(a.tools_dir)
     if a.download:
-        gpu_llama = [d for d in devices if d in ("cpu", "vulkan", "cuda")
-                     and any(models[c]["backend"] == "llama" for c in cands)]
-        run.download(cands, gpu_llama, a.models_dir, a.tools_dir)
+        run.download(cands, devices, a.models_dir, a.tools_dir)
         info = probe.probe(a.tools_dir)
     from .evalset import load_set
     items = load_set(os.path.join(a.set, "set.json"))
@@ -64,8 +63,11 @@ def main(argv=None):
             json.dump({"set": os.path.join(a.set, "set.json"), "candidate": cand, "device": device,
                        "models_dir": a.models_dir, "tools_dir": a.tools_dir, "tasks": tasks}, f)
         return [sys.executable, "-m", "tools.vision_bench", "--child", p]
-    results = run.bench([i for i in items if not tasks or i["task"] in tasks], pairs(cands, devices, models),
-                        info["devices"], child_cmd)
+    try:
+        results = run.bench([i for i in items if not tasks or i["task"] in tasks], pairs(cands, devices, models),
+                            info["devices"], child_cmd)
+    finally:
+        shutil.rmtree(cfg_dir, ignore_errors=True)
     with open(os.path.join(a.out, "results.json"), "w", encoding="utf-8") as f:
         json.dump({"probe": info, "results": results}, f, ensure_ascii=False, indent=1, default=str)
     try:

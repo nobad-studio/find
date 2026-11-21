@@ -51,3 +51,12 @@ def test_aggregate():
 
 def test_aggregate_empty():
     assert aggregate([]) == {"all": 0.0}
+
+
+def test_zero_width_joiners_dont_split_hindi_words():
+    assert " " not in normalize("क्‌ष")
+    assert score_item({"kind": "text", "expect": "क्षमा"}, "क्‌षमा") == score_item({"kind": "text", "expect": "क्षमा"}, "क्षमा")
+
+
+def test_superscripts_are_not_numbers():
+    assert score_item({"kind": "count", "expect": 2}, "² ① then 2 people") == 1.0

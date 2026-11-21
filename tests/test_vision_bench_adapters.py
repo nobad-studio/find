@@ -107,5 +107,51 @@ def test_parse_llama_ms():
     err = ("image slice encoded in 812 ms\nimage decoded (batch 1/1) in 40 ms\n"
            "llama_perf_context_print:        load time =    1500.10 ms\n"
            "llama_perf_context_print:       total time =    2300.50 ms /    90 tokens\n")
-    assert parse_llama_ms(err) == pytest.approx(812 + 40 + 2300.5)
+    assert parse_llama_ms(err) == pytest.approx(2300.5 - 1500.1)   # total already includes load + image work
     assert parse_llama_ms("nothing here") is None
+
+
+class _R:
+    def __init__(self, err, code=0, out=b"an answer"):
+        self.returncode, self.stdout, self.stderr = code, out, err.encode()
+
+
+def _llama(tmp_path, monkeypatch, err, device):
+    from PIL import Image
+    img = tmp_path / "p.png"
+    Image.new("RGB", (64, 64)).save(img)
+    monkeypatch.setenv("VBENCH_TMP", str(tmp_path / "tmp"))
+    monkeypatch.setattr(adapters.subprocess, "run", lambda *a, **k: _R(err))
+    a = adapters.Qwen3VL2B(tools_dir=str(tmp_path))
+    a.load(str(tmp_path), device)
+    return a, str(img)
+
+
+def test_gpu_build_that_ran_on_cpu_is_not_available(tmp_path, monkeypatch):
+    for err in ("load_tensors: offloaded 0/29 layers to GPU\n", "no offload line at all\n"):
+        a, img = _llama(tmp_path, monkeypatch, err, "vulkan")
+        with pytest.raises(adapters.GpuNotUsed):
+            a.run("caption", img, None, None)
+        a.close()
+    a, img = _llama(tmp_path, monkeypatch, "load_tensors: offloaded 29/29 layers to GPU\n", "vulkan")
+    assert a.run("caption", img, None, None) == "an answer"
+    a.close()
+
+
+def test_llama_temp_files_live_under_vbench_tmp_and_are_removed(tmp_path, monkeypatch):
+    a, img = _llama(tmp_path, monkeypatch, "", "cpu")
+    a.run("caption", img, None, None)
+    assert os.path.commonpath([a.tmp, str(tmp_path / "tmp")]) == str(tmp_path / "tmp")
+    a.close()
+    assert not os.path.exists(a.tmp)
+
+
+def test_florence_uses_fp16_graphs_on_gpu():
+    f = adapters.Florence2()
+    assert all(n.endswith("_int8.onnx") for n in f.graphs("cpu"))
+    assert all(n.endswith("_fp16.onnx") for n in f.graphs("directml")) and f.graphs("cuda") == f.graphs("directml")
+    with open(MODELS, encoding="utf-8") as fh:
+        files = json.load(fh)["models"]["florence2-base-ft"]["files"]
+    for dev in ("cpu", "directml"):
+        for n in f.graphs(dev):
+            assert "onnx/" + n in files

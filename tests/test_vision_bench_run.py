@@ -2,6 +2,8 @@
 never the end of the run."""
 import os
 import subprocess
+
+import pytest
 import sys
 import time
 
@@ -80,5 +82,52 @@ def test_decode_error_item_does_not_stop_run():
     r = run.run_one("fake", "cpu", items, "M", "T", adapters={"fake": lambda tools_dir=None: _Fake()})
     assert [i["status"] for i in r["items"]] == ["ok", "error: decode", "ok"]
     assert r["status"] == "ok" and r["ms_per_item"] == 7.0
-    assert r["scores"]["objects"] == 1.0          # errors are not scored as zero answers
+    assert r["scores"]["objects"] == 1.0          # a photo that can't be decoded isn't the model's fault
     assert r["errors"] == 1
+
+
+class _Flaky(_Fake):
+    def run(self, task, image, image2, question):
+        if "boom" in image:
+            raise RuntimeError("out of memory")
+        if "hang" in image:
+            raise subprocess.TimeoutExpired("llama", 120)
+        return super().run(task, image, image2, question)
+
+
+def _items(*names, expect=("dog",), kind="objects"):
+    return [{"id": n, "image": f"{n}.jpg", "image2": None, "task": "detect", "question": None, "kind": kind,
+             "expect": list(expect) if kind == "objects" else expect} for n in names]
+
+
+def test_model_errors_and_timeouts_score_zero():
+    r = run.run_one("fake", "cpu", _items("one", "boom", "hang"), "M", "T",
+                    adapters={"fake": lambda tools_dir=None: _Flaky()})
+    st = [i["status"] for i in r["items"]]
+    assert st[0] == "ok" and st[1].startswith("error: RuntimeError") and st[2] == "timeout"
+    assert r["scores"]["objects"] == pytest.approx(1 / 3)
+    assert r["timeouts"] == 1
+
+
+def test_scoring_error_is_per_item(monkeypatch):
+    monkeypatch.setattr(run, "score_item", lambda it, a: 1 / 0 if it["id"] == "two" else 1.0)
+    r = run.run_one("fake", "cpu", _items("one", "two"), "M", "T", adapters={"fake": lambda tools_dir=None: _Fake()})
+    assert [i["status"] for i in r["items"]] == ["ok", "error: score"]
+
+
+class _NoGpu(_Fake):
+    def run(self, task, image, image2, question):
+        from tools.vision_bench.adapters import GpuNotUsed
+        raise GpuNotUsed("llama.cpp ran on the CPU (offloaded 0/29 layers)")
+
+
+def test_gpu_not_used_makes_the_run_not_available():
+    r = run.run_one("fake", "vulkan", _items("one", "two"), "M", "T",
+                    adapters={"fake": lambda tools_dir=None: _NoGpu()})
+    assert r["status"] == "not available" and "CPU" in r["why"]
+
+
+def test_crash_reason_comes_from_stderr():
+    res = run.bench([], [("a", "cpu", "ort")], _devs(),
+                    child_cmd=lambda c, d: [sys.executable, FAKE, "crash_msg"], timeout_s=30)
+    assert res[0]["status"] == "crash" and "model file missing" in res[0]["why"]

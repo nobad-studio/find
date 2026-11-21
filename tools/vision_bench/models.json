@@ -42,6 +42,22 @@
     "onnx/embed_tokens_int8.onnx": [
      39390433,
      "6b2258db1c8ee9b160576ccde3cd3814d83a2edaed0dd1c6ca9ff3c38fa62214"
+    ],
+    "onnx/vision_encoder_fp16.onnx": [
+     183930536,
+     "a7abcd77199c5d0089cf985ede4dd8089acd84f30fb3fb1462d5930345c688b3"
+    ],
+    "onnx/encoder_model_fp16.onnx": [
+     86747414,
+     "0d1d929f282963e983b8ac5ac4957f19a8fa48233eab41166951b769e5cf2fd2"
+    ],
+    "onnx/decoder_model_merged_fp16.onnx": [
+     194546602,
+     "9b9b12107729891cd6ec981b3eca0cc0639ad8c1a3245565c005952d457deb76"
+    ],
+    "onnx/embed_tokens_fp16.onnx": [
+     78780290,
+     "da2607930eea5e21e4a2bd5fd069de550f1acc30316a4e8f824551a95232ba39"
     ]
    }
   },

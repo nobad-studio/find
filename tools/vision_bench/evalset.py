@@ -13,6 +13,18 @@ from .score import KINDS
 TASKS = ("detect", "ocr", "caption", "ask", "compare")
 
 
+def _expect_ok(kind, e):
+    """objects/describe: list of words or synonym lists; text: a string; count: an int; yesno: a bool."""
+    if kind in ("objects", "describe"):
+        return isinstance(e, list) and bool(e) and all(
+            isinstance(g, str) or (isinstance(g, list) and g and all(isinstance(s, str) for s in g)) for g in e)
+    if kind == "text":
+        return isinstance(e, str) and bool(e.strip())
+    if kind == "count":
+        return isinstance(e, int) and not isinstance(e, bool) and e >= 0
+    return isinstance(e, bool)
+
+
 def _inside(folder, rel, item_id):
     if not isinstance(rel, str) or not rel or os.path.isabs(rel):
         raise ValueError(f"item {item_id}: image path must be relative to the set folder")
@@ -40,8 +52,8 @@ def load_set(path, check_files=True):
             raise ValueError(f"item {iid}: unknown task {task!r}")
         if kind not in KINDS:
             raise ValueError(f"item {iid}: unknown kind {kind!r}")
-        if "expect" not in raw:
-            raise ValueError(f"item {iid}: no expect")
+        if "expect" not in raw or not _expect_ok(kind, raw["expect"]):
+            raise ValueError(f"item {iid}: expect doesn't fit kind {kind}")
         question = raw.get("question")
         if task in ("ask", "compare") and not question:
             raise ValueError(f"item {iid}: task {task} needs a question")

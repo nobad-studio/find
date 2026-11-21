@@ -75,3 +75,11 @@ def test_example_file_is_valid_shape():
     tasks = [i["task"] for i in items]
     assert tasks.count("detect") == 15 and tasks.count("ocr") == 15 and tasks.count("ask") == 10
     assert tasks.count("caption") == 5 and tasks.count("compare") == 5
+
+
+def test_expect_type_checked_per_kind(tmp_path):
+    bad = [("count", "three"), ("yesno", "yes"), ("text", 5), ("objects", "dog"), ("describe", [3])]
+    for kind, expect in bad:
+        p = _write(tmp_path, [{"id": f"e-{kind}", "image": "a.jpg", "task": "detect", "kind": kind, "expect": expect}])
+        with pytest.raises(ValueError, match=f"e-{kind}"):
+            load_set(p)
