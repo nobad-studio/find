@@ -1,5 +1,50 @@
 # NOBAD Find changelog
 
+## 0.9.5 · 2026-11-21
+
+### Search bar
+- A preview of the selected result beside the list: a picture for photos and videos, the name, folder, size, age,
+  why it matched and the words that matched inside it. The bar is 840 px wide for it.
+- "open bluetooth" + Enter opens it every time: Enter now waits for the answer to what you typed, and the Settings
+  page or app comes to the front instead of opening behind other windows.
+- Searches in the bar are much faster while you type: a photo question with a folder ("black shirt in downloads")
+  took about 1 s on a whole-PC index and now takes about 0.16 s.
+- As in the window: a hint when a search needs a model (download it, switch it on, photos still being looked at)
+  and the answer's notes, up to four Windows settings and apps, Forget (Shift+Delete twice), Ctrl+C copies the path,
+  Copy name.
+- The same see-through glass as the main window.
+- A question that names a setting or app exactly wins: "open windows update" is Windows Update, "open settings
+  app" is Settings.
+
+### Fixed
+- "Open NOBAD Find" in the tray (and Settings, Index, and Alt+Enter from the search bar) sometimes did nothing
+  after the search bar had been used and the window closed. It now opens the window, and every tray click is logged.
+- The Download buttons on the Welcome screen and the Index page get the model Settings > Models would use (the one
+  in use, or the one recommended for this PC), after the same consent, instead of always MiniLM / SigLIP base.
+- The Forget message points to the right place: Settings > What to index > Never index.
+- See-through window really follows Windows' Transparency effects switch.
+
+### Privacy and security
+- A "Keys & passwords (names only)" choice in the filter bar's Kind, offered while Settings > What to index has
+  Keys and passwords on: it lists key files, password stores, wallets, .ssh and similar files by name. Their
+  contents are never read, and browsers' saved passwords are never opened.
+- Recent searches come only from your encrypted search history. The window no longer keeps its own plain-text list,
+  and the old `ui-recent.json` is deleted. Search history off means none are kept or shown, and "Clear search
+  history" clears them too.
+
+### Updates
+- Installing an update shows real progress: how much is downloaded, MB of the total, the speed and the time left,
+  then a step while its size and checksum are checked, then the install and restart. While an update runs, a small
+  card in the sidebar takes you to it.
+
+### Index and settings
+- The Index page lists every NOBAD Find process, as Task Manager shows them, and says what each one is: engine,
+  window, search bar, text reader, meaning worker, photo worker, turbo helper. Each shows its own processor, memory
+  (working set and private), how long it has run, and a note when it is idle, starting or ending.
+- Settings > What to index: every category is a card with its icon, one plain line, its facts as chips (in or out,
+  how many in the index, names only) and its switch; the long explanation and example paths are under Details. The
+  page opens at once and fills in the counts when the engine has them; the turbo index is a card too.
+
 ## 0.9.4 · 2026-11-21
 
 ### Fixed

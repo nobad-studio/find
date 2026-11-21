@@ -6,6 +6,7 @@ Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and on
 import os
 import time
 
+from .const import BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
 from .query import parse
 from .store import OperationalError, fts_quote
 from .understand import best_guess, folder_finder, parts, place_bases
@@ -70,6 +71,30 @@ def place_roots(place, drives):
     return roots
 
 
+def secret_sql(alias="f"):
+    """0.9.5, the "Keys & passwords" filter: the files scope.Rules calls secrets (key files, password stores, wallets,
+    .ssh and the like, Windows Credentials, browser login and cookie files), as one SQL condition. Only their names
+    are in the index (Rules.names_only): this lists names and never reads anything."""
+    def like(*parts):                                # "!" escapes, so the path's backslashes stay literal
+        safe = [x.replace("!", "!!").replace("_", "!_").replace("%", "!%") for x in parts]
+        return "%\\" + "\\".join(safe) + "\\%"
+    ors, args = [], []
+    exts = sorted(SECRET_EXT)
+    ors.append(f"{alias}.ext IN ({','.join('?' * len(exts))})")
+    args += exts
+    names = sorted(SECRET_FILES)
+    ors.append(f"lower({alias}.name) IN ({','.join('?' * len(names))})")
+    args += names
+    for run in [(n,) for n in sorted(SECRET_NAMES)] + list(SECRET_PATHS):
+        ors.append(f"{alias}.path LIKE ? ESCAPE '!'")
+        args.append(like(*run))
+    browser = sorted(BROWSER_SECRET_FILES)
+    inside = " OR ".join(f"{alias}.path LIKE ? ESCAPE '!'" for _ in NAMES_ONLY_PATHS)
+    ors.append(f"(lower({alias}.name) IN ({','.join('?' * len(browser))}) AND ({inside}))")
+    args += browser + [like(*run) for run in NAMES_ONLY_PATHS]
+    return "(" + " OR ".join(ors) + f") AND {alias}.kind != 'folder'", args
+
+
 def _filters(q, alias="f"):
     sql, args = [], []
     roots = place_roots(q.place, q.drives)
@@ -83,6 +108,10 @@ def _filters(q, alias="f"):
     if q.kinds:
         sql.append(f"{alias}.kind IN ({','.join('?' * len(q.kinds))})")
         args += sorted(q.kinds)
+    if getattr(q, "secrets", False):
+        w, a = secret_sql(alias)
+        sql.append(w)
+        args += a
     if q.folder:
         from .winapi import known_folder
         path = known_folder(q.folder)
@@ -383,10 +412,26 @@ def _photo_hits(store, q, photo_text, pindex, limit):
     qvec = ask(q.meaning or q.text)
     where, args = _filters(q)
     among = getattr(pindex, "search_among", None)
-    if where and among is not None:
+    exact_all = pindex.n < getattr(pindex, "FAST_FROM", 0)
+    if where and exact_all:
+        # 0.9.5: every photo ranked in memory (~1 ms for 10,000), then the filter checked by id in score order
+        # until enough fit; the old way joined the photos with the files table on every keystroke (0.4-1.5 s)
+        hits, ranked = [], pindex.search(qvec, k=pindex.n)
+        for i in range(0, len(ranked), 500):
+            part = ranked[i:i + 500]
+            marks = ",".join("?" * len(part))
+            ok = {r[0] for r in store.q(f"SELECT f.id FROM files f WHERE f.id IN ({marks}){where}",
+                                        (*(fid for fid, _s in part), *args))}
+            hits += [h for h in part if h[0] in ok]
+            if len(hits) >= limit * 3:
+                break
+        hits = hits[:limit * 3]
+    elif where and among is not None:
         # filtered ("in downloads", "from march"): rank only the photos that fit, so the PC's best few hundred
         # elsewhere can't push every one of them out before the filter is even looked at
-        fit = [r[0] for r in store.q(f"SELECT f.id FROM files f JOIN pvecs p ON p.file_id = f.id "
+        # 0.9.5: CROSS JOIN keeps the photos (thousands) as the outer loop; SQLite otherwise walked all the files
+        # (a million on a whole-PC index) for the folder filter: 1-3 s per keystroke in the bar
+        fit = [r[0] for r in store.q(f"SELECT f.id FROM pvecs p CROSS JOIN files f ON f.id = p.file_id "
                                      f"WHERE length(p.v) > 0{where} LIMIT {PHOTO_FILTER_MAX}", tuple(args))]
         hits = among(qvec, fit, k=limit * 3)
     else:
@@ -446,6 +491,8 @@ def apply_filters(q, filters, now):
     kind = filters.get("kind")
     if kind in FILTER_KINDS:
         q.kinds = {kind}
+    elif kind == "secret":
+        q.secrets = True                            # 0.9.5: Keys & passwords (names only, see secret_sql)
     days = FILTER_DAYS.get(filters.get("modified"))
     if days and q.t0 is None:
         q.t0, q.t1 = now - days * 86400, now + 60

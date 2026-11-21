@@ -327,7 +327,7 @@ class Sampler(threading.Thread):
                 with p.oneshot():
                     mem, cpu, io = p.memory_info(), p.cpu_times(), p.io_counters()
                     row = {"run": self.run_name, "scenario": self.scenario, "t": round(now - self.t0, 2),
-                           "pid": p.pid, "role": self.names.get(p.pid) or role(p, self.root.pid), "ws_mb": round(mem.rss / MB, 1),
+                           "pid": p.pid, "role": ("Main" if p.pid == self.root.pid else self.names.get(p.pid) or role(p, self.root.pid)), "ws_mb": round(mem.rss / MB, 1),
                            "private_mb": round(mem.private / MB, 1), "handles": p.num_handles(),
                            "threads": p.num_threads(), "gpu_pct": round(gpu.get(p.pid, 0.0), 1)}
                 row["eco"], row["mem_prio"], row["io_prio"] = priorities(p)

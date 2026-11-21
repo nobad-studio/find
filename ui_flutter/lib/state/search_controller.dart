@@ -37,7 +37,7 @@ class FindController extends ChangeNotifier {
 
   final EngineApi engine;
 
-  /// Recent searches (UI-local); a search is remembered when one of its results is used.
+  /// Recent searches: the engine's search history, shown under the empty box (no copy kept by the UI).
   final RecentSearches? recent;
 
   void _remember() {
@@ -45,16 +45,16 @@ class FindController extends ChangeNotifier {
     remember(_askedFor);
   }
 
-  /// A question was used (a result opened, Enter, a suggestion picked): the UI's recent list, and the engine's
-  /// search history for autocomplete (kept only while the search_history setting is on; the engine checks).
+  /// A question was used (a result opened, Enter, a suggestion picked): the engine's search history, for
+  /// autocomplete and the recent searches (kept only while the search_history setting is on; the engine checks,
+  /// and only what it kept shows as recent).
   void remember(String words) {
     if (words.trim().isEmpty) return;
-    final r = recent;
-    if (r != null) {
-      r.add(words);
-      unawaited(r.save());
-    }
-    unawaited(engine.historyAdd(words).then((_) {}, onError: (Object _) {}));
+    unawaited(
+      engine.historyAdd(words).then((saved) {
+        if (saved && !_disposed) recent?.kept(words);
+      }, onError: (Object _) {}),
+    );
   }
 
   /// Time since the last keystroke (the screen records keystroke → paint after the frame).
@@ -116,6 +116,7 @@ class FindController extends ChangeNotifier {
 
   void setText(String t) {
     if (t == _text) return;
+    if (t.trim().isEmpty && _text.trim().isNotEmpty) unawaited(recent?.refresh()); // the empty box shows them
     _text = t;
     _sinceKeystroke
       ..reset()
@@ -211,6 +212,14 @@ class FindController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 0.9.5: the answer for exactly what is typed now. Enter right after typing ("open bluetooth" + Enter) used to
+  /// act on the answer to an earlier keystroke, or on none, while the newest search was still on its way.
+  Future<void> settle() async {
+    if (_askedFor == _text && !_busy && !(_timer?.isActive ?? false)) return;
+    _timer?.cancel();
+    await run();
+  }
+
   void move(int delta) {
     if (results.isEmpty) return;
     _selected = (_selected + delta) % results.length;
@@ -243,8 +252,7 @@ class FindController extends ChangeNotifier {
   }
 
   /// The first action, when the question asks to open something ("open bluetooth"): Enter runs it.
-  SearchAction? get launchAction =>
-      answer.actions.isNotEmpty && wantsLaunch(_text) ? answer.actions.first : null;
+  SearchAction? get launchAction => answer.actions.isNotEmpty && wantsLaunch(_text) ? answer.actions.first : null;
 
   Future<bool> openSelected() => _act((id) => engine.open(id), "That file isn't there any more.");
 
@@ -313,10 +321,13 @@ class FindController extends ChangeNotifier {
       ok = false;
     }
     if (!ok) return false;
-    _say('Forgotten. Undo it in Settings → Never search.');
+    _say('Forgotten. Undo it in Settings → What to index → Never index.');
     if (!_disposed) await run();
     return true;
   }
+
+  /// A short message where this controller shows them (a toast, or the bar's notice line).
+  void say(String s) => _say(s);
 
   void _say(String s) {
     if (toasts != null) {

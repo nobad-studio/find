@@ -107,7 +107,7 @@ def methods(api, events=None):
         """The quick find bar's Alt+Enter: the main window comes up with the same words typed in."""
         text = _text(params, "text")
         if events is not None:
-            events.show("main", text)
+            (getattr(events, "open_window", None) or events.show)("main", text)    # starts it when it's closed
         return {"ok": True}
 
     return {"search": search,

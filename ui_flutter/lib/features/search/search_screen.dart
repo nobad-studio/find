@@ -301,12 +301,15 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
     sug.close();
-    final act = s.find.launchAction;          // "open bluetooth": Enter opens the setting, not the first file
-    if (act != null) {
-      unawaited(s.find.runAction(act));
-      return;
-    }
-    _open();
+    unawaited(s.find.settle().then((_) {        // 0.9.5: act on the answer to what is typed now
+      if (!mounted) return;
+      final act = s.find.launchAction;          // "open bluetooth": Enter opens the setting, not the first file
+      if (act != null) {
+        unawaited(s.find.runAction(act));
+        return;
+      }
+      _open();
+    }));
   }
 
   void _action(ResultAction a) {
@@ -1063,7 +1066,7 @@ class _Suggestions extends StatelessWidget {
               'Clear',
               dashed: true,
               onTap: () => unawaited(recent!.clear()),
-              tooltip: 'Forget these searches',
+              tooltip: 'Clear your search history',
             ),
           ];
         } else {

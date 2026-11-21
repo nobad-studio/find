@@ -53,36 +53,72 @@ def start_now(what, exe=ui_exe, start=None, clock=time.monotonic):
     return clock()
 
 
-class Launcher:
-    """show(what): the `show` event when a UI is connected, else start one on that page (once per STARTING)."""
+def window_for(what):
+    """The UI process a page lives in: the bar has its own (--bar), every other page is in the main window."""
+    return "bar" if what == "bar" else "main"
 
-    def __init__(self, events, connected, exe=ui_exe, start=None, clock=time.monotonic, note=None):
+
+class Launcher:
+    """show(what): the `show` event when a UI that has that window is connected, else start one on that page (once
+    per STARTING).
+
+    The main window and the quick find bar are separate UI processes, and each acts only on its own show events.
+    Before this, any connected UI counted: with the main window closed (its process ends) and the bar's process
+    still running hidden, the tray's "Open NOBAD Find" sent a show only the bar heard, and nothing opened. can_show
+    (rpc.Events.can_show) says whether a UI with that window is connected."""
+
+    def __init__(self, events, connected, exe=ui_exe, start=None, clock=time.monotonic, note=None, can_show=None):
         from . import winapi
         self.events, self.connected, self.exe, self.clock = events, connected, exe, clock
+        if can_show is None:
+            can_show = getattr(events, "can_show", None)
+        self.can_show = can_show if callable(can_show) else (lambda window: connected())
         self.start = start or winapi.start_outside_job
         self.note = note or (lambda text: None)
-        self._started_at = None
+        self._started_at = {}                   # "main" / "bar" -> when that UI was started
+        self._pending_text = None               # words for a main window that is starting (the bar's Alt+Enter)
         self._told = False
 
-    def starting(self):
-        """A UI was started less than STARTING seconds ago and hasn't connected yet."""
-        return (self._started_at is not None and not self.connected()
-                and self.clock() - self._started_at < STARTING)
+    def _starting(self, window, now):
+        at = self._started_at.get(window)
+        return at is not None and now - at < STARTING and not self.can_show(window)
 
-    def started(self, at):
-        """A UI was started at `at` (start_now): within STARTING, show() waits for it instead of starting another.
-        None: the UI that was starting has shown its window."""
-        self._started_at = at
+    def starting(self):
+        """A UI was started less than STARTING seconds ago and its window isn't connected yet."""
+        now = self.clock()
+        return any(self._starting(w, now) for w in ("main", "bar"))
+
+    def started(self, at, what="main"):
+        """A UI was started at `at` (start_now) on `what`: within STARTING, show() waits for it instead of starting
+        another. None: the main window that was starting has shown its window (Wiring._shown); words the bar
+        handed over while it started are given to it now."""
+        window = window_for(what)
+        if at is not None:
+            self._started_at[window] = at
+            return
+        self._started_at.pop(window, None)
+        text, self._pending_text = self._pending_text, None
+        if text and window == "main":
+            self.events.show("main", text)
 
     def here(self, path):
         return self.events.here(path)
 
     def show(self, what, text=None):
-        if self.connected():
-            self._started_at = None
-            return self.events.show(what, text)
+        window = window_for(what)
+        if self.can_show(window):
+            self._started_at.pop(window, None)
+            sent = self.events.show(what, text)
+            if sent != 0:                       # a count from rpc.Events; None from fakes
+                return sent
+            # every UI with that window failed to take the event (its pipe broke as it was ending): start one
+            log(f"no NOBAD Find window took the show event ({what}): starting the UI", "warn")
         now = self.clock()
-        if self._started_at is not None and now - self._started_at < STARTING:
+        if self._starting(window, now):
+            if text and window == "main":
+                self._pending_text = text
+            log(f"the UI ({PAGES.get(what, what)}) was started {now - self._started_at[window]:.0f} s ago and "
+                "hasn't connected yet: waiting for it")
             return None                         # one is starting already; it opens on the page it was given
         exe = self.exe()
         if not exe:
@@ -93,7 +129,8 @@ class Launcher:
             return None
         try:
             self.start(argv_for(exe, what))
-            self._started_at = now
+            self._started_at[window] = now
+            self._pending_text = text if window == "main" and text else None
             log(f"started the UI ({PAGES.get(what, what)})")
         except OSError as e:
             log(f"could not start the UI (error {e.winerror or e.errno})", "warn")

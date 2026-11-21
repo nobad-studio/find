@@ -37,7 +37,8 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 1. `hello`: check `protocol` is 1 (refuse a newer engine and say why). `pid` is the engine's process id: call
    `AllowSetForegroundWindow(pid)` before `pick_folder` and `wsearch_set`, so their windows can come to the front.
 2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting`;
-   bar: `show quitting`).
+   bar: `show quitting`). The engine tells the two apart by this (a client with `here` is a main window): a
+   `show` for a window no connected UI has starts that UI instead.
 3. `status` once (events only report changes), then `ui_shown` when the window is on screen.
 4. On `ui_hidden`/close, say `ui_hidden`. If the pipe breaks, reconnect with backoff, unless `quitting` came first.
 
@@ -63,7 +64,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   is how the question was read (show as chips), `terms` the words to highlight, `notes` sentences for the user,
   `more` = there were more matches than shown, `error` = `""` or a sentence when the search failed.
   - `Filters` (all optional, `""` = off): `kind` (`pdf document spreadsheet slides text code email image video audio
-    archive ebook app folder`), `modified` (`today week month year`), `size` (`small medium large`), `folder`
+    archive ebook app folder secret`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
     (`here`, a known folder word, or a folder path already in the index; ≤ 2000), `sort` (`newest oldest largest
     name`). Any other key or word is refused (`-32602`).
   - `Result`: `{id: int, path, name, dir, kind: string, size: int|null, mtime: number|null (seconds since 1970),
@@ -117,11 +118,14 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `starting names text images meaning photos watching error`, `paused` = `""` or why indexing is paused.
 - **`status_full`** `{}` → `Status`: everything the Indexing page shows. Always has: the counters (`files texts
   vectors with_text chunks name_vectors photo_vectors errors rate last_scan db_bytes`), `encrypted`, `version`,
-  `model`/`photo_model` (`{state: missing|downloading|ready, got, size: bytes, error}`), `memory_mb`,
+  `model`/`photo_model` (`{state: missing|downloading|ready, got, size: bytes, error}`: the text / photo model in use, or the old fixed download while it runs), `memory_mb`,
   `models_loaded`, `admin`, `roots`, `ocr` (`true`, or a sentence saying why Windows OCR isn't there), `drives`
   (`[{root, type, label, present}]`), `level`, `reason`, `paused`, `phase`, `plan`, `history` (the last 5 minutes:
   `[{t, cpu, gpu, find_cpu, find_mb, level}]`, one point per 2 s), `resources` (`{cpu, memory_mb, read_mb_s, gpu,
-  processes: [{name, pid, cpu, memory_mb}]}`), `phases` (`[{id: names|text|ocr|meaning|photos|watching, label,
+  processes: [{name, role, about, pid, cpu, memory_mb, private_mb, age_s|null, readable, note}]}`: every process of
+  NOBAD Find's own and nothing else, the engine first; `role` is `engine window bar text meaning photo turbo
+  open_with ending mp_helper client other`, `memory_mb` the working set, `private_mb` the committed memory, `note`
+  `""` or idle/starting/ending/not readable; sampled at most every 2 s; the totals count the UIs too), `phases` (`[{id: names|text|ocr|meaning|photos|watching, label,
   state: off|running|waiting|done, done, total|null, rate, eta_s|null}]`), `models` (cards: `[{id:
   meaning|photo|ocr, name, license, size_mb, on_disk, loaded, memory_mb|null, device, items, download:
   null|{got_mb, size_mb, mb_s}}]`), `activity` (newest first, at most 50: `[{t, kind, text}]`). Other keys may
@@ -160,7 +164,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`download_model`** `{}` → `Ok`: download the meaning model; needs `allow_model_download` on (else `ok: false` with a
   sentence). Progress comes as `download` events.
 - **`download_photo_model`** `{}` → `Ok`: the same for the photo model (`allow_photo_model_download`).
-  Both stay for older UIs; the 0.8.0 Settings → Models page uses the methods below.
+  Both stay for older UIs (they always fetch MiniLM / SigLIP base); every download button of the UI uses `model_download` below.
 - **`models`** `{}` → `{pc: Hardware, tier_recommended: light|balanced|best, tier_current: light|balanced|best|custom,
   language_focus: english|multilingual|hindi, models: [Model]}`. `Model` = `{id, feature: text|photo|ocr, name, tier,
   licence, source, size_mb, ram_mb, speed_note, languages: [string], improves, builtin, state:
@@ -179,7 +183,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
 - **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command. `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
-- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, ready, installing or error.
+- **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, bps, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, verifying, ready, installing or error. While `downloading`, `got` of `size` bytes have arrived and `bps` is the speed measured over the last few seconds (0 until known); `verifying`: every byte is in and its size and SHA-256 are being checked (again right before the installer runs).
 - **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
 - **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
 - **`model_folder`** `{id}` → `{ok, error}`: opens the folder that model is downloaded to in File Explorer (the models folder when it isn't there yet). Only a catalog id, never a path; each model in `models` also sends its `dir` ("" when built into Windows).
@@ -205,16 +209,18 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 ### What is indexed, and the turbo index
 
 - **`scope_info`** `{}` → `{scope: whole_pc|my_files|custom, roots: [string], categories: [Category]}`: what NOBAD Find
-  indexes, for Settings. Nothing is skipped silently: every category is listed. `Category` = `{id, name, why,
-  examples: [string], included: bool, locked: bool, count: int|null}`, `id` one of `system` (Windows, Program Files,
+  indexes, for Settings. Nothing is skipped silently: every category is listed. `Category` = `{id, name, summary, why,
+  examples: [string], included: bool, locked: bool, names_only: none|some|all, count: int|null}`, `id` one of `system` (Windows, Program Files,
   ProgramData: setting `include_system`), `caches` (AppData, temp, node_modules, .git, venv: `include_caches`),
   `secrets` (keys, browser passwords, cookies and history, Windows Credentials/Vault/Protect, chat and developer
   tokens, password vaults, wallets: `include_secrets`, **off by default, names only**, the content is never read;
   browser profiles and app databases are names only in `caches` too), `other_profiles` (other accounts' files, recycle bins, System Volume Information: always out, `locked`),
   `removable` (`index_removable`), `network` (`index_network`). `locked` = the user can't change it here (other
   people's files; system folders aren't part of My files; USB/network in Custom come from the folder list). `count`
-  = entries of that category in the index, `null` when it can't be counted cheaply. Show `name`, `why` and
-  `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
+  = entries of that category in the index, `null` when it can't be counted cheaply. `summary` = one short line for
+  its card, `why` the full explanation. `names_only` = `all` (only names are indexed, the contents are never read:
+  `secrets`), `some` (part of it is names only: browser profiles and app databases in `caches`) or `none`. Show
+  `name`, `summary`, `why` and `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string}`: the optional turbo index, an elevated helper that
   reads NTFS's own file list and change journal (names, sizes, times and changes only, never file contents).
@@ -255,8 +261,9 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`activity`** → `{t, kind: level|kill|model|info, text}`: a new Recent decisions entry (within half a second).
 - **`download`** → `{id: meaning|photo|<model id>, state: missing|downloading|ready, got_mb, size_mb, mb_s, error}`: a model
   download moved on: progress up to twice a second while `downloading`, then `ready`, or `missing` with `error` saying
-  why it failed.
-- **`update`** → `UpdateState`: an update was found, is downloading, ready, installing or failed.
+  why it failed. `meaning` / `photo` follow the model in use for that feature (see `status_full`).
+- **`update`** → `UpdateState`: an update was found, is downloading (progress at most 4 times a second while bytes
+  arrive), verifying, ready, installing or failed. Install goes downloading → verifying → installing.
 - **`notice`** → `{text}`: a sentence to show as a toast (for example a hotkey another app took). A notice nobody was
   subscribed to waits (the last 5) and goes to the first connection that subscribes to `notice`.
 - **`models`** → the `models` result: something in it changed (a download changed state, a model was chosen,

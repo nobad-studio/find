@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/engine/engine_api.dart';
 import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/fake_engine.dart';
+import 'package:nobad_find/engine/models/models_info.dart';
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/engine/models/status.dart';
 import 'package:nobad_find/state/search_controller.dart';
@@ -96,7 +97,7 @@ void main() {
 
       expect(await f.forgetSelected((q) async => true), isTrue);
       expect(e.forgotten, [1]);
-      expect(toasts.message, 'Forgotten. Undo it in Settings → Never search.');
+      expect(toasts.message, 'Forgotten. Undo it in Settings → What to index → Never index.');
       expect(f.results, isEmpty); // searched again
       f.dispose();
       toasts.dispose();
@@ -206,14 +207,51 @@ void main() {
       toasts.dispose();
     });
 
-    test('a model download asks first, then allows and starts it', () async {
+    test('Download… gets the recommended model with model_download, after a yes, and uses it', () async {
       final e = FakeEngine();
       final toasts = ToastController();
       final c = SettingsController(e, toasts: toasts);
       await c.load();
-      expect(await c.download('meaning', consent: () async => false), isFalse);
+      final want = e.modelsInfo.byFeature('text').firstWhere((m) => m.recommended);
+      ModelInfo? asked;
+      expect(
+        await c.download(
+          'meaning',
+          consent: (m) async {
+            asked = m;
+            return false;
+          },
+        ),
+        isFalse,
+      );
+      expect(asked?.id, want.id);
+      expect(e.calls, isNot(contains('model_download')));
+      expect(await c.download('meaning', consent: (_) async => true), isTrue);
+      expect(e.calls, containsAllInOrder(['model_download', 'model_use']));
       expect(e.calls, isNot(contains('download_meaning')));
-      expect(await c.download('meaning', consent: () async => true), isTrue);
+      expect(toasts.message, 'Downloading ${want.name}…');
+      // while meaning search is on, the model in use is the one it gets
+      final chosen = e.modelsInfo.byFeature('text').firstWhere((m) => !m.recommended);
+      expect(
+        SettingsController.modelFor(
+          'meaning',
+          e.modelsInfo,
+          c.settings.merged({'semantic': true, 'text_model': chosen.id}),
+        )?.id,
+        chosen.id,
+      );
+      c.dispose();
+      toasts.dispose();
+    });
+
+    test('an engine without the model catalogue: its own fixed download, after a yes', () async {
+      final e = FakeEngine()..old = true;
+      final toasts = ToastController();
+      final c = SettingsController(e, toasts: toasts);
+      await c.load();
+      expect(await c.download('meaning', consent: (_) async => false), isFalse);
+      expect(e.calls, isNot(contains('download_meaning')));
+      expect(await c.download('meaning', consent: (m) async => m == null), isTrue);
       expect(c.settings.flag('allow_model_download'), isTrue);
       expect(e.calls, contains('download_meaning'));
       expect(toasts.message, 'Downloading the model…');

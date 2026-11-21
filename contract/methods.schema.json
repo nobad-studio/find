@@ -1216,7 +1216,8 @@
             "archive",
             "ebook",
             "app",
-            "folder"
+            "folder",
+            "secret"
           ]
         },
         "modified": {
@@ -1655,25 +1656,74 @@
     },
     "process": {
       "type": "object",
+      "description": "One of NOBAD Find's own processes (never another program's): what it is and what it uses.",
       "properties": {
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "What it is, in plain words (Text reader worker, The search bar)"
+        },
+        "role": {
+          "enum": [
+            "engine",
+            "window",
+            "bar",
+            "text",
+            "meaning",
+            "photo",
+            "turbo",
+            "open_with",
+            "ending",
+            "mp_helper",
+            "client",
+            "other"
+          ]
+        },
+        "about": {
+          "type": "string",
+          "description": "One line on what it does"
         },
         "pid": {
           "type": "integer"
         },
         "cpu": {
-          "type": "number"
+          "type": "number",
+          "description": "Percent of the whole PC since the last sample"
         },
         "memory_mb": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Working set"
+        },
+        "private_mb": {
+          "type": "integer",
+          "description": "Private (committed) memory"
+        },
+        "age_s": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Seconds since it started; null when Windows didn't say"
+        },
+        "readable": {
+          "type": "boolean",
+          "description": "false: Windows didn't let the engine read it (the elevated turbo helper); its numbers are 0"
+        },
+        "note": {
+          "type": "string",
+          "description": "Empty, or a short note: idle, starting, ending, not readable"
         }
       },
       "required": [
         "name",
+        "role",
+        "about",
         "pid",
         "cpu",
-        "memory_mb"
+        "memory_mb",
+        "private_mb",
+        "age_s",
+        "readable",
+        "note"
       ],
       "additionalProperties": false
     },
@@ -2217,6 +2267,10 @@
         "name": {
           "type": "string"
         },
+        "summary": {
+          "type": "string",
+          "description": "One short line for the category's card (the full explanation is why)."
+        },
         "why": {
           "type": "string",
           "description": "A sentence or two for the user: what it is and why it's in or out."
@@ -2235,6 +2289,14 @@
           "type": "boolean",
           "description": "The user can't change it here (other people's files are always out; system folders aren't part of My files; USB/network drives in Custom come from the folder list)."
         },
+        "names_only": {
+          "enum": [
+            "none",
+            "some",
+            "all"
+          ],
+          "description": "all: only the names of these files are indexed, their contents are never read (secrets); some: part of it is names only (browser profiles and app databases in caches); none: read like any other file."
+        },
         "count": {
           "type": [
             "integer",
@@ -2246,10 +2308,12 @@
       "required": [
         "id",
         "name",
+        "summary",
         "why",
         "examples",
         "included",
         "locked",
+        "names_only",
         "count"
       ],
       "additionalProperties": false
@@ -2493,7 +2557,8 @@
           "enum": [
             "dark",
             "light"
-          ]
+          ],
+          "description": "Kept so older UIs and settings files still load; the UI is dark only since 0.8.5 and ignores it."
         },
         "glass": {
           "type": "boolean"
@@ -2709,7 +2774,8 @@
           "enum": [
             "dark",
             "light"
-          ]
+          ],
+          "description": "Kept so older UIs and settings files still load; the UI is dark only since 0.8.5 and ignores it."
         },
         "glass": {
           "type": "boolean"
@@ -3137,6 +3203,7 @@
             "uptodate",
             "available",
             "downloading",
+            "verifying",
             "ready",
             "installing",
             "error"
@@ -3158,6 +3225,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "Bytes downloaded so far."
+        },
+        "bps": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Download speed in bytes per second, measured over the last few seconds; 0 when not downloading or not known yet."
         },
         "notes_url": {
           "type": "string"
@@ -3181,6 +3253,7 @@
         "latest",
         "size",
         "got",
+        "bps",
         "notes_url",
         "error",
         "auto",

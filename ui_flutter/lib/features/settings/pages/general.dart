@@ -18,7 +18,8 @@ class GeneralPage extends StatelessWidget {
           SwitchSetting(
             'glass',
             'See-through window',
-            "Windows 11 Mica behind the window. Follows Windows' own Transparency effects switch.",
+            "Windows 11 Mica behind the window, while Windows' own Transparency effects switch is on "
+                '(Settings > Personalization > Colors). With that off the window stays solid.',
           ),
         ],
       ),

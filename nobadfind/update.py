@@ -30,6 +30,8 @@ EVERY_S = 24 * 3600
 TAG = re.compile(r"^find-v(\d+)\.(\d+)\.(\d+)$")
 SILENT = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"]
 MAX_INSTALLER = 400 * 1024 * 1024
+PROGRESS_EVERY = 0.25           # seconds between download progress events (at most 4 a second)
+SPEED_WINDOW = 3.0              # seconds of samples the download speed is measured over
 
 
 def version_tuple(v):
@@ -73,9 +75,14 @@ def read_release(rel):
 
 
 class Updater:
-    """state: idle | checking | uptodate | available | downloading | ready | installing | error."""
+    """state: idle | checking | uptodate | available | downloading | verifying | ready | installing | error.
 
-    def __init__(self, settings, data_dir=DATA_DIR, get=None, start=None, clock=time.time, current=APP_VER):
+    downloading: got of size bytes have arrived, bps is the speed measured over the last few seconds (0 until
+    known); an update event goes out at most every PROGRESS_EVERY seconds while bytes arrive. verifying: all
+    bytes are in and the size and SHA-256 are being checked (again just before the installer runs)."""
+
+    def __init__(self, settings, data_dir=DATA_DIR, get=None, start=None, clock=time.time, current=APP_VER,
+                 mono=time.monotonic):
         self.settings = settings
         self.dir = os.path.join(data_dir, "updates")
         self._get = get or _get
@@ -84,6 +91,10 @@ class Updater:
         self.current = current
         self.state, self.error, self.release = "idle", "", None
         self.got = 0
+        self.bps = 0
+        self._mono = mono
+        self._samples = []                       # (monotonic time, bytes) while downloading, for the speed
+        self._sent_at = None                     # when the last progress event went out
         self.checked_at = 0.0
         self._lock = threading.Lock()
         self._busy = None
@@ -92,12 +103,15 @@ class Updater:
     def snapshot(self):
         r = self.release or {}
         return {"state": self.state, "current": self.current, "latest": r.get("version", ""),
-                "size": int(r.get("size") or 0), "got": int(self.got), "notes_url": r.get("notes_url", ""),
-                "error": self.error, "auto": bool(self.settings.get("update_check")),
+                "size": int(r.get("size") or 0), "got": int(self.got), "bps": int(self.bps),
+                "notes_url": r.get("notes_url", ""), "error": self.error, "auto": bool(self.settings.get("update_check")),
                 "checked_at": int(self.checked_at)}
 
     def _set(self, state, error=""):
         self.state, self.error = state, error
+        self._emit()
+
+    def _emit(self):
         cb = self.on_change
         if cb is not None:
             try:
@@ -108,12 +122,12 @@ class Updater:
     # ---------- check ----------
     def due(self):
         return bool(self.settings.get("update_check")) and self._clock() - self.checked_at >= EVERY_S \
-            and self.state not in ("downloading", "ready", "installing")
+            and self.state not in ("downloading", "verifying", "ready", "installing")
 
     def check(self):
         """Ask GitHub for the latest release. Never raises; the state says what came of it."""
         with self._lock:
-            if self.state in ("checking", "downloading", "installing"):
+            if self.state in ("checking", "downloading", "verifying", "installing"):
                 return self.snapshot()
             self._set("checking")
         try:
@@ -165,15 +179,36 @@ class Updater:
         self._sha_cache = (rel["version"], sha)
         return sha
 
-    def download(self, fetch=None):
-        """The installer of the release found by check, into <data>/updates, checked. True when it's ready."""
+    def _progress(self, got):
+        """Bytes arrived (the download thread): the speed over the last SPEED_WINDOW seconds, and an update event
+        at most every PROGRESS_EVERY seconds. The last byte moves the state on to verifying at once."""
+        size = int((self.release or {}).get("size") or 0)
+        self.got = got
+        now = self._mono()
+        if size and got >= size:
+            self.bps = 0
+            self._set("verifying")
+            return
+        if self._sent_at is not None and now - self._sent_at < PROGRESS_EVERY:
+            return
+        self._sent_at = now
+        self._samples.append((now, got))
+        while len(self._samples) > 2 and now - self._samples[1][0] >= SPEED_WINDOW:
+            self._samples.pop(0)
+        t0, g0 = self._samples[0]
+        self.bps = int((got - g0) / (now - t0)) if now > t0 and got >= g0 else 0
+        self._emit()
+
+    def download(self, fetch=None, then_install=False):
+        """The installer of the release found by check, into <data>/updates, checked. True when it's ready.
+        then_install: the state stays verifying (install() comes next) instead of passing through ready."""
         rel = self.release
         if rel is None or version_tuple(rel["version"]) <= version_tuple(self.current):
             self._set("error", "There is no newer version to install.")
             return False
         try:
+            self.got, self.bps, self._samples, self._sent_at = 0, 0, [], None
             self._set("downloading")
-            self.got = 0
             sha = self._want_sha(rel)
             os.makedirs(self.dir, exist_ok=True)
             for f in os.listdir(self.dir):                 # older downloads go
@@ -185,14 +220,19 @@ class Updater:
             dest = self._path(rel)
 
             def progress(_name, got, _size):
-                self.got = got
+                self._progress(got)
             (fetch or _fetch)(rel["url"], dest, rel["size"], sha, rel["name"], progress)
-            self.got = rel["size"]
-            self._set("ready")
+            self.got, self.bps = rel["size"], 0
             log(f"update: NOBAD Find {rel['version']} downloaded and checked")
+            if then_install:
+                if self.state != "verifying":
+                    self._set("verifying")
+                return True
+            self._set("ready")
             return True
         except Exception as e:
             log(f"update download failed: {type(e).__name__}: {e}", "warn")
+            self.bps = 0
             self._set("error", "The update didn't download completely or didn't match its checksum. Try again.")
             return False
 
@@ -200,10 +240,12 @@ class Updater:
         """Run the checked installer silently, outside NOBAD Find's job. It closes NOBAD Find, installs over it
         and starts it again. True when it started."""
         rel = self.release
-        if self.state != "ready" or rel is None:
+        if self.state not in ("ready", "verifying") or rel is None:
             return False
         p = self._path(rel)
         try:
+            if self.state != "verifying":
+                self._set("verifying")
             if os.path.getsize(p) != rel["size"] or _sha256(p) != self._want_sha(rel, cached=True):
                 raise IOError("the downloaded installer changed")
             self._set("installing")

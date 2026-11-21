@@ -267,17 +267,60 @@ class HistoryPoint {
   }
 }
 
+/// One of NOBAD Find's own processes, as the engine names it (status_full resources.processes).
 class ProcessUse {
-  const ProcessUse({required this.name, this.pid = 0, this.cpu = 0, this.memoryMb = 0});
+  const ProcessUse({
+    required this.name,
+    this.role = '',
+    this.about = '',
+    this.pid = 0,
+    this.cpu = 0,
+    this.memoryMb = 0,
+    this.privateMb,
+    this.ageS,
+    this.readable = true,
+    this.note = '',
+  });
   final String name;
+
+  /// engine window bar text meaning photo turbo open_with ending mp_helper client other ('' from an older engine).
+  final String role;
+
+  /// One line on what it does.
+  final String about;
   final int pid;
   final double cpu;
+
+  /// Working set.
   final double memoryMb;
+
+  /// Private (committed) memory; null from an older engine.
+  final double? privateMb;
+
+  /// Seconds since it started; null when unknown.
+  final int? ageS;
+
+  /// False: Windows didn't let the engine read it (the elevated turbo helper), so its numbers mean nothing.
+  final bool readable;
+
+  /// '' or a short note: idle, starting, ending.
+  final String note;
 
   static ProcessUse? fromJson(Object? v) {
     final m = jMap(v);
     if (m.isEmpty) return null;
-    return ProcessUse(name: jStr(m['name']), pid: jInt(m['pid']), cpu: jNum(m['cpu']), memoryMb: jNum(m['memory_mb']));
+    return ProcessUse(
+      name: jStr(m['name']),
+      role: jStr(m['role']),
+      about: jStr(m['about']),
+      pid: jInt(m['pid']),
+      cpu: jNum(m['cpu']),
+      memoryMb: jNum(m['memory_mb']),
+      privateMb: jNumOrNull(m['private_mb']),
+      ageS: jIntOrNull(m['age_s']),
+      readable: m['readable'] != false,
+      note: jStr(m['note']),
+    );
   }
 }
 

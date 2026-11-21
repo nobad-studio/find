@@ -123,6 +123,9 @@ class _IndexingScreenState extends State<IndexingScreen> {
 
   /// Narrow: one column. Wide: a dashboard, what it is doing, the models and the index on the left; what it
   /// uses, recent decisions, folders and drives on the right.
+  /// How many sections at the top span the width on a wide window (doing, uses, processes).
+  static const _spanning = 3;
+
   List<Widget> _layout(List<Widget> flat, bool wide) {
     if (!wide) return flat;
     final sections = <List<Widget>>[];
@@ -130,8 +133,12 @@ class _IndexingScreenState extends State<IndexingScreen> {
       if (w is SectionTitle || sections.isEmpty) sections.add([]);
       sections.last.add(w);
     }
-    // what it is doing spans the width (its rows need room); the rest in two columns
-    final first = sections.isEmpty ? <Widget>[] : sections.removeAt(0);
+    // what it is doing, what it uses and the processes span the width (their rows need room); the rest in two
+    // columns
+    final first = <Widget>[];
+    for (var i = 0; i < _spanning && sections.isNotEmpty; i++) {
+      first.addAll(sections.removeAt(0));
+    }
     final left = <Widget>[], right = <Widget>[];
     for (var i = 0; i < sections.length; i++) {
       (i.isEven ? left : right).addAll(sections[i]);
@@ -181,7 +188,8 @@ class _IndexingScreenState extends State<IndexingScreen> {
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
         child: ResourcesChart(history: d.history),
       ),
-      if (r.processes.isNotEmpty) ...[const SizedBox(height: 10), _ProcessTable(r.processes)],
+      const SectionTitle('Processes'),
+      _ProcessTable(r.processes),
       const SectionTitle('Models'),
       TileGrid(min: 250, children: [for (final m in d.models) _ModelCardView(m)]),
       const SectionTitle('Recent decisions'),
@@ -363,54 +371,118 @@ class _PhaseCard extends StatelessWidget {
   }
 }
 
+/// Every process of NOBAD Find's own, as Task Manager lists them under it: what each one is in plain words, a line
+/// on what it does, its PID, processor, memory (working set and private) and how long it has run, with a short
+/// note when it is idle, starting or ending. The engine names them; this only lays them out.
 class _ProcessTable extends StatelessWidget {
   const _ProcessTable(this.rows);
   final List<ProcessUse> rows;
 
+  /// "0.4%" under 10, "12%" above: an idle worker isn't "0%" when it isn't.
+  static String cpu(double v) => !v.isFinite ? '–' : (v < 10 ? '${v.toStringAsFixed(1)}%' : '${v.round()}%');
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    Widget cell(String t, {bool head = false, bool right = true, int flex = 2}) => Expanded(
-      flex: flex,
+    Widget cell(String t, {bool head = false}) => Expanded(
+      flex: 2,
       child: Text(
         t,
-        textAlign: right ? TextAlign.right : TextAlign.left,
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: head ? NbType.text(NbSize.small, c.dim) : NbType.data(NbSize.caption + .5, c.muted),
       ),
     );
-    return NbPanel(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                cell('Process', head: true, right: false, flex: 4),
-                cell('PID', head: true),
-                cell('Processor', head: true),
-                cell('Memory', head: true),
-              ],
-            ),
+    if (rows.isEmpty) {
+      return NbPanel(
+        padding: const EdgeInsets.all(14),
+        child: Text('No process list from the engine yet.', style: NbType.text(13, c.dim)),
+      );
+    }
+    final mem = rows.fold<double>(0, (a, p) => a + (p.readable ? p.memoryMb : 0));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Text(
+            '${rows.length} ${rows.length == 1 ? 'process' : 'processes'} of NOBAD Find\'s own, ${mb(mem)} in '
+            'memory together. Memory is the working set, as Task Manager shows it; private is what each one has '
+            'committed.',
+            style: NbType.text(12.5, c.muted, height: 1.4),
           ),
-          Container(height: 1, color: c.line2),
-          for (final p in rows)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: c.line)),
+        ),
+        NbPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Expanded(flex: 7, child: Text('Process', style: NbType.text(NbSize.small, c.dim))),
+                    cell('PID', head: true),
+                    cell('Processor', head: true),
+                    cell('Memory', head: true),
+                    cell('Private', head: true),
+                    cell('Running', head: true),
+                  ],
+                ),
               ),
-              child: Row(
-                children: [
-                  Expanded(flex: 4, child: Text(p.name, style: NbType.text(13, c.text))),
-                  cell('${p.pid}'),
-                  cell(pct(p.cpu)),
-                  cell(mb(p.memoryMb)),
-                ],
-              ),
-            ),
-        ],
-      ),
+              Container(height: 1, color: c.line2),
+              for (var i = 0; i < rows.length; i++)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    border: i == rows.length - 1 ? null : Border(bottom: BorderSide(color: c.line)),
+                  ),
+                  child: _row(c, rows[i], cell),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _row(NbColors c, ProcessUse p, Widget Function(String, {bool head}) cell) {
+    final busy = p.readable && p.cpu >= 1;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          flex: 7,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(p.name, style: NbType.text(13, c.text, weight: FontWeight.w600, height: 1.3)),
+              if (p.about.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 1, right: 12),
+                  child: Text(p.about, style: NbType.text(NbSize.small, c.dim, height: 1.35)),
+                ),
+              if (p.note.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 12),
+                  child: Text(p.note, style: NbType.text(NbSize.small, c.orange, height: 1.35)),
+                ),
+            ],
+          ),
+        ),
+        cell('${p.pid}'),
+        Expanded(
+          flex: 2,
+          child: Text(
+            p.readable ? cpu(p.cpu) : '–',
+            textAlign: TextAlign.right,
+            style: NbType.data(NbSize.caption + .5, busy ? c.orange : c.muted),
+          ),
+        ),
+        cell(p.readable ? mb(p.memoryMb) : '–'),
+        cell(p.readable && p.privateMb != null ? mb(p.privateMb) : '–'),
+        cell(runningFor(p.ageS)),
+      ],
     );
   }
 }
@@ -477,7 +549,7 @@ class _ModelCardView extends StatelessWidget {
               kind: NbButtonKind.ghost,
               small: true,
               onPressed: () {
-                unawaited(s.settings.download(m.id, consent: () => askDownloadConsent(context, m.id)));
+                unawaited(s.settings.download(m.id, consent: (x) => askConsentFor(context, m.id, x)));
               },
             ),
           ],

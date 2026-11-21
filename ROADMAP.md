@@ -147,7 +147,7 @@ Transparency
       model cards, recent decisions, folders, drives, encryption note, one-time notice
 
 Settings and system
-- [ ] Six pages (General, Indexing, Models, Performance, Privacy & data, About), light/dark theme, glass
+- [ ] Six pages (General, Indexing, Models, Performance, Privacy & data, About), dark theme only (the theme setting is kept for older UIs), glass
 - [ ] Model downloads with consent (pinned revisions, SHA-256), Windows Search switch (elevated, undoable), wipe,
       start with Windows, hotkeys, Quit
 - [ ] Splash, single instance (second start shows the running copy), refuses to run as admin, encrypted index

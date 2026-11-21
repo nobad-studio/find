@@ -102,6 +102,11 @@ Future<bool> askModelConsent(BuildContext context, ModelInfo m) async {
   return r ?? false;
 }
 
+/// The Welcome / Index / Models "Download…" buttons (`SettingsController.download`): the consent for the catalogue
+/// model [m] it will get, or the fixed [model] offer from an engine without the catalogue (m null).
+Future<bool> askConsentFor(BuildContext context, String model, ModelInfo? m) =>
+    m == null ? askDownloadConsent(context, model) : askModelConsent(context, m);
+
 Future<bool> askDownloadConsent(BuildContext context, String model) async {
   final offer = ModelOffer.of(model);
   final r = await showDialog<bool>(

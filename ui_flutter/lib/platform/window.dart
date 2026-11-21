@@ -52,10 +52,15 @@ class NoWindow implements WindowControl {
 
 /// Bar geometry in logical pixels (the 0.7.0 quick find bar had the same WIDTH, HEIGHT, ROW, MAX_ROWS).
 abstract final class BarSize {
-  static const width = 640;
+  /// 0.9.5: 840 wide, the list keeps its old 600 and the preview of the selected result takes the rest.
+  static const width = 840;
+  static const preview = 240;
   static const field = 52;
   static const row = 38;
   static const maxRows = 8;
+
+  /// With results on show the window is at least this many rows tall, so the preview has room.
+  static const previewRows = 5;
 
   /// Window height for [rows] result rows (one more pixel for the line above the list).
   static int height(int rows) => rows <= 0 ? field : field + 1 + rows.clamp(0, maxRows) * row;
@@ -280,6 +285,50 @@ bool systemAnimationsOff() {
       final v = a<Int32>();
       if (spi(0x1042, 0, v, 0) == 0) return false; // SPI_GETCLIENTAREAANIMATION
       return v.value == 0;
+    });
+  } on Object {
+    return false;
+  }
+}
+
+/// Tests: the same answer on every PC, instead of this PC's Transparency effects switch.
+bool? debugTransparencyOff;
+
+/// Windows' Settings > Personalization > Colors > "Transparency effects" (HKCU\Software\Microsoft\Windows\
+/// CurrentVersion\Themes\Personalize, EnableTransparency = 0): true when it is off, so the window draws solid even
+/// with the See-through window setting on. False off Windows, or when Windows doesn't say (its default is on).
+bool systemTransparencyOff() {
+  final forced = debugTransparencyOff;
+  if (forced != null) return forced;
+  if (!Platform.isWindows) return false;
+  try {
+    final adv = DynamicLibrary.open('advapi32.dll');
+    final get = adv
+        .lookupFunction<
+          Int32 Function(
+            IntPtr,
+            Pointer<Utf16>,
+            Pointer<Utf16>,
+            Uint32,
+            Pointer<Uint32>,
+            Pointer<Uint32>,
+            Pointer<Uint32>,
+          ),
+          int Function(int, Pointer<Utf16>, Pointer<Utf16>, int, Pointer<Uint32>, Pointer<Uint32>, Pointer<Uint32>)
+        >('RegGetValueW');
+    return using((a) {
+      final v = a<Uint32>();
+      final n = a<Uint32>()..value = 4;
+      final r = get(
+        -0x7FFFFFFF, // HKEY_CURRENT_USER (0x80000001, sign-extended like the Windows headers)
+        r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'.toNativeUtf16(allocator: a),
+        'EnableTransparency'.toNativeUtf16(allocator: a),
+        0x10, // RRF_RT_REG_DWORD
+        nullptr,
+        v,
+        n,
+      );
+      return r == 0 && v.value == 0;
     });
   } on Object {
     return false;

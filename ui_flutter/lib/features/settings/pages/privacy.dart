@@ -69,7 +69,7 @@ class PrivacyPage extends StatelessWidget {
             const SwitchSetting(
               'search_history',
               'Remember my searches',
-              'Keeps the questions you type here, so suggestions can finish them. Only what you search in NOBAD '
+              'Keeps the questions you type here, for suggestions and the recent searches. Only what you search in NOBAD '
                   'Find: nothing from Windows or other programs. Encrypted with the index, at most 200; turning it '
                   'off deletes them.',
             ),
@@ -82,6 +82,7 @@ class PrivacyPage extends StatelessWidget {
                 onPressed: () async {
                   try {
                     final r = await s.engine.historyClear();
+                    unawaited(s.find.recent?.refresh()); // the recent searches are that history too
                     s.toasts.show(r.ok ? 'Search history cleared.' : "Couldn't clear the search history.");
                   } on Object {
                     s.toasts.show("NOBAD Find's engine isn't running.");

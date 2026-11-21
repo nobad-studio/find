@@ -15,6 +15,7 @@ import '../../../engine/models/format.dart';
 import '../../../engine/models/models_info.dart';
 import '../../../engine/models/settings.dart';
 import '../../../state/models_controller.dart';
+import '../../../widgets/badges.dart';
 import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
 import '../../../widgets/glass.dart';
@@ -59,9 +60,7 @@ class _ModelsPageState extends State<ModelsPage> {
       return switch (m.load) {
         ModelsLoad.loading => SizedBox(
           height: 120,
-          child: Center(
-            child: Text('Loading the models…', style: NbType.text(13, NbColors.of(context).muted)),
-          ),
+          child: Center(child: Text('Loading the models…', style: NbType.text(13, NbColors.of(context).muted))),
         ),
         ModelsLoad.ready => _Catalogue(m),
         ModelsLoad.needsNewer => _Legacy(note: 'Choosing between models needs a newer engine. ${m.why}'.trim()),
@@ -256,36 +255,20 @@ class _FeatureGroup extends StatelessWidget {
 /// One model as a card: an avatar for what it does, its name and tags, one line on what it improves, the facts as
 /// chips (download, memory, licence, languages, measured quality), and Details: speed, the measurement, where it
 /// comes from and the folder it's downloaded to (with Open folder), so nothing about it is hidden.
-class _ModelRow extends StatefulWidget {
+class _ModelRow extends StatelessWidget {
   const _ModelRow(this.x, this.m);
   final ModelInfo x;
   final ModelsController m;
 
   @override
-  State<_ModelRow> createState() => _ModelRowState();
-}
-
-class _ModelRowState extends State<_ModelRow> {
-  bool _open = false;
-
-  @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    final x = widget.x;
-    final m = widget.m;
     final p = m.progress(x.id);
     final downloading = x.state == ModelUseState.downloading || p != null;
     final q = x.quality;
     final active = x.state == ModelUseState.active;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-        decoration: BoxDecoration(
-          color: active ? c.orange.withValues(alpha: .06) : c.card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: active ? c.orange.withValues(alpha: .45) : c.line),
-        ),
+    return NbCard(
+        active: active,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -326,13 +309,13 @@ class _ModelRowState extends State<_ModelRow> {
               runSpacing: 6,
               children: [
                 if (x.builtin)
-                  const _Fact(NbGlyph.check, 'Built into Windows')
+                  const NbFact(NbGlyph.check, 'Built into Windows')
                 else if (x.sizeMb > 0)
-                  _Fact(NbGlyph.download, '${x.sizeMb.round()} MB download'),
-                if (x.ramMb > 0) _Fact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
-                if (x.licence.isNotEmpty) _Fact(NbGlyph.shield, x.licence),
-                if (x.languages.isNotEmpty) _Fact(NbGlyph.info, x.languageText),
-                if (q != null) _Fact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
+                  NbFact(NbGlyph.download, '${x.sizeMb.round()} MB download'),
+                if (x.ramMb > 0) NbFact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
+                if (x.licence.isNotEmpty) NbFact(NbGlyph.shield, x.licence),
+                if (x.languages.isNotEmpty) NbFact(NbGlyph.info, x.languageText),
+                if (q != null) NbFact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
               ],
             ),
             if (!x.capable && x.capableReason.isNotEmpty)
@@ -358,19 +341,9 @@ class _ModelRowState extends State<_ModelRow> {
               ),
             ],
             const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: NbButton(
-                _open ? 'Hide details' : 'Details',
-                small: true,
-                kind: NbButtonKind.quiet,
-                onPressed: () => setState(() => _open = !_open),
-              ),
-            ),
-            if (_open) _Details(x: x, m: m),
+            NbDetails(about: x.name, child: _Details(x: x, m: m)),
           ],
         ),
-      ),
     );
   }
 }
@@ -403,33 +376,6 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-class _Fact extends StatelessWidget {
-  const _Fact(this.glyph, this.text);
-  final NbGlyph glyph;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = NbColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.cardHover,
-        borderRadius: NbRadius.pillAll,
-        border: Border.all(color: c.line),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          NbIcon(glyph, size: 12, color: c.dim),
-          const SizedBox(width: 5),
-          Text(text, style: NbType.text(11.5, c.muted, height: 1.3)),
-        ],
-      ),
-    );
-  }
-}
-
 /// Everything else about the model, plainly: how fast, how it measured, where it comes from, where it lives.
 class _Details extends StatelessWidget {
   const _Details({required this.x, required this.m});
@@ -440,17 +386,8 @@ class _Details extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     final q = x.quality;
-    Widget line(String label, Widget value) => Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 118, child: Text(label, style: NbType.text(12, c.dim, height: 1.45))),
-          Expanded(child: value),
-        ],
-      ),
-    );
-    Text val(String s) => Text(s, style: NbType.text(12, c.text, height: 1.45));
+    Widget line(String label, Widget value) => NbDetailLine(label, value);
+    Widget val(String s) => NbDetailLine.text(context, s);
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
       child: Column(
@@ -662,7 +599,7 @@ class _LegacyModelRow extends StatelessWidget {
               'Download',
               small: true,
               onPressed: () {
-                unawaited(s.settings.download(id, consent: () => askDownloadConsent(context, id)));
+                unawaited(s.settings.download(id, consent: (x) => askConsentFor(context, id, x)));
               },
             ),
       below: m.downloading ? NbMeter(fraction: m.percent / 100) : null,

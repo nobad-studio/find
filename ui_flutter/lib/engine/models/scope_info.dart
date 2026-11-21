@@ -17,25 +17,50 @@ enum IndexScope {
   static IndexScope? parse(Object? v) => values.where((s) => s.wire == v).firstOrNull;
 }
 
+/// all: only the names are indexed, the contents are never read (secrets); some: part of it is (browser profiles and
+/// app databases in caches); none: read like any other file (also from an engine that doesn't say).
+enum NamesOnly {
+  none,
+  some,
+  all;
+
+  static NamesOnly parse(Object? v) => values.where((x) => x.name == v).firstOrNull ?? none;
+}
+
 /// One kind of place, listed so nothing is skipped silently.
 class ScopeCategory {
   const ScopeCategory({
     required this.id,
     this.name = '',
+    this.summary = '',
     this.why = '',
     this.examples = const [],
     this.included = false,
     this.locked = false,
+    this.namesOnly = NamesOnly.none,
     this.count,
   });
 
   /// system | caches | secrets | other_profiles | removable | network (others from a newer engine: shown, no switch).
   final String id;
   final String name;
+
+  /// One short line for its card ('' from an older engine: [line] uses the first sentence of [why]).
+  final String summary;
   final String why;
   final List<String> examples;
   final bool included;
   final bool locked;
+
+  /// Whether its files are only listed by name (never read).
+  final NamesOnly namesOnly;
+
+  /// The card's one line: [summary], else the first sentence of [why].
+  String get line {
+    if (summary.isNotEmpty) return summary;
+    final i = why.indexOf('. ');
+    return i < 0 ? why : why.substring(0, i + 1);
+  }
 
   /// Entries of it in the index; null when it can't be counted cheaply.
   final int? count;
@@ -57,10 +82,12 @@ class ScopeCategory {
     return ScopeCategory(
       id: jStr(m['id']),
       name: jStr(m['name']),
+      summary: jStr(m['summary']),
       why: jStr(m['why']),
       examples: jStrs(m['examples']),
       included: jBool(m['included']),
       locked: jBool(m['locked']),
+      namesOnly: NamesOnly.parse(m['names_only']),
       count: jIntOrNull(m['count']),
     );
   }

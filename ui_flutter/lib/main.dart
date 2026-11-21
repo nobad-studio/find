@@ -32,8 +32,8 @@ Future<void> main(List<String> args) async {
   Win32Window.shownCacheBytes = cacheMb << 20;
   SystemChannels.skia.invokeMethod<void>('Skia.setResourceCacheMaxBytes', cacheMb << 20);
   final mode = args.contains('--bar') ? AppMode.bar : AppMode.main;
-  final recent = RecentSearches(mode == AppMode.main ? RecentSearches.defaultFile() : null);
-  await recent.load();
+  // recent searches come from the engine's encrypted history: the plain-text copy older UIs kept goes
+  if (mode == AppMode.main) await RecentSearches.removeOldFile();
   Win32Window.acrylic = mode == AppMode.bar;
   Glass.noBlur = Platform.environment['NOBAD_FIND_NO_BLUR'] == '1';
   final EngineApi engine;
@@ -61,7 +61,7 @@ Future<void> main(List<String> args) async {
       window: Win32Window.create(),
       demo: Demo.fromEnvironment(),
       startPage: AppPage.parse(args),
-      recent: recent,
+      recent: mode == AppMode.main ? RecentSearches(engine) : null,
     ),
   );
   startFrameLog();

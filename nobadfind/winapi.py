@@ -141,7 +141,14 @@ def open_outside_job(path):
 
 def start_outside_job(argv):
     """Start a program of Find's own (the UI, the Open with helper) outside Find's job, as the normal user:
-    an argument list, never a shell string. Raises OSError when Windows refuses the breakaway."""
+    an argument list, never a shell string. Raises OSError when Windows refuses the breakaway.
+    0.9.5: the window asked for it (AllowSetForegroundWindow to the engine), so what starts may take the front;
+    a Settings page opened from the bar used to appear behind the app the user was in."""
+    if WIN:
+        try:
+            user32.AllowSetForegroundWindow(wintypes.DWORD(0xFFFFFFFF))   # ASFW_ANY
+        except (AttributeError, OSError):
+            pass
     return subprocess.Popen(list(argv), creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
 
 

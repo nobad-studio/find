@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import '../app/theme/colors.dart';
 import '../app/theme/tokens.dart';
 import '../app/theme/typography.dart';
+import 'controls.dart';
 import 'icons.dart';
 
 /// Two colours for a tile's gradient, one pair per kind of work.
@@ -84,6 +85,99 @@ class NbFact extends StatelessWidget {
               style: NbType.text(11.5, strong ? c.orange : c.muted, height: 1.3),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The Models and What to index cards' frame: a rounded card, orange-edged when [active] (in use, switched on).
+class NbCard extends StatelessWidget {
+  const NbCard({super.key, required this.child, this.active = false});
+  final Widget child;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        decoration: BoxDecoration(
+          color: active ? c.orange.withValues(alpha: .06) : c.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: active ? c.orange.withValues(alpha: .45) : c.line),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// "Details" under a card: folds [child] (the long text) open and shut. Screen readers hear "Details about [about]"
+/// and whether it is open; the fold animates only when Windows' animation effects are on.
+class NbDetails extends StatefulWidget {
+  const NbDetails({super.key, required this.about, required this.child});
+  final String about;
+  final Widget child;
+
+  @override
+  State<NbDetails> createState() => _NbDetailsState();
+}
+
+class _NbDetailsState extends State<NbDetails> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Semantics(
+            expanded: _open,
+            child: NbButton(
+              _open ? 'Hide details' : 'Details',
+              small: true,
+              kind: NbButtonKind.quiet,
+              semanticLabel: '${_open ? 'Hide details' : 'Details'} about ${widget.about}',
+              onPressed: () => setState(() => _open = !_open),
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: NbMotion.size(context, NbMotion.base),
+          curve: NbMotion.curve,
+          alignment: Alignment.topCenter,
+          child: _open ? widget.child : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+}
+
+/// One line inside Details: a dim label on the left, the value beside it.
+class NbDetailLine extends StatelessWidget {
+  const NbDetailLine(this.label, this.value, {super.key});
+  final String label;
+  final Widget value;
+
+  /// A plain-text value.
+  static Widget text(BuildContext context, String s) =>
+      Text(s, style: NbType.text(12, NbColors.of(context).text, height: 1.45));
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 118, child: Text(label, style: NbType.text(12, c.dim, height: 1.45))),
+          Expanded(child: value),
         ],
       ),
     );

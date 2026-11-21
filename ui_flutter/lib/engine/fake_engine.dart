@@ -661,9 +661,27 @@ class FakeEngine implements EngineApi {
   @override
   Future<ActionResult> updateInstall() => _new('update_install', () {
     if (!updates.canInstall) return const ActionResult(false, 'Check for updates first.');
-    updates = UpdateState(state: 'installing', current: updates.current, latest: updates.latest, size: updates.size,
-        got: updates.size, auto: updates.auto);
+    // like the engine: downloading (got of size), then verifying, then installing; a ready one skips the download
+    updates = updates.copyWith(state: updates.state == 'ready' ? 'verifying' : 'downloading',
+        got: updates.state == 'ready' ? updates.size : 0, bps: 0);
     emit(UpdateEvent(updates));
+    if (live) {
+      // the demo: 4 progress events a second at about 6 MB/s, as the engine sends them
+      Timer.periodic(const Duration(milliseconds: 250), (t) {
+        final u = updates;
+        if (u.state == 'downloading') {
+          final got = u.got + 1572864;
+          updates = got >= u.size ? u.copyWith(state: 'verifying', got: u.size, bps: 0) : u.copyWith(got: got, bps: 6291456);
+        } else if (u.state == 'verifying') {
+          updates = u.copyWith(state: 'installing');
+          t.cancel();
+        } else {
+          t.cancel();
+          return;
+        }
+        emit(UpdateEvent(updates));
+      });
+    }
     return _ok;
   });
 
@@ -702,6 +720,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'system',
           name: 'Windows and programs',
+          summary: 'Windows itself and installed programs.',
           why: "Windows' own files and installed programs: rarely what you look for, and many of them.",
           examples: const [r'C:\Windows', r'C:\Program Files', r'C:\ProgramData'],
           included: sc == IndexScope.wholePc && on('include_system'),
@@ -711,6 +730,8 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'caches',
           name: 'App data and caches',
+          summary: 'What apps keep for themselves, temp folders and developer folders.',
+          namesOnly: NamesOnly.some,
           why: 'Settings, temporary files and build folders apps keep for themselves.',
           examples: const [r'C:\Users\me\AppData', r'C:\Users\me\AppData\Local\Temp', r'…\node_modules', r'…\.git'],
           included: on('include_caches'),
@@ -719,6 +740,8 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'secrets',
           name: 'Keys and password stores',
+          summary: 'Keys, saved browser passwords, sign-in tokens, password vaults and wallets.',
+          namesOnly: NamesOnly.all,
           why: 'SSH keys, password databases, wallets. Names only if you turn it on; their contents are never read.',
           examples: const [r'C:\Users\me\.ssh', r'…\*.kdbx', r'…\wallet.dat'],
           included: on('include_secrets'),
@@ -727,6 +750,7 @@ class FakeEngine implements EngineApi {
         const ScopeCategory(
           id: 'other_profiles',
           name: "Other people's files",
+          summary: 'Other accounts on this PC, recycle bins and restore points.',
           why: "Other accounts on this PC, recycle bins and System Volume Information: never indexed.",
           examples: [r'C:\Users\guest', r'C:\$Recycle.Bin', r'C:\System Volume Information'],
           locked: true,
@@ -734,6 +758,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'removable',
           name: 'USB and external drives',
+          summary: 'Drives you plug in, while they are connected.',
           why: 'Indexed while plugged in; their files stay findable, marked "not connected", when you unplug them.',
           examples: const [r'E:\'],
           included: on('index_removable'),
@@ -743,6 +768,7 @@ class FakeEngine implements EngineApi {
         ScopeCategory(
           id: 'network',
           name: 'Network drives',
+          summary: 'Mapped network drives.',
           why: 'Mapped network drives. Big shares take a while and use your network.',
           examples: const [r'Z:\'],
           included: on('index_network'),
@@ -764,8 +790,15 @@ class FakeEngine implements EngineApi {
   /// The answer at Windows' permission prompt (tests: false = "No").
   bool turboPromptYes = true;
 
+  /// Tests: scope_info answers only after this completes (an engine still counting).
+  Future<void>? scopeWait;
+
   @override
-  Future<ScopeInfo> scopeInfo() => _new('scope_info', () => scope);
+  Future<ScopeInfo> scopeInfo() async {
+    final w = scopeWait;
+    if (w != null && !old) await w;
+    return _new('scope_info', () => scope);
+  }
 
   @override
   Future<TurboState> turboState() => _new('turbo_state', () => turbo);
@@ -873,9 +906,56 @@ class FakeEngine implements EngineApi {
           memoryMb: history.last.findMb,
           readMbS: 3.4,
           processes: [
-            const ProcessUse(name: 'Main', pid: 11240, cpu: 1.2, memoryMb: 186),
-            ProcessUse(name: 'Text reader', pid: 15012, cpu: history.last.findCpu * .6, memoryMb: 142),
-            ProcessUse(name: 'Text reader', pid: 15876, cpu: history.last.findCpu * .4, memoryMb: 131),
+            const ProcessUse(
+              name: 'NOBAD Find engine',
+              role: 'engine',
+              about: 'The main process: the index, searching, watching folders and choosing the pace.',
+              pid: 11240,
+              cpu: 1.2,
+              memoryMb: 186,
+              privateMb: 204,
+              ageS: 2402,
+            ),
+            const ProcessUse(
+              name: 'The window',
+              role: 'window',
+              about: "NOBAD Find's window. Closing it ends this process.",
+              pid: 15436,
+              cpu: .4,
+              memoryMb: 96,
+              privateMb: 122,
+              ageS: 871,
+            ),
+            ProcessUse(
+              name: 'Text reader worker',
+              role: 'text',
+              about: 'Reads the words inside documents, and inside pictures with Windows OCR.',
+              pid: 15012,
+              cpu: history.last.findCpu * .6,
+              memoryMb: 142,
+              privateMb: 118,
+              ageS: 40,
+            ),
+            ProcessUse(
+              name: 'Text reader worker',
+              role: 'text',
+              about: 'Reads the words inside documents, and inside pictures with Windows OCR.',
+              pid: 15876,
+              cpu: history.last.findCpu * .4,
+              memoryMb: 131,
+              privateMb: 109,
+              ageS: 38,
+            ),
+            const ProcessUse(
+              name: 'Meaning worker',
+              role: 'meaning',
+              about: 'Runs the AI model for text, so you can search by what files mean.',
+              pid: 16592,
+              memoryMb: 194,
+              privateMb: 177,
+              ageS: 300,
+              note: 'Idle: waiting for work',
+            ),
           ],
         ),
         phases: [

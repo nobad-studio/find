@@ -9,29 +9,46 @@ import 'package:nobad_find/state/typed_filters.dart';
 import '../support/fake_engine.dart';
 
 void main() {
-  group('recent searches (kept by the UI, on this PC only)', () {
+  group("recent searches (the engine's encrypted search history; no copy in the UI)", () {
     late Directory dir;
     setUp(() => dir = Directory.systemTemp.createTempSync('nf-recent'));
     tearDown(() => dir.deleteSync(recursive: true));
 
-    test('newest first, no repeats, at most 8, kept across starts, clearable', () async {
-      final f = File('${dir.path}/recent.json');
-      final r = RecentSearches(f);
-      for (final w in ['a', 'tax', 'b', 'TAX ', 'c', 'd', 'e', 'f', 'g', 'h']) {
-        r.add(w);
+    test('they are what the engine kept, newest first; Clear clears that history', () async {
+      final e = FakeEngine(suggestions: true);
+      final r = RecentSearches(e);
+      final find = FindController(e, debounce: Duration.zero, recent: r);
+      for (final w in ['tax', 'budget', 'TAX ']) {
+        find.remember(w);
+        await pumpEventQueue();
       }
-      expect(r.items.first, 'h');
-      expect(r.items.where((w) => w.toLowerCase() == 'tax'), hasLength(1));
-      expect(r.items, hasLength(8));
-      await r.save();
-      final again = RecentSearches(f);
-      await again.load();
-      expect(again.items, r.items);
-      await again.clear();
-      expect(again.items, isEmpty);
-      expect(f.existsSync(), isFalse);
-      r.add('   ');
-      expect(r.items.contains(''), isFalse);
+      expect(r.items, ['TAX', 'budget']);
+      expect(e.history, ['TAX', 'budget']);
+      expect(await r.clear(), isTrue);
+      expect(r.items, isEmpty);
+      expect(e.history, isEmpty);
+      find.dispose();
+      r.dispose();
+    });
+
+    test('with "Remember my searches" off nothing is kept or shown', () async {
+      final e = FakeEngine(suggestions: true, settings: {'search_history': false});
+      final r = RecentSearches(e);
+      final find = FindController(e, debounce: Duration.zero, recent: r);
+      find.remember('rent agreement');
+      await pumpEventQueue();
+      await r.refresh();
+      expect(r.items, isEmpty);
+      expect(e.history, isEmpty);
+      find.dispose();
+      r.dispose();
+    });
+
+    test('the plain-text list older versions kept is deleted at start', () async {
+      final old = File('${dir.path}/ui-recent.json')..writeAsStringSync('["tax pdf"]');
+      await RecentSearches.removeOldFile(old);
+      expect(old.existsSync(), isFalse);
+      await RecentSearches.removeOldFile(old); // nothing there: no error
     });
   });
 

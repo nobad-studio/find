@@ -7,5 +7,7 @@ import 'package:nobad_find/platform/window.dart';
 /// Windows Server has animations off). NOBAD_FIND_TEST_MOTION=off runs the suite as on a PC with them off.
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   debugAnimationsOff = Platform.environment['NOBAD_FIND_TEST_MOTION'] == 'off';
+  debugTransparencyOff = false; // likewise Windows' Transparency effects switch
+
   await testMain();
 }

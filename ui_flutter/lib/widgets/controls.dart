@@ -22,6 +22,7 @@ class NbButton extends StatelessWidget {
     this.icon,
     this.small = false,
     this.autofocus = false,
+    this.semanticLabel,
   });
   final String label;
   final VoidCallback? onPressed;
@@ -30,13 +31,16 @@ class NbButton extends StatelessWidget {
   final bool small;
   final bool autofocus;
 
+  /// What screen readers hear when [label] alone is ambiguous ("Details about Network drives"); else [label].
+  final String? semanticLabel;
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     return Pressable(
       onTap: onPressed,
       autofocus: autofocus,
-      semanticLabel: label,
+      semanticLabel: semanticLabel ?? label,
       builder: (context, s) {
         final enabled = s.enabled;
         final (Color bg, Color fg, Color edge) = switch (kind) {
@@ -78,7 +82,14 @@ class NbButton extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (icon != null) ...[NbIcon(icon!, size: small ? 14 : 16, color: fg), const SizedBox(width: 7)],
-                Text(label, style: NbType.text(small ? NbSize.small : 13, fg, weight: FontWeight.w600, height: 1.2)),
+                // with its own semantic label the visible text isn't read a second time
+                ExcludeSemantics(
+                  excluding: semanticLabel != null,
+                  child: Text(
+                    label,
+                    style: NbType.text(small ? NbSize.small : 13, fg, weight: FontWeight.w600, height: 1.2),
+                  ),
+                ),
               ],
             ),
           ),

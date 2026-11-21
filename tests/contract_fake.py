@@ -1,12 +1,14 @@
 """A deterministic engine for the contract transcripts: the real handlers and the real Events, over a fake Api
 whose answers never depend on the PC, the clock or the index. Transcripts are recorded from it and replayed
 against it (tests/test_rpc_contract.py), so the Dart side can parse exactly what the Python side produces."""
+import os
 from nobadfind.activity import Activity
 from nobadfind.const import DEFAULTS
 from nobadfind.rpc import handlers
 from nobadfind.rpc.events import Events
 from nobadfind.settings import coerce
 
+UPDATE_NOTES = "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0"
 RESULT = {"id": 7, "path": "C:\\Users\\me\\Documents\\tax 2025.pdf", "name": "tax 2025.pdf",
           "dir": "C:\\Users\\me\\Documents", "kind": "pdf", "size": 48213, "mtime": 1763400000.0,
           "ago": "2 days ago", "why": ["name matches"], "snippet": "", "weak": False}
@@ -258,7 +260,7 @@ class FakeApi:
 
     def update_state(self):
         """Like Api.update_state with an update found: this is 0.0.0-contract, the newest release 0.9.0."""
-        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0,
+        return {"state": "available", "current": "0.0.0-contract", "latest": "0.9.0", "size": 41_000_000, "got": 0, "bps": 0,
                 "notes_url": "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0", "error": "",
                 "auto": bool(self.settings["update_check"]), "checked_at": 1763600000}
 
@@ -362,20 +364,26 @@ class FakeApi:
 SCOPE_INFO = {
     "scope": "whole_pc", "roots": ["C:\\Users\\me", "C:\\"],
     "categories": [
-        {"id": "system", "name": "Windows and programs", "why": "Windows itself and installed programs.",
+        {"id": "system", "name": "Windows and programs",
+         "summary": "Windows itself and installed programs.", "names_only": "none", "why": "Windows itself and installed programs.",
          "examples": ["C:\\Windows", "C:\\Program Files"], "included": True, "locked": False, "count": 412000},
-        {"id": "caches", "name": "App data, caches and code folders", "why": "Settings and caches apps keep.",
+        {"id": "caches", "name": "App data, caches and code folders",
+         "summary": "What apps keep for themselves.", "names_only": "some", "why": "Settings and caches apps keep.",
          "examples": ["C:\\Users\\me\\AppData", "...\\node_modules"], "included": True, "locked": False,
          "count": 230000},
-        {"id": "secrets", "name": "Keys and password stores", "why": "Off by default; names only when on.",
+        {"id": "secrets", "name": "Keys and password stores",
+         "summary": "Keys and password vaults.", "names_only": "all", "why": "Off by default; names only when on.",
          "examples": ["C:\\Users\\me\\.ssh", "...\\vault.kdbx"], "included": False, "locked": False,
          "count": None},
-        {"id": "other_profiles", "name": "Other people's files", "why": "Never indexed, not even by turbo.",
+        {"id": "other_profiles", "name": "Other people's files",
+         "summary": "Other accounts on this PC.", "names_only": "none", "why": "Never indexed, not even by turbo.",
          "examples": ["C:\\Users\\<another account>", "C:\\System Volume Information"], "included": False,
          "locked": True, "count": 0},
-        {"id": "removable", "name": "USB sticks and SD cards", "why": "Indexed while plugged in.",
+        {"id": "removable", "name": "USB sticks and SD cards",
+         "summary": "Drives you plug in.", "names_only": "none", "why": "Indexed while plugged in.",
          "examples": ["E:\\"], "included": False, "locked": False, "count": None},
-        {"id": "network", "name": "Network drives", "why": "Mapped network drives.", "examples": ["Z:\\"],
+        {"id": "network", "name": "Network drives", "summary": "Mapped network drives.",
+         "names_only": "none", "why": "Mapped network drives.", "examples": ["Z:\\"],
          "included": False, "locked": False, "count": None}]}
 
 STATUS_FULL = {
@@ -391,8 +399,14 @@ STATUS_FULL = {
     "level": "gentle", "reason": "Gentle: you're using the PC",
     "history": [{"t": 1763400000.0, "cpu": 12.5, "gpu": 3.0, "find_cpu": 4.0, "find_mb": 180, "level": "gentle"}],
     "resources": {"cpu": 4.0, "memory_mb": 180, "read_mb_s": 1.5, "gpu": 3.0,
-                  "processes": [{"name": "Main", "pid": 100, "cpu": 2.0, "memory_mb": 120},
-                                {"name": "Text reader", "pid": 101, "cpu": 2.0, "memory_mb": 60}]},
+                  "processes": [{"name": "NOBAD Find engine", "role": "engine",
+                                 "about": "The main process: the index, searching, watching folders and choosing "
+                                          "the pace.", "pid": 100, "cpu": 2.0, "memory_mb": 120, "private_mb": 140,
+                                 "age_s": 600, "readable": True, "note": ""},
+                                {"name": "Text reader worker", "role": "text",
+                                 "about": "Reads the words inside documents, and inside pictures with Windows OCR.",
+                                 "pid": 101, "cpu": 2.0, "memory_mb": 60, "private_mb": 45, "age_s": 30,
+                                 "readable": True, "note": ""}]},
     "phases": [{"id": "names", "label": "Finding file names", "state": "done", "done": 1200, "total": None,
                 "rate": 0.0, "eta_s": None},
                {"id": "text", "label": "Reading documents", "state": "running", "done": 310, "total": 800,
@@ -439,6 +453,20 @@ class Engine:
         self.methods = handlers.methods(self.api, self.events,
                                         lambda: {"app": "NOBAD Find", "version": "0.0.0-contract", "pid": 4242})
 
+    _upd = None
+    _update_at = 0.0
+
+    def _updater(self):
+        if self._upd is None:
+            from nobadfind.update import Updater
+            u = Updater(self.api.settings, data_dir=os.devnull, get=lambda *a, **k: None, start=lambda a: None,
+                        current="0.0.0-contract", mono=lambda: self._update_at)
+            u.release = {"version": "0.9.0", "size": 41_000_000, "notes_url": UPDATE_NOTES}
+            u.checked_at = 1763600000
+            u.on_change = self.events.update
+            self._upd = u
+        return self._upd
+
     def trigger(self, t):
         do = t["do"]
         if do == "tick":
@@ -468,5 +496,16 @@ class Engine:
             if "volume" in t:
                 self.api.turbo["volumes"] = [dict(t["volume"])]
             self.events.turbo(self.api.turbo_state())
+        elif do == "update":
+            # a real update.Updater on a fake clock: the download's progress throttle and speed are the engine's own
+            u = self._updater()
+            if "at" in t:
+                self._update_at = t["at"]
+            if t.get("state") == "downloading":
+                u.got, u.bps, u._samples, u._sent_at = 0, 0, [], None
+            if "got" in t:
+                u._progress(t["got"])
+            elif "state" in t:
+                u._set(t["state"])
         else:
             raise ValueError(f"unknown engine trigger {do!r}")

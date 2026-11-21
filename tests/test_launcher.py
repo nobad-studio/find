@@ -88,3 +88,10 @@ def test_api_search_carries_the_actions(tmp_path):
     assert a.run_action("set:bluetooth")["ok"] and ran
     assert "actions" not in a.search("tax pdf")
     s.close()
+
+
+def test_a_question_naming_an_entry_exactly_wins(tmp_path):
+    """0.9.5, from the reference PC: "windows" and "app" are filler words, so these used to pick a near miss."""
+    L, _ = make(tmp_path)
+    assert titles(L, "open windows update")[0] == "Windows Update"           # was Update history
+    assert titles(L, "open settings app")[0] == "Settings"                   # was Advanced app settings

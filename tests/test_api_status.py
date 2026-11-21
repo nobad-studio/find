@@ -8,6 +8,13 @@ from nobadfind.governor import Decision
 from nobadfind.store import Store
 
 
+@pytest.fixture(autouse=True)
+def no_real_processes(monkeypatch):
+    """The Processes rows come from fakes here: no snapshot of this PC, no command lines read."""
+    monkeypatch.setattr(api_mod.procs, "snapshot", lambda: [])
+    monkeypatch.setattr(api_mod.procs, "command_line", lambda pid: "")
+
+
 class Ix:
     embedder = photo_text = pindex = None
     drive_list = []
@@ -71,7 +78,8 @@ def test_status_has_transparency_keys(tmp_path):
     assert isinstance(r["cpu"], float) and isinstance(r["memory_mb"], int) and isinstance(r["read_mb_s"], float)
     assert r["gpu"] == 2.0 and isinstance(r["processes"], list)
     for p in r["processes"]:
-        assert set(p) == {"name", "pid", "cpu", "memory_mb"}
+        assert set(p) == {"name", "role", "about", "pid", "cpu", "memory_mb", "private_mb", "age_s", "readable",
+                          "note"}
     assert {p["id"] for p in st["phases"]} == {"names", "text", "ocr", "meaning", "rebuild", "photos", "watching"}
     for p in st["phases"]:
         assert p["state"] in ("waiting", "running", "done", "off")
@@ -203,7 +211,7 @@ def test_resource_rates_are_deltas(tmp_path, monkeypatch):
     assert r["read_mb_s"] == 2.0
     assert r["cpu"] == round(5.0 / 10 / cores * 100, 1)
     proc = {p["pid"]: p for p in r["processes"]}
-    assert proc[os.getpid()]["name"] == "Main" and proc[999]["name"] == "Helper"
+    assert proc[os.getpid()]["role"] == "engine" and proc[999]["role"] == "other"
     assert proc[999]["cpu"] == round(5.0 / 10 / cores * 100, 1) and proc[os.getpid()]["cpu"] == 0.0
     s.close()
 

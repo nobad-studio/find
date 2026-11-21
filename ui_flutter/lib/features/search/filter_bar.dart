@@ -24,9 +24,13 @@ class FilterBar extends StatelessWidget {
     final s = AppScope.of(context);
     final find = s.find;
     return ListenableBuilder(
-      listenable: find,
+      listenable: Listenable.merge([find, s.settings]),
       builder: (context, _) {
         final f = find.filters;
+        // 0.9.5: Keys & passwords only while that category is indexed (Settings > What to index), names only
+        final kinds = s.settings.settings.flag('include_secrets') || f.kind == 'secret'
+            ? [...FilterChoices.kind, FilterChoices.secret]
+            : FilterChoices.kind;
         void set(SearchFilters next) {
           find.setFilters(next);
           onDone?.call();
@@ -45,7 +49,7 @@ class FilterBar extends StatelessWidget {
                 label: 'Kind',
                 compact: true,
                 value: f.kind,
-                options: FilterChoices.kind,
+                options: kinds,
                 highlight: f.kind.isNotEmpty,
                 onChanged: (v) => set(f.copyWith(kind: v)),
               ),

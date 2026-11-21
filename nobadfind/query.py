@@ -136,7 +136,7 @@ class Query:
         return out
 
     def has_filters(self):
-        return bool(self.kinds or self.all_exts() or self.t0 is not None or self.place or self.folder or self.path
+        return bool(self.kinds or getattr(self, "secrets", False) or self.all_exts() or self.t0 is not None or self.place or self.folder or self.path
                     or self.dirs or self.min_size is not None or self.max_size is not None or bool(self.sort))
 
 
