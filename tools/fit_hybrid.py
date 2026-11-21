@@ -204,7 +204,8 @@ def _boot(d, seed=1, n=5000):
 def report(folder, queries, qrels, feats, folds):
     """Cross-validated hybrid vs SigLIP alone vs ranking v2, per kind of search: nDCG@10, recall@10, searches
     better/worse, paired bootstrap CI over all searches."""
-    v2 = json.load(open(os.path.join(folder, "results", "v2.json"), encoding="utf-8"))["variants"]["photo_v2"]
+    v2 = json.load(open(os.path.join(folder, "results", "v2.json"), encoding="utf-8"))["variants"]
+    v2 = v2.get("today") or v2["photo_v2"]          # "today" = the default ranking (v2 since 2026-11-22)
     _g, _r, per_q = cross_validate(queries, qrels, feats, CHANNELS, folds)
     ids = [q["id"] for q in queries]
     sig = dict(zip(ids, siglip_only(ids, qrels, feats)))

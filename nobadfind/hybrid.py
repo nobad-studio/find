@@ -43,13 +43,30 @@ def _logistic(X, y, l2, offset=0.0, iters=500):
     """L2-regularized logistic regression (Newton steps). X: (n, d) with a ones column if a bias is wanted."""
     n, d = X.shape
     w = np.zeros(d)
+
+    def loss(v):
+        z = X @ v + offset
+        return float(np.mean(np.logaddexp(0.0, z) - y * z)) + 0.5 * l2 * float(v @ v)
+    cur = loss(w)
     for _ in range(iters):
         p = _sigmoid(X @ w + offset)
         g = X.T @ (p - y) / n + l2 * w
         h = (X * (p * (1 - p))[:, None]).T @ X / n + l2 * np.eye(d)
         step = np.linalg.solve(h, g)
-        w -= step
-        if np.max(np.abs(step)) < 1e-8:
+        # backtracking: a full Newton step can overshoot on a sparse channel (review 2026-11-22: it swung between
+        # a=81 and a=-391 forever); halve it until the loss goes down
+        t = 1.0
+        while t > 1e-8:
+            cand = w - t * step
+            new = loss(cand)
+            if new <= cur:
+                break
+            t *= 0.5
+        else:
+            break
+        w, done = cand, abs(cur - new) < 1e-12 or np.max(np.abs(t * step)) < 1e-8
+        cur = new
+        if done:
             break
     return w
 

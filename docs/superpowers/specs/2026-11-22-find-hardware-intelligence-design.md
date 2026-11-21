@@ -28,8 +28,8 @@ them and makes none of them automatic.
 
 | Piece | Where | What it does now |
 |---|---|---|
-| Installed facts | `hardware.scan()` (main) | RAM, physical cores, AVX2, best GPU by VRAM (DXGI), DirectML present, disk free, SSD |
-| GPU memory budget | PR #16 `hardware.adapter_memory()`, `gpu_memory_free()` | dedicated/shared budget per adapter; an integrated GPU judged on shared memory |
+| Installed facts | `hardware.scan()` (main) | RAM, physical cores, logical threads, AVX2, `avx512_vnni` (always False: Windows has no flag for it), best GPU by VRAM (DXGI), DirectML present, disk free, SSD (of the home drive; may be None) |
+| GPU memory budget | PR #16 `hardware.adapter_memory()`, `gpu_memory_free()` | only the adapter with the most dedicated memory (one adapter, not a list); "integrated" is a heuristic: dedicated < `INTEGRATED_MB` (512); an integrated GPU judged on shared memory |
 | Live sensors | PR #16 `winapi`: commit, disk, battery saver, thermal, `GpuMemorySampler` | fail to None = unknown, never "bad" |
 | Levels and rules | `governor.Brain` (main) + PR #16 rules with `_Latch` hysteresis | FULL/GENTLE/LIGHT/PAUSED; step up one level after 30 s |
 | Per-operation limits | PR #16 `governor.op_limits()` | `effective = min(user, cpu, memory, governor[, gpu])` for walk, readers, photo, vision; `OP_MB`, `VISION_GPU_MB = 1024` |
@@ -51,11 +51,14 @@ What's missing is what this spec adds:
 
 Added to what `scan()` and PR #16's `adapter_memory()` give:
 - **GPU:** vendor (from the DXGI VendorId: 0x10DE NVIDIA, 0x1002 AMD, 0x8086 Intel), model name, dedicated MB,
-  shared MB, integrated flag.
-- **Backends available** (installed, not live): `cpu` (always), `directml` (the ONNX Runtime provider is
-  present), `cuda` (only when the NVIDIA GPU pack is installed and its runtime loads), `vulkan` (llama.cpp
-  build present; for VLMs only).
-- **CPU:** physical cores, threads, AVX2 (present), AVX-512 VNNI (unknown on Windows; stays False).
+  shared MB, integrated flag. `_AdapterDesc1` already reads `VendorId`; it just isn't returned yet. Every
+  adapter is listed, not only the one with the most memory (hybrid laptops, 12a).
+- **Backends available** (installed, not live), **per backend family**: ONNX (`cpu` always; `directml` when the
+  ONNX Runtime build in that process has the provider; `cuda` only when the NVIDIA GPU pack is installed and its
+  runtime loads) and llama.cpp (`vulkan` when the build is present; for VLMs only). The default install's ONNX
+  Runtime is the CPU build (1.27.0), so DirectML is not there unless a pack adds it.
+- **CPU:** physical cores, threads and AVX2 (already in `scan()`); AVX-512 VNNI (already a field, always False:
+  Windows has no flag for it).
 - **Memory and disk:** installed RAM, SSD or not, free space on the data drive.
 
 Every probe still fails safe: an unknown backend is "not available", never assumed.
@@ -70,7 +73,7 @@ kind of work follows only the axes it depends on.
 
 | Axis | Decided by | Drives |
 |---|---|---|
-| `gpu_class` | GPU vendor, dedicated/shared memory, backends (CUDA pack, DirectML) | photo embedding and VLM on the GPU, GPU batch sizes |
+| `gpu_class` (one per backend family: `onnx` and `llamacpp`) | GPU vendor, dedicated/shared memory, the backends of that family (ONNX: CUDA pack, DirectML; llama.cpp: CUDA, Vulkan) | `onnx`: photo and text embedding on the GPU, GPU batch sizes; `llamacpp`: VLMs on the GPU |
 | `cpu_class` | physical cores, AVX2, architecture | readers, CPU embedding, CPU threads |
 | `storage_class` | SSD/HDD (and, once measured, random-read latency) | walk threads, names batches, reader parallelism on that disk |
 | `memory_class` | installed RAM (live free memory is the governor's job, not the class's) | how many models may stay resident, worker memory caps |
@@ -82,6 +85,9 @@ kind of work follows only the axes it depends on.
 | **Efficiency** | integrated GPU with a GPU backend (shared memory) | Intel Iris Xe |
 | **Compatibility** | no usable GPU backend | CPU only |
 
+The GPU rule is applied once per backend family, with only that family's backends: a PC can be Efficiency for
+llama.cpp (Vulkan) and Compatibility for ONNX (CPU build, no DirectML).
+
 CPU, storage and memory axes use the same four names, with the thresholds in `profile.py` (pure, tested):
 - CPU: ≥ 8 physical cores with AVX2 = Performance; 6-7 = Balanced; 4-5 = Efficiency; fewer = Compatibility.
 - Storage: SSD = Performance; HDD = Efficiency.
@@ -90,8 +96,9 @@ CPU, storage and memory axes use the same four names, with the thresholds in `pr
 Examples:
 - **Strong NVIDIA + 32 GB + fast CPU + HDD:** GPU, CPU and memory are Performance; storage is Efficiency.
   GPU inference runs at Performance; only the walk and readers on the HDD are paced.
-- **The reference PC** (Iris Xe, 16 GB, 8 cores, SSD): GPU Efficiency, CPU Performance, storage Performance,
-  memory Balanced.
+- **The reference PC** (i5-12500H: 12 physical cores / 16 threads, AVX2; 15.7 GB RAM; Iris Xe; SSD; ONNX
+  Runtime CPU build): GPU `onnx` Compatibility (no DirectML in that build), GPU `llamacpp` Efficiency (Vulkan on
+  the Iris Xe), CPU Performance, storage Performance, memory Efficiency (15.7 GB is under 16, so the 8-15 rule).
 
 ### 4.2 User goal (one setting, three values)
 
@@ -100,12 +107,16 @@ New canonical setting `performance_goal`: `quiet` | `balanced` (default) | `fast
 
 | Goal | Intent | What it changes |
 |---|---|---|
-| `quiet` | least contention, heat, fan noise and background impact | lightest equivalent variant; batch ≤ 4; no GPU for background work; the governor's step-up waits twice as long; it steps down earlier on others' CPU (≥ 60% instead of 85%), on disk busy (≥ 70% or ≥ 30 ms a transfer), and on thermal pressure (passive limit < 95%) where those sensors exist (PR #16) |
-| `balanced` | throughput and responsiveness together | the lighter of equivalent variants unless the faster is > 1.5× faster with 2× margin; PR #16 thresholds as they are |
+| `quiet` | least contention, heat, fan noise and background impact | lightest equivalent variant; batch ≤ 4; no GPU for background work; the governor's step-up waits twice as long; it steps down earlier on others' CPU (≥ 60% instead of 85%) and on thermal pressure (passive limit < 95%) where those sensors exist (PR #16); on the disk it sets PR #16's `io_slow` earlier (≥ 70% busy or ≥ 30 ms a transfer, instead of 90% / 50 ms), which paces the walk and readers and does not step the level down (PR #16's disk rule never changes the level) |
+| `balanced` | throughput and responsiveness together | the lighter of equivalent variants (only `fast` takes the faster one); PR #16 thresholds as they are |
 | `fast` | most throughput within safe limits | the fastest equivalent variant that fits; largest batch that fits; today's `boost` behaviour (all threads while you use the PC); never past the safety limits (reserve, watchdog, job caps, pause rules) |
 
 `quiet` is not "fewer workers": it lowers what Find asks for **and** makes the governor more sensitive to
 everything that makes a PC feel busy (CPU, GPU, disk, heat).
+
+`quiet`'s lower thresholds only step Find down. They never feed PR #16's lag recording (`record_lag`, the
+learned per-app game levels in `appmemory`): a lag is recorded only at the standard thresholds (others' CPU ≥
+`HOT_CPU` 85%, a hung window, low memory), whatever the goal. Otherwise every goal would learn false game levels.
 
 **Migration from `power`** (no user preference is lost):
 - At the first start with the new setting, `performance_goal` is taken from `power`: `balanced` → `balanced`,
@@ -134,8 +145,9 @@ A catalog model (`models.CATALOG`) keeps its id, and gains `variants`, each with
 only if **every** item in the equivalence set has cosine ≥ 0.999 and the mean is ≥ 0.9995. The set has 200 photos
 across the photo test set's categories: people, scenes, objects, text-heavy, screenshots, black and white, scans,
 small and very large images, and odd aspect ratios. The three reference drawings (`tests/test_siglip2_real.py`)
-are added on top. A single sample or a few easy pictures are not enough: the colour test passed even for the
-broken 8-bit file.
+are added on top. A single sample or a few easy pictures are not enough: an easier colour check passed with the
+broken 8-bit file; the drawing check in `tests/test_siglip2_real.py` fails it (0.92 / 0.88 / 0.92). This is the
+one equivalence rule everywhere in this spec (5.1, 6.4, 7, A6, A15, A16).
 
 **The index stores its compatibility identity.** Each vector table records (in `meta`) the
 **embedding identity** of the vectors it holds: model id, equivalence group, and the variant and backend that
@@ -152,9 +164,12 @@ Measured example (2026-11-22, reference PC, CPU, 4 threads):
 
 | Variant | RAM | photos/s | equivalent |
 |---|---|---|---|
-| `siglip2-base/fp16-vision` (no arena) | 207 MB | 2.9 | with fp32 (cosine 1.00000) |
+| `siglip2-base/fp16-vision` (no arena) | 207 MB | 2.9 | with fp32 (cosine 1.00000, 50 photos) |
 | `siglip2-base/fp32-vision` (no arena) | 370 MB | 4.6 | with fp16 |
 | `siglip-base` (8-bit) | 117-148 MB | 4.0 | its own tag |
+
+The fp16-vs-fp32 equivalence is measured on 50 photos so far; the 200-input check is required before the
+variants ship.
 
 ### 5.2 Selection (extends PR #16 `capability.assess`)
 
@@ -163,8 +178,8 @@ For a feature (photo, text, vision) whose **model** the user or tier chose:
 2. Of those, keep the ones that fit the **live budget** now (step 6.1).
 3. Among **equivalent** variants, pick by goal:
    - `quiet`: least RAM, then least VRAM.
-   - `balanced`: the lighter one, unless the faster one is more than 1.5× as fast and fits with 2× margin.
-   - `fast`: highest `items_s` that fits.
+   - `balanced`: the lighter one (least RAM, then least VRAM). Only `fast` takes the faster one.
+   - `fast`: highest `items_s` that fits with 2× margin (its measured peak × 2 ≤ the usable budget now).
 4. If none fits now, the feature waits ("Not now: ...", as PR #16 already says). It never falls back to a
    non-equivalent variant on its own: that would mix vectors.
 
@@ -172,7 +187,8 @@ For a feature (photo, text, vision) whose **model** the user or tier chose:
 `can_run` / `why` / `device`. The governor applies it; the pools read it like they read `op_limits` now.
 
 Choosing the higher precision is **not** a goal in itself: fp16 and fp32 SigLIP 2 vision give the same vectors,
-so the choice is purely about memory against speed.
+so the choice is purely about memory against speed. (An earlier draft let `balanced` take a variant more than
+1.5× as fast; fp32 is 1.59× fp16 here, so `balanced` would have taken fp32, against A10. Dropped.)
 
 ## 6. Live resources
 
@@ -192,8 +208,12 @@ so the choice is purely about memory against speed.
 - **The reserve is a starting policy, not a guarantee:**
   - `LIMITS["GPU_RESERVE_MIN_MB"]` (512) and `LIMITS["GPU_RESERVE_SHARE"]` (0.15) are internal and configurable.
   - Every GPU allocation failure is recorded per adapter (driver and model in the log; the counts in meta).
-  - After a failure on an adapter, that adapter's minimum reserve is raised by the size that failed, up to 2 GB,
-    and kept. It drops back one step after 7 days without failures.
+  - After a failure on an adapter, that adapter's reserve is raised by the size that failed, and kept. The
+    learned increase is capped at **+2 GB on top of the formula** (R never exceeds the formula + 2 GB). It drops
+    back one step after 7 days without failures (the size of a "step" is a gap, 12a).
+  - The advanced setting sets the minimum (the 512 MB in the formula), range 512-4096 MB. It can only raise it.
+  - "Reset to safe defaults" (8b) clears the learned increases back to the formula. The 512 MB floor and the
+    formula stay, so a reset never lowers the reserve below the safety rule.
   - The recorded failures feed the next revision of the defaults.
 - **GPU, integrated:** its "VRAM" is shared system memory, so a GPU allocation is also a RAM allocation. Its
   need is checked **once against the RAM budget** (never added to it a second time). `usable_shared` is capped by
@@ -207,8 +227,8 @@ so the choice is purely about memory against speed.
 
 `op_limits` gains a `batch` per operation. It is computed so that `batch × per_item_mb + model_mb ≤ usable` for
 the backend in use:
-- Batch sizes come from a small per-variant list (e.g. photo: 1, 4, 8, 16, 32). The largest that fits is used,
-  capped by the goal (`quiet`: ≤ 4).
+- Batch sizes come from a small per-variant list of powers of two (e.g. photo: 1, 2, 4, 8, 16, 32), so halving
+  always lands on a listed size. The largest that fits is used, capped by the goal (`quiet`: ≤ 4).
 - On memory pressure the batch **halves at once**. It grows **one step at a time**, only after the budget allows
   it for `STEP_UP_AFTER` (30 s), the same rule as the levels.
 - Concurrency stays PR #16's `effective = min(user, cpu, memory, governor[, gpu])`, and is still at most one
@@ -217,12 +237,8 @@ the backend in use:
 ### 6.3 Pressure, pause and resume
 
 Reuses PR #16's rules and `_Latch` timings; adds only what variants need:
-- **GPU memory pressure** (`usable_vram < need` for ON_FOR):
-  1. Batch steps down.
-  2. If even batch 1 doesn't fit: the GPU work moves to the next backend in the chain (step 7) if that backend's
-     variant is equivalent; otherwise it pauses.
-- **Resume:** after the clear condition holds OFF_FOR **and** RULE_HOLD, the work returns to the profile's
-  preferred backend and batch, one step at a time.
+- **GPU memory pressure** (`usable_vram < need` for ON_FOR): the fallback order in 6.4, from step 1.
+- **Resume:** step 5 of that order.
 - **A model is loaded only after `assess` says it fits now, and a passed check is not a promise.** Another app can
   take memory between the check and the load, so:
   1. **Final check:** the worker re-reads free memory for that device immediately before allocating, and
@@ -230,23 +246,25 @@ Reuses PR #16's rules and `_Latch` timings; adds only what variants need:
   2. **Allocation failure** (ONNX Runtime or llama.cpp out of memory, or a driver error) is caught inside the
      worker. The worker never crashes on it: it releases what it allocated, reports `alloc_failed` with the size
      and device, and stays alive.
-  3. **The engine's reaction**, in order:
-     - record it (6.1, the reserve learns);
-     - retry the same variant once at half the batch;
-     - then the next **equivalent** backend;
-     - then pause that work (6.4).
-  4. A failure during inference (not loading) follows the same path, from step 2.
+  3. **The engine's reaction:** record it (6.1, the reserve learns), then follow the fallback order in 6.4,
+     entering at step 1 (halve the batch).
+  4. A failure during inference (not loading) follows the same path.
 
 ### 6.4 When no compatible backend fits
 
+The one fallback order. GPU memory pressure (6.3) and an allocation failure (6.3) both enter it at step 1.
 Exactly this order, and nothing else:
-1. Reduce the batch size step by step, down to 1.
-2. Try the next backend in the chain **whose vectors are equivalent** to the index's identity.
-3. If none fits: **pause that work**, show the reason once ("Photos paused: not enough graphics or system memory
-   right now"), and leave the rest of Find running.
-4. **Resume** when the governor's recovery conditions hold (`OFF_FOR` + `RULE_HOLD`, then one step at a time):
-   - first on the preferred backend at batch 1;
-   - then growing.
+
+| Step | What happens | Moves on when |
+|---|---|---|
+| 1 | Halve the batch, step by step, down to 1 | batch 1 still doesn't fit |
+| 2 | An **equivalent** lighter variant on the same backend (e.g. fp32 -> fp16) | none, or it doesn't fit either |
+| 3 | The next backend in the chain (7) **whose vectors are equivalent** to the index's identity | none fits |
+| 4 | **Pause that work**, show the reason once ("Photos paused: not enough graphics or system memory right now"); the rest of Find keeps running | - |
+| 5 | **Resume** when the rule clears (`_Latch`: clear for `OFF_FOR` and on for at least `RULE_HOLD`): first the preferred variant and backend at batch 1, then the batch grows one step per `STEP_UP_AFTER` | - |
+
+Step 2 is new compared with the first draft: it keeps the work on the preferred backend at less memory before
+leaving it.
 
 Never silently switch to a backend or variant that makes **incompatible** vectors. A switch like that is only
 ever the user's explicit choice, and it starts a visible re-index (5.1).
@@ -260,6 +278,8 @@ ever the user's explicit choice, and it starts a visible re-index (5.1).
 | OCR | Windows OCR (CPU); a model OCR only if installed | - |
 
 Rules:
+- One ONNX Runtime build per process (12a), so each ONNX backend runs in its own worker process: moving along
+  the chain means using another worker, not another provider in the same one.
 - A backend is used for an index only if its vectors are **equivalent** to that index's tag (measured per
   backend pair, like variants). Otherwise the index stays on its backend, and the work waits rather than mixing.
 - Each move is logged, and shown once in the activity list ("Photos: the graphics card is busy, using the
@@ -288,9 +308,12 @@ Rules:
 | Variant per model (e.g. SigLIP 2 "lighter" fp16 / "faster" fp32) | auto / each equivalent variant | auto |
 | Most at once (existing `workers`) and largest batch | auto / a number | auto |
 | Profile override per axis (GPU / CPU / storage / memory) | auto / a class | auto |
-| Advanced: GPU reserve minimum (MB) | 512-4096 | 512 (raised per adapter by learned failures) |
+| Advanced: GPU reserve minimum (MB) | 512-4096 | 512 (learned failures add up to +2 GB per adapter on top of the formula, 6.1) |
 
 Rules:
+0. **Precedence: safety limits, then the user's overrides, then the goal, then auto.** A user override beats the
+   goal: "Graphics card for background work: on" with the goal `quiet` uses the GPU for background work, though
+   `quiet` alone wouldn't. Nothing beats the safety limits (rule 1).
 1. **A user choice narrows or redirects; it never removes a safety limit.**
    - Always kept: the RAM kept for Windows, the GPU reserve floor (512 MB), the WORKERS memory cap, the watchdog
      limits, pause on call/battery/presentation (their own settings), and never mixing vector identities.
@@ -299,8 +322,8 @@ Rules:
 2. **A choice that changes vector identity** (a non-equivalent variant or backend, or another model) asks first:
    it shows the re-index time estimate, then re-indexes beside the old vectors.
 3. **"Reset to safe defaults"**, one button on the Performance page:
-   - It **resets:** the goal to balanced; every override to auto; the advanced reserve to 512 MB; and the learned
-     per-adapter reserves.
+   - It **resets:** the goal to balanced; every override to auto; the advanced reserve minimum to 512 MB; and the
+     learned per-adapter increases (back to the formula `max(512 MB, 0.15 × V_free)`, never below it).
    - It **keeps:** the index, the chosen models (choosing models is Settings > Models, with its own "Use the
      recommended models"), privacy settings, folders, and the learned per-app game levels (those have their own
      "Reset" in Settings already).
@@ -336,7 +359,7 @@ in plain words.
 4. **PR C, selection + batching:**
    - `capability.assess` returns variant/backend/batch.
    - `op_limits` gains `batch`.
-   - Pools read them; GPU pressure → batch down → backend chain.
+   - Pools read them; GPU pressure and allocation failures follow the 6.4 order.
    - Per-feature backend/variant/batch overrides (8b), the final allocation check and the learned reserve (6.1, 6.3).
 5. **PR D, benchmarks:**
    - The in-app "Test my PC" fills `measured` per variant and backend.
@@ -350,25 +373,25 @@ evaluation unchanged for the same model, and is reviewed on its own.
 | # | Criterion | How it's checked |
 |---|---|---|
 | A1 | Profile is stable under load: a 10-minute synthetic GPU-memory hog (or fake samples) never changes the profile | test with fake samples + one real run |
-| A2 | Governor reacts to GPU pressure within 3 ticks (≤ 6 s) and is back at the profile's preference within `OFF_FOR + RULE_HOLD + STEP_UP_AFTER` + 2 ticks after the pressure ends | Brain tests (pure, time from `Sample.t`) |
+| A2 | Governor reacts to GPU pressure within 3 ticks (≤ 6 s). After the pressure ends, it is back at the profile's preference within `max(OFF_FOR, RULE_HOLD − time the rule was already on)` (when `_Latch` clears: both must hold, so the larger, not the sum) + `k × STEP_UP_AFTER` (twice that under `quiet`) + 2 ticks, where k = the level steps plus the batch steps to climb back (batch 1 → 32 is 5 steps). Example, batch only, rule on 4 s: 26 + 150 + 4 = 180 s | Brain tests (pure, time from `Sample.t`) |
 | A3 | Nothing is scheduled on a GPU when `usable_vram` (with the reserve) is below the variant's measured peak | capability table tests incl. a 12 GB card with 2 GB free → not on GPU |
 | A4 | Integrated GPU: a variant's need is counted once against RAM; a 16 GB iGPU PC with 3 GB free is still refused a 4 GB model (PR #16's example holds) | capability tests |
 | A5 | Worker peak private memory ≤ the variant's declared `ram_mb` × 1.25 + 256 MB over a 500-photo run; zero watchdog kills | benchmark run, job accounting |
-| A6 | Equivalent variants: cosine ≥ 0.999 on the reference drawings and 50 photos; switching between them rebuilds nothing | tests (real-model test skips in CI) |
-| A7 | Backend fallback: a simulated load failure moves to the next backend in one attempt, logs it, never writes vectors under a non-equivalent tag | unit tests with fake sessions |
+| A6 | Equivalent variants (by the 5.1 rule: the 200-input set plus the reference drawings, every cosine ≥ 0.999 and mean ≥ 0.9995): switching between them rebuilds nothing | tests (real-model test skips in CI) |
+| A7 | Fallback follows the 6.4 order exactly (batch halves to 1, then an equivalent lighter variant, then the next equivalent backend, then pause); each move is logged; vectors are never written under a non-equivalent tag | unit tests with fake sessions |
 | A8 | Batch: halves at once under pressure, grows one step per `STEP_UP_AFTER`, never exceeds the goal's cap | Brain/op_limits tests |
 | A9 | Qwen: zero VLM loads during indexing in every profile; loads only on an explicit request and only if `assess` allows it | tests + benchmark log grep |
-| A10 | Throughput by profile (reference PC, quiet): SigLIP 2 at FULL ≥ 4 photos/s with `fast` (fp32), ≤ 250 MB worker RAM with `quiet`/`balanced` (fp16) | profile benchmark table |
+| A10 | Throughput by profile (reference PC, idle): SigLIP 2 at FULL ≥ 4 photos/s with `fast` (fp32), ≤ 250 MB worker RAM with `quiet`/`balanced` (fp16) | profile benchmark table |
 | A11 | No regression: `tools/eval_search.py` mixed-file results identical; `tools/eval_photo_search.py` nDCG@10 unchanged for the same model and tag | the two tools, before/after |
 | A12 | Profile benchmark published: SigLIP base, SigLIP 2 fp16, SigLIP 2 fp32 × FULL / GENTLE / LIGHT: photos/s, RAM, GPU memory, time to first results | measurements.md table |
 | A13 | Reserve rule: 3,072 MB free → 512 MB reserve → 2,560 MB usable; a 2,700 MB peak is refused; 10,000 MB free → 1,500 MB reserve | capability table tests |
-| A14 | Allocation failure between check and load (fake session raising out-of-memory): the worker survives, the engine records it, retries at half batch, then an equivalent backend, then pauses; the adapter's reserve rises by the failed size (≤ 2 GB) | unit tests with fake sessions |
+| A14 | Allocation failure between check and load (fake session raising out-of-memory): the worker survives, the engine records it and enters the 6.4 order at step 1 (half batch, down to 1; then an equivalent lighter variant; then an equivalent backend; then pause); the adapter's reserve rises by the failed size (at most +2 GB over the formula) | unit tests with fake sessions |
 | A15 | Index identity: a switch to an equivalent variant/backend keeps the vectors; to a non-equivalent one re-indexes beside the old vectors; a search never mixes identities | tests (like test_vector_rebuild.py) |
-| A16 | Equivalence uses the 200-input representative set: every cosine ≥ 0.999 and mean ≥ 0.9995; the old SigLIP 2 8-bit vision is rejected | real-model test (skips in CI) |
+| A16 | Equivalence uses the 200-input representative set plus the reference drawings (5.1): every cosine ≥ 0.999 and mean ≥ 0.9995; the old SigLIP 2 8-bit vision is rejected | real-model test (skips in CI) |
 | A17 | Storage is its own axis: strong GPU + HDD → GPU Performance, storage Efficiency; GPU batch/backend unchanged by the HDD, walk/readers paced | profile tests |
 | A18 | `power` migration: `boost` → `fast`, `balanced` → `balanced`, once; older UIs reading/writing `power` keep working | settings tests + contract transcript |
 | A19 | User overrides never cross a safety limit; a forced choice that doesn't fit waits with its reason; "Reset to safe defaults" restores the listed values and keeps the listed ones | tests + one UI walkthrough |
-| A20 | `quiet` reacts to more than workers: with fake samples, others' CPU 65%, disk 35 ms or passive limit 93% steps `quiet` down while `balanced` doesn't | Brain tests |
+| A20 | `quiet` reacts to more than workers: with fake samples, others' CPU 65% or passive limit 93% steps `quiet` down while `balanced` doesn't; disk 35 ms sets `io_slow` under `quiet` (not under `balanced`) and changes no level; none of these records a lag (`record_lag` only at the standard thresholds) | Brain tests |
 
 ## 12. Not in this spec
 
@@ -376,6 +399,61 @@ evaluation unchanged for the same model, and is reviewed on its own.
 - A CUDA pack's packaging (the visual spec's GPU packs section).
 - New models (Experiment A adds candidates after this foundation, each with its variant rows).
 - A rewrite of the indexer or the governor: everything extends `Brain`, `op_limits` and `assess`.
+
+### 12a. Gaps to settle before PR C (review, 2026-11-22)
+
+- **One ONNX Runtime build per process.** `onnxruntime-gpu` and `onnxruntime-directml` can't be installed side
+  by side, and the DirectML build is pinned at 1.24.4 while the CPU build is 1.27.0. So a GPU pack's backend runs
+  in its own worker process, and the backend chain (7) is a chain of workers, not a switch inside one process.
+- **"Batch" is the ONNX batch dimension of one inference call.** The photo jobs sent to a worker stay
+  `PHOTO_BATCH` (8, `indexer.py`). Variants need a measured `per_item_mb` for 6.2's formula.
+- **Changing backend, threads or batch reloads a session.** That has a cost (load time, a load-time memory
+  peak). Measure it, and rate-limit the changes.
+- **A variant's need is split** between the worker (vision) and the engine-side question encoder (text):
+  SigLIP 2 is 207 MB in the worker plus 368 MB for the question encoder. `assess` checks both.
+- **Storage class per disk.** `indexer.plan()` already looks at the roots (`all(...)` SSD over them). `scan()`'s
+  `ssd` is only the home drive and may be None: treat None as Efficiency.
+- **Hybrid laptops (iGPU + dGPU):** PR #16's `adapter_memory()` returns one adapter. Which adapter runs which
+  work, and the DirectML `device_id` that matches it, are to be defined.
+- **Definitions still to write down:** the "2× margin" (proposed: measured peak × 2 ≤ usable now, 5.2); the
+  reserve's 7-day step (the size of one step back); and the memory axis's "models resident" (which models count,
+  and whether `embed.Lazy` models released when idle count).
+
+### 12b. Improvements (proposed, not decided)
+
+- **CPU as the canonical identity for every index.** Every variant's vectors are checked against the CPU ones,
+  so CPU is always a valid fallback.
+- **Judge equivalence by retrieval too:** top-10 overlap and held-out nDCG@10 delta ≈ 0, in addition to the
+  cosine floor.
+- **Known issue in main:** `indexer.py` `_encode` uses `gpu = level == FULL`, so meaning (text) vectors switch
+  between DirectML and CPU on FULL <-> GENTLE with no equivalence check. Measure DirectML-vs-CPU equivalence for
+  the text models, or pin one backend per index.
+- **Thresholds per model.** The 0.38 / 0.5 closeness labels (`search._closeness`), the "strong" `>= 0.38` and
+  `PHOTO_TEXT_MEANING` (0.38) are on MiniLM's scale. With e5 / GTE / BGE they should come from the model catalog,
+  per model.
+
+### 12c. Settled after review (maintainer, 2026-11-22)
+
+1. **Reserve basis: keep `V_free`, add a per-model minimum fit.** A reviewer noted that `0.15 × V_free` shrinks
+   as pressure rises. A reserve on the total budget instead was rejected: it reserves too much on a mostly busy
+   card (16 GB card, 3 GB free: 2,458 MB reserved, 614 MB usable, against 2,560 MB usable now). Policy:
+   - The reserve stays `R = max(512 MB, 0.15 × V_free)`.
+   - **Plus a minimum-fit check per model and backend:** a variant is scheduled only if its **measured peak
+     allocation × its safety margin** (per variant/backend, configurable, starting at peak + 25%, as PR #16's
+     RAM margin) fits within `V_usable` now.
+   - The final re-check right before allocation and the survivable allocation failure (6.3) stay as they are.
+   - The reserve is a safety margin; it never replaces checking that the actual model fits.
+2. **Weak photos on keyword searches: measure before changing.** Global score floors are not restored (they
+   would undo the v2 gain). On a **fresh** held-out set, compare:
+   - A, current: weak visual results allowed;
+   - B, confidence threshold: a minimum visual confidence for standalone visual matches;
+   - C, evidence-aware: a weak visual match is admitted only with a supporting signal (filename/token, OCR or
+     metadata). **Favoured for keyword searches:** `lease_agreement_scan.jpg`, or a scan whose OCR says "lease",
+     stays eligible; a photo SigLIP loosely associates with "lease" doesn't.
+   - Measured on: nDCG@10, recall@10, precision@10, weak results after the sure ones, false positives on
+     keyword-only searches, no-answer false positives, and filename-only and OCR-only regression cases.
+   - This needs evidence kept per channel (exact name/token, full text/OCR, semantic text, visual, metadata),
+     with admission decided by evidence type, not one filter for everything.
 
 ## 13. Maintainer decisions (2026-11-22; architecture approved)
 
@@ -395,5 +473,5 @@ Refinements adopted:
 - hardware capability kept separate from live pressure (1);
 - everything user-settable with "Reset to safe defaults" (8b).
 
-Review note: this document is on the local branch `find-visual-design` and has not been pushed, which is why
-the GitHub connector couldn't read it. Pushing (or opening a draft PR) needs the maintainer's go-ahead.
+Review note: this document is on the branch `find-visual-design`, now pushed (`origin/find-visual-design`,
+PR #18).

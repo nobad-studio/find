@@ -140,6 +140,18 @@ def ready(mid, data_dir=DATA_DIR):
                for n, (_p, size, _sha) in m["files"].items())
 
 
+def missing_mb(mid, data_dir=DATA_DIR):
+    """MB still to download for this model: only the files not on disk at their exact size (a re-pinned file, e.g.
+    SigLIP 2's vision in 2026-11-22, is 177 MB to fetch, not the model's 481 MB). 0 when ready or built in."""
+    m = get(mid)
+    if m is None or m["builtin"]:
+        return 0
+    d = model_dir(mid, data_dir)
+    left = sum(size for name, (_p, size, _s) in m["files"].items()
+               if not (os.path.isfile(os.path.join(d, name)) and os.path.getsize(os.path.join(d, name)) == size))
+    return round(left / 1048576)
+
+
 def size_mb(m):
     return round(sum(size for _p, size, _s in (m["files"] or {}).values()) / 1048576) if not m["builtin"] else 0
 

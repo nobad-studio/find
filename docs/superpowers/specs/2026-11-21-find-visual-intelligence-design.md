@@ -362,6 +362,11 @@ hand-set weights (1.3 / 1.0 / 0.8 / 1.0), tuned on a synthetic file corpus. Phot
   searches x about 300 openly licensed Wikimedia Commons photos graded 0/1/2 from what is visible
   (`%USERPROFILE%\vbench\search\`, outside the repo; licences in `photos\sources.json`).
 
+**Status (2026-11-22; the numbers above are superseded, see `docs/measurements.md`):** photo ranking v2 is the
+default (held-out nDCG@10 0.712 vs v1 0.596). The set is now 556 photos / 155 searches. The pre-registered
+caption held-out test failed, so captions stay out of the ranking. "Facts in one pass" failed on SmolVLM2-500M
+(it echoed the template, wrote prose, looped on Hindi); two short questions are used instead.
+
 ## Still open
 
 - Florence-2's place: like-for-like it is slower and weaker than SmolVLM2 (768 px CPU: 9.1 s vs 5.6 s a photo;
@@ -369,7 +374,10 @@ hand-set weights (1.3 / 1.0 / 0.8 / 1.0), tuned on a synthetic file corpus. Phot
   run on DirectML. It stays a catalog choice with no default role.
 - Qwen's tuned settings: "fastest" (512 px, fewer image tokens, flash attention, 8-bit KV cache) for scene and
   relationship questions, 4.9 s, objects/counts/comparisons kept; "short answers" (7.0 s) for text questions. Its
-  GPU memory reading (5.8 GB shared) is measured again before it's relied on.
+  GPU memory is not settled: peak shared GPU memory read 2,060-2,532 MB over 10 photos (depending on the
+  llama.cpp flags), but 7,347 MB over a 252-photo run with the same flags, not explained yet (growth over the
+  run, or the counter including another process). (The Phase 0 "fastest" run read 5.8 GB.)
+  Measured again before it's relied on.
 
 ## Left to the builder
 

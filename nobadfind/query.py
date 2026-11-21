@@ -92,6 +92,12 @@ class Query:
     dir_label: str = ""                             # that folder's name as the index has it ("Projects")
     meaning: str = ""                               # the description left over, for photo meaning
     soft: list = field(default_factory=list)        # SOFT_KINDS words read as a kind (search may read them again)
+    # 2026-11-22 (review of photo ranking v2): what the question asks of pictures, kept apart from the filters.
+    # visual: a clean description for the photo model ("" = nothing to describe); the other channels keep using
+    # terms/phrases/meaning. collection: it asks for pictures as such ("show me all photos", "pictures from
+    # yesterday"): list them (with the filters), don't rank them by meaning.
+    visual: str = ""
+    collection: bool = False
 
     @property
     def text(self):
@@ -541,7 +547,31 @@ def parse(text, now=None, labels=(), is_dir=None, times=True, romanized=False, f
     if asked and not q.terms and not q.phrases and not q.has_filters() and not q.here and not q.sort:
         q.terms = asked                             # "list" alone: a file called list, not an instruction
     q.meaning = _description(words, used, roman) if q.terms else ""
+    q.visual = _visual(q)
+    q.collection = "image" in q.kinds and not q.visual and not q.terms and not q.phrases
     return q
+
+
+# Words that only ask for pictures as such. "screenshot" is not one of them: it says what the picture shows.
+COLLECTION_WORDS = {"photo", "photos", "picture", "pictures", "image", "images", "pic", "pics"}
+_WORDS_RE = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _visual(q):
+    """The question for the photo model. The whole typed description when it is a plain description: nothing was
+    read as a date, place, folder, size, order or extension, it isn't Hinglish (the default photo model is
+    English-only) and its words say what a picture shows ("a screenshot of program code", "a red car"), not only
+    that pictures are wanted ("show me all photos"). Otherwise the meaning words, as before ("dog" of "dog photos
+    from last week"), or "" when there is nothing to describe."""
+    raw = q.raw.strip()
+    plain = (raw and q.t0 is None and not q.place and not q.path and not q.folder and not q.dirs and not q.here
+             and q.min_size is None and q.max_size is None and not q.sort and not q.exts and not q.romanized
+             and not q.dropped)
+    describes = any(w not in STOP and w not in ASKING and w not in COLLECTION_WORDS
+                    for w in _WORDS_RE.findall(raw.lower()))
+    if plain and describes:
+        return raw
+    return q.meaning if q.terms or q.phrases else ""
 
 
 # Words trimmed off the ends of a description ("find me a | with a red car" -> "red car")

@@ -4,6 +4,31 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22: review fixes to photo ranking v2
+
+Found in review; fixed in `nobadfind/query.py` (intent) and `nobadfind/search.py` (tests in `tests/test_photo.py`).
+
+1. **"photos", "list all photos", "show me pictures" list every image again.** v2 had asked SigLIP the word
+   "photos". Collection intent now lives in query interpretation: `query.parse` sets `q.collection` (pictures
+   asked for as such: listed with the filters, not ranked) and `q.visual` (a clean description for the photo
+   model, "" when there is nothing to describe). "screenshot" counts as description ("show screenshots" is
+   screenshot retrieval); "photo/picture/image/pic" don't.
+2. **SigLIP gets the raw text (`q.visual`) only when it is a plain description:** nothing in it was read as a date, place,
+   folder, `dirs`, `here`, size, sort, extensions or Hinglish. The photo model is English-only, and those words go
+   to filters. Otherwise it gets the meaning words, as v1.
+3. **Loose meaning is dropped only for a photo's OCR text, never its name,** and only when a photo model is there
+   (without one, OCR is all there is).
+4. **Known, not changed:** with no floors, a keyword search ("lease") also lists up to 100 weak photos after the
+   sure results. Maintainer decision 2026-11-22: don't restore global floors; measure admission policies A
+   (current), B (minimum visual confidence for standalone visual matches), C (evidence-aware: a weak visual
+   match only with a filename, OCR or metadata signal) on a fresh held-out set (nDCG@10, recall@10,
+   precision@10, weak results after sure ones, keyword-only false positives, no-answer false positives,
+   filename-only and OCR-only regressions). C is the favoured candidate.
+5. **Download size:** the photo-model notice gives only what is still to download (`models.missing_mb`): an
+   existing SigLIP 2 user is asked for an update of 177 MB, not 481 MB.
+
+Re-measured after the fixes (final code): the 556-photo / 155-search set is unchanged search by search (0 of 146 searches changed; training 0.731, held-out 0.712 nDCG@10); the mixed-file benchmark is identical with v2 on and rolled back (keywords 1.0, photo 1.0, meaning MRR 0.495, all 0.951; no question changed). An intermediate run had shown meaning 0.533 vs 0.495; it did not hold on the final code.
+
 ## 2026-11-22: SigLIP 2 "best" tier re-pinned: fp16 vision + 8-bit text (maintainer decision)
 
 Catalog `siglip2-base`: vision `onnx/vision_model_fp16.onnx` (186,039,516 bytes, SHA-256 a1959f7b…aabd95,
@@ -48,11 +73,33 @@ Qwen3-VL-2B (Qwen with `-c 1024 -ub 256` for the new photos) on all 556 photos. 
 - Category regression: similar scenes -0.059 (CI -0.113 to -0.004). Text +0.124 and mood +0.080 (CIs cross 0).
 - Negatives: H2 more confident on searches with no answer (top-3 calibrated probability 0.321 vs H0 0.175).
 - **Decision (maintainer rules): captions stay out of the default ranking.**
-- H3 is far below H0 even in training CV (0.668 vs 0.756): likely a defect in how its channels are split, not a
-  property of query-dependent weighting. Not re-tested on these held-out searches (used once now); a fixed H3
-  needs fresh held-out searches.
+- H3 is far below H0 even in training CV (0.668 vs 0.756). Cause found: the Newton solver in
+  `nobadfind/hybrid.py` diverged on the sparse `words` channel (89 % zeros, 12 distinct values; one weight swung
+  between 81 and -391). That killed the channel in H1 and H2 (and in the 2026-11-21 step-1 fits) and wrecked one
+  H3 fold (0.359). Fixed 2026-11-22 with a backtracking line search (`tests/test_hybrid.py`). The table above
+  is the pre-registered run, with the broken solver.
 - Qwen peak shared GPU memory read 7,347 MB over this 252-photo run (2,060 MB in the 10-photo test with the
   same flags); cause not established yet (growth over the run, or the counter including another process).
+
+**Diagnostic re-run with a converging solver (by a reviewer; NOT pre-registered):**
+
+| | train CV nDCG@10 | held-out nDCG@10 |
+|---|---|---|
+| H0 | 0.756 | 0.716 |
+| H1 | 0.750 | 0.711 |
+| H2 | 0.786 | 0.749 |
+| H3 | 0.773 | 0.707 |
+
+- H2 vs SigLIP alone, held-out: +0.026 (CI -0.015 to +0.073). Still fails the CI rule, so the decision stands
+  (captions stay out). The pre-registered run understated the effect.
+- The held-out searches have now been used twice; a new test of captions or H3 needs fresh held-out searches.
+
+**Review notes (2026-11-22):**
+- H0 is not "SigLIP + b/w rule" only: it also has the OCR channels on searches asking for text.
+- The negatives rule compared absolute probabilities across candidates, with a base rate on a different label
+  scale. So "H2 more confident on negatives" is weak evidence: H2's negatives/real ratio is 0.58, H0's 0.61.
+- Category CIs rest on 3-8 searches each, with no multiple-comparison correction (the "similar scenes"
+  regression is n=5).
 
 ## 2026-11-22: SigLIP 2 base vs SigLIP base, side by side (separate indexes; nothing replaced)
 
@@ -70,11 +117,14 @@ while a Qwen caption job ran on the GPU (absolute times inflated for every row).
 - **The pinned SigLIP 2 is broken by its 8-bit vision model:** zero-shot margins (4 photos, cat/dog/laptop/bird)
   8-bit+8-bit 0.040, fp16 text only 0.045, **fp16 vision 0.065**, both fp16 0.071, SigLIP base 0.063.
   The "best" tier (`PHOTO_CHOICE["best"] = "siglip2-base"`) therefore gives WORSE photo search than the default
-  today.
+  today. *Superseded: the best tier was re-pinned to fp16 vision + 8-bit text the same day (see "SigLIP 2 'best'
+  tier re-pinned" above).*
 - fp16 exports load only with `GraphOptimizationLevel.ORT_ENABLE_BASIC` (ONNX Runtime 1.27's full optimizer
   fails in `GetIndexFromName`); inputs and outputs stay float32.
 - **8-bit text + fp16 vision passes every held-out rule:** SigLIP alone +0.035 (CI above 0); in Find's v2
-  pipeline 0.712 -> 0.742 (+0.030, CI +0.001..+0.060); recall@10 +0.028 (CI -0.004..+0.065). Held-out per
+  pipeline 0.712 -> 0.742 (+0.030, CI +0.001..+0.060); recall@10 +0.028 (CI -0.004..+0.065; a reviewer
+  recomputed +0.026, CI -0.006..+0.063, over 44 searches: the discrepancy is not resolved yet; recall averages
+  cover fewer searches than nDCG, because searches with only grade-1 photos have no recall). Held-out per
   category: text +0.099 (CI +0.050..+0.155), screenshots +0.100, mood +0.078, people +0.015, relationships
   +0.008, attributes -0.005, scenes -0.010, ambiguous -0.033 (n=3, CI -0.243..+0.150): no regression by the
   rule. Negatives: top-1 similarity gap real-vs-negative 0.059 (base 0.058): not more confident.
@@ -105,6 +155,9 @@ nDCG@10 (negatives excluded; questions as typed through `search.search`):
 | v1 (rollback) | 0.628 | 0.642 | 0.596 |
 | **v2 (default, with the fix)** | **0.724** | **0.731** | **0.712** |
 | SigLIP alone | 0.745 | 0.756 | 0.723 |
+
+(Review note 2026-11-22: the "all 146" column actually averages 147 searches: it includes the negative q155,
+which has grade-1 photos. Over the true 146: SigLIP alone 0.746, v2 0.725.)
 
 - **v2 gains +0.116 over v1 on held-out searches it never saw.**
 - Mixed-file regression (`eval_search`), v2 vs rollback: identical (keywords 1.0/1.0, photo 1.0/1.0, meaning
@@ -191,6 +244,9 @@ nDCG@10 / recall@10 by kind of search (searches better/worse than SigLIP alone):
 - One search per kind for Hindi and black and white: too few to conclude anything about those two.
 
 ## 2026-11-21: photo ranking v2 (fix the existing ranking first; flag `NOBAD_FIND_PHOTO_V2=1`, off by default)
+
+*Superseded: v2 is on by default since 2026-11-22 (maintainer); rollback `NOBAD_FIND_PHOTO_V2=0`. See the
+556-photo section and the review fixes above.*
 
 Same 308 photos / 60 searches (`tools/eval_photo_search.py --variants`, one index build, each change measured
 alone). Diagnosis of today's 0.755 against SigLIP alone 0.864 (nDCG@10):

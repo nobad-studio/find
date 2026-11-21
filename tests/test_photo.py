@@ -243,3 +243,34 @@ def test_photo_v2_searches_photos_when_every_word_reads_as_a_kind(tmp_path, monk
     r = search.search(s, "a screenshot of program code", photo_text=_Shots(), pindex=vi)["results"]
     assert r and r[0]["name"] == "IMG_0043.jpg" and any("picture" in w for w in r[0]["why"])
     s.close()
+
+
+def test_photo_v2_still_lists_every_image_when_the_question_only_asks_for_photos(tmp_path, monkeypatch):
+    """Review 2026-11-22: v2 asked SigLIP "photos" and returned only photos with vectors, all weak."""
+    s = _store(tmp_path)
+    vi = _pindex(s)
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    for q in ("photos", "list all photos", "show me pictures"):
+        r = search.search(s, q, photo_text=_Text(), pindex=vi)["results"]
+        assert sorted(x["name"] for x in r) == ["IMG_0042.jpg", "IMG_0043.jpg", "icon.png"], q
+        assert not any(x["weak"] for x in r), q                     # a listing: every image, all sure
+    s.close()
+
+
+def test_photo_v2_asks_the_meaning_words_when_filters_or_hinglish_were_read(monkeypatch):
+    from nobadfind.query import parse
+    monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)
+    assert search._photo_question(parse("dog photos newest first")) == parse("dog photos newest first").meaning
+    assert search._photo_question(parse("kutte ki photo")) == "kutte"                 # Hinglish: not the sentence
+    assert search._photo_question(parse("a red car")) == "a red car"                  # a plain description
+    assert search._photo_question(parse("a screenshot of program code")) == "a screenshot of program code"
+    assert search._photo_question(parse("photos")) == ""                              # nothing to describe
+
+
+def test_photo_v2_keeps_loose_name_meaning_and_needs_a_photo_model_to_drop_ocr(tmp_path):
+    s = _store(tmp_path)
+    ids = dict(s.q("SELECT name, id FROM files"))
+    photo_id = ids["IMG_0042.jpg"]
+    best = {photo_id: (0.30, "", "name")}                            # "beach_trip.jpg" found for "seaside"
+    assert search._drop_loose_photo_text(s, [photo_id], best) == [photo_id]
+    s.close()
