@@ -289,7 +289,7 @@ def _unzip(zip_path, dest):
 
 def wanted_files(model, devices):
     """A candidate's files for these devices: Florence-2's int8 graphs only for the CPU, fp16 only for a GPU."""
-    gpu = any(d != "cpu" for d in devices)
+    gpu = any(d in ("directml", "cuda") for d in devices)     # ONNX Runtime GPUs; Vulkan is llama.cpp only
     return {n: v for n, v in model["files"].items()
             if not (n.endswith("_int8.onnx") and "cpu" not in devices) and not (n.endswith("_fp16.onnx") and not gpu)}
 

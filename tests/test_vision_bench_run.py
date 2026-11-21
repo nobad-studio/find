@@ -131,3 +131,9 @@ def test_crash_reason_comes_from_stderr():
     res = run.bench([], [("a", "cpu", "ort")], _devs(),
                     child_cmd=lambda c, d: [sys.executable, FAKE, "crash_msg"], timeout_s=30)
     assert res[0]["status"] == "crash" and "model file missing" in res[0]["why"]
+
+
+def test_florence_gpu_files_only_for_onnx_gpu_devices():
+    m = {"files": {"onnx/a_int8.onnx": [1, "x"], "onnx/a_fp16.onnx": [1, "x"], "tokenizer.json": [1, "x"]}}
+    assert sorted(run.wanted_files(m, ["cpu", "vulkan"])) == ["onnx/a_int8.onnx", "tokenizer.json"]
+    assert sorted(run.wanted_files(m, ["directml"])) == ["onnx/a_fp16.onnx", "tokenizer.json"]
