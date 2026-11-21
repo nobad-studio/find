@@ -1,4 +1,4 @@
-/// Search: what happens when you open a file, and the recent searches this window keeps.
+/// Search: what happens when you open a file, and the recent searches (from the engine's search history).
 library;
 
 import 'dart:async';
@@ -14,7 +14,8 @@ class SearchSettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final recent = AppScope.of(context).find.recent;
+    final s = AppScope.of(context);
+    final recent = s.find.recent;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -33,12 +34,15 @@ class SearchSettingsPage extends StatelessWidget {
             'Recent searches',
             rows: [
               ListenableBuilder(
-                listenable: recent,
+                listenable: Listenable.merge([recent, s.settings]),
                 builder: (context, _) => SettingRow(
                   label: 'Recent searches',
-                  help: recent.items.isEmpty
-                      ? 'None kept. Searches you open a file from show under the empty box.'
-                      : '${recent.items.length} kept on this PC only (never sent anywhere), shown under the empty box.',
+                  help: !s.settings.settings.flag('search_history')
+                      ? 'None kept: "Remember my searches" is off in Privacy & data.'
+                      : recent.items.isEmpty
+                      ? 'None yet. Searches you open a file from show under the empty box.'
+                      : 'The last ${recent.items.length} from your search history (encrypted with the index, on '
+                            'this PC only), shown under the empty box. Clear forgets the whole history.',
                   control: NbButton(
                     'Clear',
                     small: true,

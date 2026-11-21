@@ -2493,7 +2493,8 @@
           "enum": [
             "dark",
             "light"
-          ]
+          ],
+          "description": "Kept so older UIs and settings files still load; the UI is dark only since 0.8.5 and ignores it."
         },
         "glass": {
           "type": "boolean"
@@ -2709,7 +2710,8 @@
           "enum": [
             "dark",
             "light"
-          ]
+          ],
+          "description": "Kept so older UIs and settings files still load; the UI is dark only since 0.8.5 and ignores it."
         },
         "glass": {
           "type": "boolean"

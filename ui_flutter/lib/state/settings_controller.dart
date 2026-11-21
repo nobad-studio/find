@@ -5,6 +5,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import '../engine/engine_api.dart';
+import '../engine/models/models_info.dart';
 import '../engine/models/settings.dart';
 
 import 'toast_controller.dart';
@@ -48,6 +49,11 @@ class SettingsController extends ChangeNotifier {
   }
 
   void _say(String s) => toasts?.show(s);
+
+  bool _sayFalse(String s) {
+    _say(s);
+    return false;
+  }
 
   Future<void> load() async {
     try {
@@ -147,9 +153,51 @@ class SettingsController extends ChangeNotifier {
     await set(key, list);
   }
 
-  /// [model] "meaning" or "photo". [consent] shows the consent dialog; nothing is downloaded without a yes.
-  Future<bool> download(String model, {required Future<bool> Function() consent}) async {
-    if (!await consent()) return false;
+  /// The model Settings > Models would download for [model] ("meaning" or "photo"): the one in use while the
+  /// feature is on, else the one recommended for this PC (null: the catalogue has none for it).
+  static ModelInfo? modelFor(String model, ModelsInfo info, Settings settings) {
+    final photo = model == 'photo';
+    final all = info.byFeature(photo ? 'photo' : 'text');
+    if (all.isEmpty) return null;
+    if (settings.flag(photo ? 'photo_meaning' : 'semantic')) {
+      final chosen = settings.text(photo ? 'photo_model' : 'text_model');
+      final m = all.where((x) => x.id == chosen).firstOrNull;
+      if (m != null) return m;
+    }
+    return all.where((x) => x.recommended).firstOrNull ??
+        all.where((x) => x.state == ModelUseState.active).firstOrNull ??
+        all.first;
+  }
+
+  /// [model] "meaning" or "photo": the Welcome and Index pages' Download button. Gets the same model Settings >
+  /// Models would ([modelFor]) with `model_download`, after [consent] (it gets that model; null from an engine
+  /// without the catalogue) said yes, then makes it the one used. Nothing is downloaded without a yes.
+  Future<bool> download(String model, {required Future<bool> Function(ModelInfo?) consent}) async {
+    ModelsInfo? info;
+    try {
+      info = await engine.models();
+    } on RpcException catch (e) {
+      if (e.code != -32601) return _sayFalse(errorText(e));
+    } on Object catch (e) {
+      return _sayFalse(errorText(e));
+    }
+    final m = info == null ? null : modelFor(model, info, _settings);
+    if (info != null && m == null) return _sayFalse("That model isn't available. Open Settings > Models.");
+    if (!await consent(m)) return false;
+    if (m != null) {
+      try {
+        final r = await engine.modelDownload(m.id);
+        if (!r.ok) return _sayFalse(r.error.isNotEmpty ? r.error : "The download didn't start.");
+        final use = await engine.modelUse(m.feature, m.id); // the one used once it is here (turns the feature on)
+        if (!use.ok && use.error.isNotEmpty) _say(use.error);
+      } on Object catch (e) {
+        return _sayFalse(errorText(e));
+      }
+      _say('Downloading ${m.name}…');
+      await load();
+      return true;
+    }
+    // an engine older than the catalogue: its own fixed download
     final allow = model == 'photo' ? 'allow_photo_model_download' : 'allow_model_download';
     if (!_settings.flag(allow) && !await set(allow, true)) return false;
     ActionResult r;

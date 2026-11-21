@@ -91,8 +91,8 @@ class Welcome extends StatelessWidget {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              'Finds “lease agreement” when you type “rent”. A one-time 23 MB download, then it runs on '
-                              'this PC only.',
+                              'Finds “lease agreement” when you type “rent”. A one-time download of the model recommended '
+                              'for this PC (its size is shown before you agree), then it runs on this PC only.',
                               style: NbType.text(NbSize.small, c.dim, height: 1.5),
                             ),
                           ],
@@ -113,7 +113,7 @@ class Welcome extends StatelessWidget {
                             small: true,
                             onPressed: () {
                               unawaited(
-                                s.settings.download('meaning', consent: () => askDownloadConsent(context, 'meaning')),
+                                s.settings.download('meaning', consent: (x) => askConsentFor(context, 'meaning', x)),
                               );
                             },
                           );

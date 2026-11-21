@@ -78,7 +78,7 @@ void main() {
     await tester.tap(find.text('Forget'));
     await tester.pumpAndSettle();
     expect(engine.forgotten, [2]);
-    expect(find.text('Forgotten. Undo it in Settings → Never search.'), findsOneWidget);
+    expect(find.text('Forgotten. Undo it in Settings → What to index → Never index.'), findsOneWidget);
   });
 
   testWidgets('clicking a result opens it; a missing file says so', (tester) async {

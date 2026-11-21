@@ -285,8 +285,8 @@ class Api:
         st = dict(self._indexer.status)
         st.update(self._stats())
         st["version"] = APP_VER
-        st["model"] = dict(self._model)
-        st["photo_model"] = dict(self._photo_model)
+        st["model"] = self._feature_dl("text")
+        st["photo_model"] = self._feature_dl("photo")
         st["memory_mb"] = winapi.memory_mb()
         st["models_loaded"] = self._indexer.models_loaded()
         st["admin"] = winapi.is_admin()
@@ -454,10 +454,26 @@ class Api:
     def _download(self, mid, m, now):
         return self._rate.sample(mid, m, now)
 
+    def _feature_dl(self, feature):
+        """The download state shown under the plain "meaning" / "photo" names (status model / photo_model, the
+        Index page's cards, the Welcome screen): the old fixed download while it runs, else the model in use for
+        the feature, which the Welcome and Index buttons get with model_download."""
+        legacy = self._model if feature == "text" else self._photo_model
+        if legacy["state"] == "downloading":
+            return dict(legacy)
+        mid = self._text_in_use() if feature == "text" else self._photo_in_use()
+        d = getattr(self, "_mdl", {}).get(mid)
+        if d:
+            return dict(d)
+        ready = models.ready(mid, self._mdir())
+        return {"state": "ready" if ready else "missing", "got": 0, "size": 0,
+                "error": "" if ready else legacy.get("error", "")}
+
     def downloads(self):
         """Each model download's state ({"state", "got", "size", "error"}, bytes), for the pipe's download event:
-        meaning / photo (download_model, download_photo_model) and every model_download by its model id."""
-        out = {"meaning": dict(self._model), "photo": dict(self._photo_model)}
+        meaning / photo (the model in use for the feature, or the old download_model / download_photo_model while
+        one runs) and every model_download by its model id."""
+        out = {"meaning": self._feature_dl("text"), "photo": self._feature_dl("photo")}
         out.update({mid: dict(st) for mid, st in getattr(self, "_mdl", {}).items()})
         return out
 
@@ -483,13 +499,13 @@ class Api:
              "loaded": bool(mw) or bool(getattr(emb, "loaded", False)), "memory_mb": mem[0],
              "device": mdev,
              "items": int(st.get("vectors", 0)) + int(st.get("name_vectors", 0)),
-             "download": self._download("meaning", self._model, now)},
+             "download": self._download("meaning", self._feature_dl("text"), now)},
             {"id": "photo", "name": f"Photo search ({pm['name']})", "license": pm["licence"],
              "size_mb": models.size_mb(pm), "on_disk": models.ready(pm["id"], self._mdir()),
              "loaded": bool(pw) or bool(getattr(pho, "loaded", False)), "memory_mb": mem[1],
              "device": pdev,
              "items": int(st.get("photo_vectors", 0)),
-             "download": self._download("photo", self._photo_model, now)},
+             "download": self._download("photo", self._feature_dl("photo"), now)},
             {"id": "ocr", "name": "Windows OCR", "license": "Windows", "size_mb": 0, "on_disk": bool(ocr.available()),
              "loaded": False, "memory_mb": None, "device": "Windows", "items": max(0, ocr_total - ocr_left),
              "download": None},

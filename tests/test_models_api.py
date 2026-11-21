@@ -80,6 +80,21 @@ def test_model_download_needs_the_consent_word(a, monkeypatch):
     assert a.downloads()["multilingual-e5-small"]["state"] in ("ready", "missing")
 
 
+def test_meaning_and_photo_states_follow_the_model_in_use(a):
+    """The Welcome and Index buttons download the chosen model with model_download: the plain meaning / photo
+    states (status, download events, Index cards) follow it, not only the old fixed download."""
+    a.model_use("text", "multilingual-e5-small")
+    assert a.downloads()["meaning"]["state"] == "missing"
+    a._mdl = {"multilingual-e5-small": {"state": "downloading", "got": 5, "size": 10, "error": ""}}
+    assert a.downloads()["meaning"] == {"state": "downloading", "got": 5, "size": 10, "error": ""}
+    assert a.status()["model"]["state"] == "downloading"
+    a._mdl = {}
+    _fake_download(a, "multilingual-e5-small")
+    assert a.downloads()["meaning"]["state"] == "ready"
+    a._photo_model.update(state="downloading", got=1, size=2)          # the old download, while it runs
+    assert a.status()["photo_model"]["state"] == "downloading"
+
+
 def test_model_remove_keeps_builtin_and_active_models(a):
     _fake_download(a, "gte-small")
     assert a.model_remove("windows-ocr")["ok"] is False
