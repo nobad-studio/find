@@ -1,5 +1,16 @@
 # NOBAD Find changelog
 
+## Unreleased
+
+### Opening Windows settings and apps
+- Fixed: "open windows update" (and every other "open ..." question) opened the first file, often Settings on its
+  home page, instead of the page. Since 0.9.1 the engine found the page but left it out of the answer it sent to
+  the window. The same answer also left out the hints for photo and meaning search; both arrive again.
+- Typos are corrected against NOBAD Find's own list of pages and tools: "opn windws update", "launch contrl pannle".
+- "open ..." answers come quicker: when the question opens a page or an app, files are found by name and words
+  only, without waiting for the meaning model.
+- Network & internet opens `ms-settings:network-status`, the address in Microsoft's list (was `ms-settings:network`).
+
 ## 0.9.6 · 2026-11-21
 
 ### Turbo index

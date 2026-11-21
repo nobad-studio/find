@@ -17,6 +17,12 @@ void main() {
     expect(wantsLaunch('display settings'), isTrue);
     expect(wantsLaunch('bluetooth'), isFalse);
     expect(wantsLaunch('tax pdf'), isFalse);
+    // typos, as the engine corrects them (launcher.correct): one edit, the same first letter
+    expect(wantsLaunch('opn windws update'), isTrue);
+    expect(wantsLaunch('lanch contrl pannle'), isTrue);
+    expect(wantsLaunch('display setings'), isTrue);
+    expect(wantsLaunch('pen tablet'), isFalse);
+    expect(wantsLaunch('on'), isFalse);
     expect(SearchAnswer.fromJson({'results': [], 'actions': [{'id': 'set:x', 'kind': 'setting', 'title': 'X', 'subtitle': ''}, {'kind': 'app'}]}).actions.single.id, 'set:x');
   });
 
