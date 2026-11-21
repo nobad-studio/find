@@ -176,6 +176,8 @@ class Wiring:
             def launcher(ev):
                 return Launcher(ev, connected=lambda: bool(self.ui_pids()), note=ev.notice)
         self.ui = launcher(events)            # show(what): the show event, or start the UI on that page
+        if self.ui is not events and hasattr(events, "open_window"):
+            events.open_window = self.ui.show  # the bar's Alt+Enter (to_main) starts a closed main window too
         self.make_hotkey = make_hotkey
         self._timer = threading.Timer
         self._seen_ui = False             # a UI has connected or shown a window since the engine started
@@ -270,6 +272,7 @@ class Wiring:
         """A tray menu item (tray.MENU) or a left click ("open")."""
         pages = {"open": "main", "bar": "bar", "settings": "settings", "index": "index"}
         if action in pages:
+            log(f"tray: {action}")                     # so a window that didn't come can be traced in the log
             self.ui.show(pages[action])
         elif action == "pause":
             self.api.pause_for(self.PAUSE_S)
@@ -481,7 +484,7 @@ def run(stop=None, open_ui=None, lock=None):
     api._launcher = launcher
     wiring = Wiring(api, settings, indexer, rpc.events, stop, rpc.ui_pids)
     if first_ui is not None:
-        wiring.ui.started(first_ui)             # a hotkey right now doesn't start a second one
+        wiring.ui.started(first_ui, open_ui)    # a hotkey right now doesn't start a second one
     if not rpc.start():
         print("The NOBAD Find pipe is in use: another engine is running for this user.")
         governor.stop()

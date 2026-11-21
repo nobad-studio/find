@@ -37,7 +37,8 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 1. `hello`: check `protocol` is 1 (refuse a newer engine and say why). `pid` is the engine's process id: call
    `AllowSetForegroundWindow(pid)` before `pick_folder` and `wsearch_set`, so their windows can come to the front.
 2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting`;
-   bar: `show quitting`).
+   bar: `show quitting`). The engine tells the two apart by this (a client with `here` is a main window): a
+   `show` for a window no connected UI has starts that UI instead.
 3. `status` once (events only report changes), then `ui_shown` when the window is on screen.
 4. On `ui_hidden`/close, say `ui_hidden`. If the pipe breaks, reconnect with backoff, unless `quitting` came first.
 

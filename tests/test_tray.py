@@ -30,6 +30,31 @@ def test_clicks_and_commands_become_actions():
     assert got == ["open", "settings", "quit"]
 
 
+def test_a_failing_left_click_is_logged_with_its_reason(monkeypatch):
+    """A left click used to raise into the window procedure; now it is caught and logged like a menu item."""
+    logged = []
+    monkeypatch.setattr(tray, "log", lambda text, level="info": logged.append((level, text)))
+
+    def boom(action):
+        raise RuntimeError("pipe gone")
+    tray.Tray(boom, tip=lambda: "x", paused=lambda: False)._on_click(tray.WM_LBUTTONUP)
+    assert logged == [("warn", "tray action open failed: RuntimeError: pipe gone")]
+
+
+def test_the_engine_routes_the_bars_alt_enter_through_its_launcher(tmp_path):
+    import threading
+    from nobadfind import engine
+    from nobadfind.api import Api
+    from nobadfind.rpc.events import Events
+    st = settings.Settings(str(tmp_path / "s.json"))
+    ix = type("Ix", (), {"set_idle": lambda self, v: None, "warm_models": lambda self: None})()
+    api = Api(None, st, ix, None)
+    ev = Events(lambda: [], lambda c: None, api)
+    w = engine.Wiring(api, st, ix, ev, threading.Event(), ui_pids=lambda: set(), dialog=lambda: "x",
+                      trim=lambda: None)
+    assert ev.open_window == w.ui.show and w.ui.can_show == ev.can_show
+
+
 def test_tray_setting_defaults_on(tmp_path):
     assert const.DEFAULTS["tray"] is True
     st = settings.Settings(str(tmp_path / "s.json"))
