@@ -145,3 +145,8 @@ def test_candidate_without_its_files_is_not_downloaded(tmp_path):
                     child_cmd=lambda c, d: started.append(c) or [sys.executable, FAKE, "ok"], timeout_s=30,
                     models_dir=str(tmp_path))
     assert res[0]["status"] == "not downloaded" and not started
+
+
+def test_child_result_line_is_ascii_so_any_console_encoding_works():
+    line = run.result_line({"items": [{"answer": "रेल आरक्षण केन्द्र"}]})
+    assert line.isascii() and run.last_json(line)["items"][0]["answer"] == "रेल आरक्षण केन्द्र"

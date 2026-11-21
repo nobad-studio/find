@@ -339,4 +339,9 @@ def child_main(cfg_path):
     if cfg.get("tasks"):
         items = [i for i in items if i["task"] in cfg["tasks"]]
     res = run_one(cfg["candidate"], cfg["device"], items, cfg["models_dir"], cfg["tools_dir"])
-    sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+    sys.stdout.write(result_line(res))
+
+
+def result_line(res):
+    """The child's one JSON line, ASCII-only (\\u escapes): a Windows console encoding (cp1252) can't print Hindi."""
+    return json.dumps(res, ensure_ascii=True) + "\n"
