@@ -251,10 +251,11 @@ class Server:
 
     def allow_foreground(self):
         """A hotkey press gives the engine the right to bring a window to the front: pass it on to the UIs."""
-        user32 = ctypes.WinDLL("user32")
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
         for c in self.clients():
-            if c.pid:
-                user32.AllowSetForegroundWindow(wintypes.DWORD(c.pid))
+            if c.pid and not user32.AllowSetForegroundWindow(wintypes.DWORD(c.pid)):
+                # Windows' foreground rules: the window may open behind others, which looks like "it didn't open"
+                log(f"could not let the UI (pid {c.pid}) take the front (error {ctypes.get_last_error()})", "warn")
 
     # ----- pipe -----
     def _make_instance(self):

@@ -87,6 +87,15 @@ class Events:
             self._safe("foreground", self.on_show)       # the UIs may take the front (the pipe server's job)
         return self.push("show", {"what": what, "text": text})
 
+    open_window = None      # the engine sets it (Wiring): show a window, starting the UI that has it if needed
+
+    def can_show(self, window):
+        """Is a UI connected that acts on a `show` for this window ("main" or "bar")? One UI process has one
+        window, and each ignores the other's show event, so "a UI is connected" isn't enough: with the main
+        window closed and the quick find bar's process still running (hidden), a show for "main" went to the bar
+        only and nothing opened."""
+        return any(window_of(c) == window for c in self._clients() if getattr(c, "alive", True))
+
     def here(self, path):
         return self.push("here", {"path": path or ""})
 
@@ -219,6 +228,17 @@ class Events:
     def _loop(self):
         while not self._stop.wait(self._tick):
             self.step(self._clock())
+
+
+def window_of(conn):
+    """The window a connected UI has: "main", "bar", or None (not listening to `show` yet). The contract's start-up
+    order: the main window subscribes to `here` (and more), the bar only to `show` and `quitting`; ui_shown says
+    it too."""
+    if "main" in conn.shown or "here" in conn.events:
+        return "main"
+    if "bar" in conn.shown or "show" in conn.events:
+        return "bar"
+    return None
 
 
 def _msg(event, params):

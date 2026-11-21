@@ -84,7 +84,7 @@ class Tray:
     # ----- what a click means (tested without a desktop) -----
     def _on_click(self, msg):
         if msg == WM_LBUTTONUP:
-            self.on_action("open")
+            self._on_command(CMD["open"])
         elif msg in (WM_RBUTTONUP, WM_CONTEXTMENU):
             cmd = self._popup()
             if cmd:
@@ -96,7 +96,9 @@ class Tray:
             try:
                 self.on_action(action)
             except Exception as e:
-                log(f"tray action {action} failed: {type(e).__name__}", "warn")
+                log(f"tray action {action} failed: {type(e).__name__}: {str(e)[:200]}", "warn")
+        else:
+            log(f"tray: unknown menu command {int(cmd)}", "warn")
 
     # ----- Win32 -----
     def start(self):
