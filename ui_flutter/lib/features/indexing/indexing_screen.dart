@@ -549,7 +549,7 @@ class _ModelCardView extends StatelessWidget {
               kind: NbButtonKind.ghost,
               small: true,
               onPressed: () {
-                unawaited(s.settings.download(m.id, consent: () => askDownloadConsent(context, m.id)));
+                unawaited(s.settings.download(m.id, consent: (x) => askConsentFor(context, m.id, x)));
               },
             ),
           ],

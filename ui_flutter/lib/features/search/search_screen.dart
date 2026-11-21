@@ -1066,7 +1066,7 @@ class _Suggestions extends StatelessWidget {
               'Clear',
               dashed: true,
               onTap: () => unawaited(recent!.clear()),
-              tooltip: 'Forget these searches',
+              tooltip: 'Clear your search history',
             ),
           ];
         } else {

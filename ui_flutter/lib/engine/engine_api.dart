@@ -56,7 +56,7 @@ abstract class EngineApi {
   Future<Uint8List?> thumbnail(int id);
   Future<String> pathOf(int id);
 
-  /// Remove from the index and keep it out (adds it to Never search).
+  /// Remove from the index and keep it out (adds it to Never index).
   Future<ActionResult> forget(int id);
 
   /// The File Explorer folder the hotkey was pressed in, or ''.

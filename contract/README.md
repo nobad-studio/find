@@ -118,7 +118,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `starting names text images meaning photos watching error`, `paused` = `""` or why indexing is paused.
 - **`status_full`** `{}` → `Status`: everything the Indexing page shows. Always has: the counters (`files texts
   vectors with_text chunks name_vectors photo_vectors errors rate last_scan db_bytes`), `encrypted`, `version`,
-  `model`/`photo_model` (`{state: missing|downloading|ready, got, size: bytes, error}`), `memory_mb`,
+  `model`/`photo_model` (`{state: missing|downloading|ready, got, size: bytes, error}`: the text / photo model in use, or the old fixed download while it runs), `memory_mb`,
   `models_loaded`, `admin`, `roots`, `ocr` (`true`, or a sentence saying why Windows OCR isn't there), `drives`
   (`[{root, type, label, present}]`), `level`, `reason`, `paused`, `phase`, `plan`, `history` (the last 5 minutes:
   `[{t, cpu, gpu, find_cpu, find_mb, level}]`, one point per 2 s), `resources` (`{cpu, memory_mb, read_mb_s, gpu,
@@ -164,7 +164,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`download_model`** `{}` → `Ok`: download the meaning model; needs `allow_model_download` on (else `ok: false` with a
   sentence). Progress comes as `download` events.
 - **`download_photo_model`** `{}` → `Ok`: the same for the photo model (`allow_photo_model_download`).
-  Both stay for older UIs; the 0.8.0 Settings → Models page uses the methods below.
+  Both stay for older UIs (they always fetch MiniLM / SigLIP base); every download button of the UI uses `model_download` below.
 - **`models`** `{}` → `{pc: Hardware, tier_recommended: light|balanced|best, tier_current: light|balanced|best|custom,
   language_focus: english|multilingual|hindi, models: [Model]}`. `Model` = `{id, feature: text|photo|ocr, name, tier,
   licence, source, size_mb, ram_mb, speed_note, languages: [string], improves, builtin, state:
@@ -261,7 +261,7 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`activity`** → `{t, kind: level|kill|model|info, text}`: a new Recent decisions entry (within half a second).
 - **`download`** → `{id: meaning|photo|<model id>, state: missing|downloading|ready, got_mb, size_mb, mb_s, error}`: a model
   download moved on: progress up to twice a second while `downloading`, then `ready`, or `missing` with `error` saying
-  why it failed.
+  why it failed. `meaning` / `photo` follow the model in use for that feature (see `status_full`).
 - **`update`** → `UpdateState`: an update was found, is downloading (progress at most 4 times a second while bytes
   arrive), verifying, ready, installing or failed. Install goes downloading → verifying → installing.
 - **`notice`** → `{text}`: a sentence to show as a toast (for example a hotkey another app took). A notice nobody was

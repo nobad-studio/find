@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' show TextField;
 import 'package:nobad_find/app/app.dart';
 import 'package:nobad_find/engine/engine_api.dart' show Link;
+import 'package:nobad_find/platform/window.dart' show debugTransparencyOff;
 import 'package:nobad_find/state/recent_searches.dart';
 
 import '../support/fake_engine.dart';
@@ -35,10 +36,11 @@ void main() {
     tester.view.physicalSize = const Size(1080, 720);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final recent = RecentSearches(null)
-      ..add('rent agreement')
-      ..add('budget');
-    await tester.pumpWidget(NobadFindApp(engine: FakeEngine(), window: FakeWindow(), splash: false, recent: recent));
+    final engine = FakeEngine(suggestions: true);
+    engine.history.addAll(['budget', 'rent agreement']); // the engine's own search history, newest first
+    final recent = RecentSearches(engine);
+    addTearDown(recent.dispose);
+    await tester.pumpWidget(NobadFindApp(engine: engine, window: FakeWindow(), splash: false, recent: recent));
     await tester.pumpAndSettle();
     expect(find.text('budget'), findsOneWidget);
     await tester.tap(find.text('rent agreement'));
@@ -50,19 +52,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('budget'), findsNothing);
     expect(recent.items, isEmpty);
+    expect(engine.history, isEmpty); // Clear is the engine's history: the UI has no copy of its own
   });
 
-  testWidgets('using a result remembers the search', (tester) async {
-    final recent = RecentSearches(null);
+  testWidgets('using a result remembers the search in the engine, and it shows as recent', (tester) async {
+    final engine = FakeEngine(suggestions: true);
+    final recent = RecentSearches(engine);
+    addTearDown(recent.dispose);
     tester.view.physicalSize = const Size(1080, 720);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(NobadFindApp(engine: FakeEngine(), window: FakeWindow(), splash: false, recent: recent));
+    await tester.pumpWidget(NobadFindApp(engine: engine, window: FakeWindow(), splash: false, recent: recent));
     await tester.pump();
     await type(tester, 'notes');
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
+    expect(engine.history, ['notes']);
     expect(recent.items, ['notes']);
+  });
+
+  testWidgets('with "Remember my searches" off no recent searches are kept or shown', (tester) async {
+    final engine = FakeEngine(settings: {'welcome_seen': true, 'bg_notice_seen': true, 'search_history': false});
+    final recent = RecentSearches(engine);
+    addTearDown(recent.dispose);
+    tester.view.physicalSize = const Size(1080, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(NobadFindApp(engine: engine, window: FakeWindow(), splash: false, recent: recent));
+    await tester.pump();
+    await type(tester, 'notes');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(engine.history, isEmpty);
+    expect(recent.items, isEmpty);
   });
 
   testWidgets('nothing found: says so and offers ways on', (tester) async {
@@ -87,5 +109,15 @@ void main() {
   testWidgets("Home without the engine says so instead of an empty list", (tester) async {
     await pumpApp(tester, FakeEngine(link: Link.offline));
     expect(find.textContaining("engine isn't running, so there is nothing to show"), findsOneWidget);
+  });
+
+  testWidgets("See-through window follows Windows' Transparency effects switch", (tester) async {
+    debugTransparencyOff = true;
+    addTearDown(() => debugTransparencyOff = false);
+    final w = FakeWindow();
+    await tester.pumpWidget(NobadFindApp(engine: FakeEngine(), window: w, splash: false));
+    await tester.pumpAndSettle();
+    expect(w.looks, isNotEmpty);
+    expect(w.looks.every((l) => !l.$2), isTrue); // the glass setting is on, but Windows says no transparency
   });
 }

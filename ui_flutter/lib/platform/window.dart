@@ -291,6 +291,50 @@ bool systemAnimationsOff() {
   }
 }
 
+/// Tests: the same answer on every PC, instead of this PC's Transparency effects switch.
+bool? debugTransparencyOff;
+
+/// Windows' Settings > Personalization > Colors > "Transparency effects" (HKCU\Software\Microsoft\Windows\
+/// CurrentVersion\Themes\Personalize, EnableTransparency = 0): true when it is off, so the window draws solid even
+/// with the See-through window setting on. False off Windows, or when Windows doesn't say (its default is on).
+bool systemTransparencyOff() {
+  final forced = debugTransparencyOff;
+  if (forced != null) return forced;
+  if (!Platform.isWindows) return false;
+  try {
+    final adv = DynamicLibrary.open('advapi32.dll');
+    final get = adv
+        .lookupFunction<
+          Int32 Function(
+            IntPtr,
+            Pointer<Utf16>,
+            Pointer<Utf16>,
+            Uint32,
+            Pointer<Uint32>,
+            Pointer<Uint32>,
+            Pointer<Uint32>,
+          ),
+          int Function(int, Pointer<Utf16>, Pointer<Utf16>, int, Pointer<Uint32>, Pointer<Uint32>, Pointer<Uint32>)
+        >('RegGetValueW');
+    return using((a) {
+      final v = a<Uint32>();
+      final n = a<Uint32>()..value = 4;
+      final r = get(
+        -0x7FFFFFFF, // HKEY_CURRENT_USER (0x80000001, sign-extended like the Windows headers)
+        r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'.toNativeUtf16(allocator: a),
+        'EnableTransparency'.toNativeUtf16(allocator: a),
+        0x10, // RRF_RT_REG_DWORD
+        nullptr,
+        v,
+        n,
+      );
+      return r == 0 && v.value == 0;
+    });
+  } on Object {
+    return false;
+  }
+}
+
 /// Starts this app's main window on [page] (`--page settings|index|search`). Only ever this program.
 void openMainPage(String page) {
   if (!Platform.isWindows) return;

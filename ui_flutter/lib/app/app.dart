@@ -1,5 +1,6 @@
-/// The app: theme (dark/light from the setting, glass when Windows takes it), the controllers, and either the
-/// main window (splash → first-run welcome → rail + Search / Index / Settings) or the quick find bar.
+/// The app: the dark theme (the only one since 0.8.5; the old theme setting is ignored), glass when Windows takes
+/// it and its Transparency effects switch is on, the controllers, and either the main window (splash → first-run
+/// welcome → rail + Search / Index / Settings) or the quick find bar.
 library;
 
 import 'dart:async';
@@ -38,7 +39,8 @@ class NobadFindApp extends StatefulWidget {
     this.recent,
   });
 
-  /// Recent searches (main.dart gives the one kept on disk; tests none, or one in memory).
+  /// Recent searches from the engine's search history (main.dart gives one to the main window; tests none, or
+  /// their own).
   final RecentSearches? recent;
 
   /// The page the window opens on (`--page`).
@@ -81,9 +83,27 @@ class _NobadFindAppState extends State<NobadFindApp> {
     super.initState();
     _life = AppLifecycleListener(onStateChange: _lifecycle);
     settings.addListener(_restyle);
+    settings.addListener(_historySetting);
     unawaited(settings.load());
     widget.engine.link.addListener(_relink);
     WidgetsBinding.instance.addPostFrameCallback((_) => _restyle());
+  }
+
+  bool? _historyOn;
+
+  /// "Remember my searches" switched: off shows no recent searches at once (the engine deletes them), on asks.
+  void _historySetting() {
+    final r = widget.recent;
+    if (r == null || !settings.loaded) return;
+    final on = settings.settings.flag('search_history');
+    if (on == _historyOn) return;
+    final was = _historyOn;
+    _historyOn = on;
+    if (!on) {
+      r.off();
+    } else if (was != null) {
+      unawaited(r.refresh());
+    }
   }
 
   /// Settings come back with the engine (it may start after the window).
@@ -91,13 +111,17 @@ class _NobadFindAppState extends State<NobadFindApp> {
     if (widget.engine.link.value == Link.connected) unawaited(settings.load());
   }
 
+  /// Windows' Transparency effects switch (read at start and when the window comes back): off keeps it solid.
+  late bool _transparencyOff = systemTransparencyOff();
+
   void _restyle() {
     final s = settings.settings;
-    final want = (s.dark, s.glass);
+    final glass = s.glass && !_transparencyOff;
+    final want = (s.dark, glass);
     if (want == _applied) return;
     _applied = want;
     final base = s.dark ? NbColors.dark : NbColors.light;
-    final took = widget.window.look(dark: s.dark, glass: s.glass, canvasRgb: base.bg.toARGB32() & 0xFFFFFF);
+    final took = widget.window.look(dark: s.dark, glass: glass, canvasRgb: base.bg.toARGB32() & 0xFFFFFF);
     setState(() => _glass = took);
   }
 
@@ -114,12 +138,17 @@ class _NobadFindAppState extends State<NobadFindApp> {
       _onScreen = on;
       if (on && widget.reduceMotion == null) _motionOff = systemAnimationsOff();
     });
+    if (on) {
+      _transparencyOff = systemTransparencyOff();
+      _restyle();
+    }
   }
 
   @override
   void dispose() {
     _life.dispose();
     settings.removeListener(_restyle);
+    settings.removeListener(_historySetting);
     widget.engine.link.removeListener(_relink);
     find.dispose();
     status.dispose();

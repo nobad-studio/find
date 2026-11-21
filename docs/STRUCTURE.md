@@ -129,7 +129,7 @@ ui_flutter/
 │   ├── main.dart       args: (none) = main window, --bar = quick find bar; connects to the engine
 │   ├── app/
 │   │   ├── app.dart            MaterialApp/WidgetsApp, routes, keyboard shortcuts
-│   │   └── theme/              colors.dart (NOBAD tokens: one orange, dark/light), typography.dart, glass.dart
+│   │   └── theme/              colors.dart (NOBAD tokens: one orange; dark only, the light set is unused), typography.dart, glass.dart
 │   ├── engine/                 the only code that knows about the pipe
 │   │   ├── pipe_client.dart    Win32 named pipe (win32/ffi), framing, reconnect with backoff
 │   │   ├── rpc.dart            request ids, timeouts, typed calls generated from contract/methods.schema.json

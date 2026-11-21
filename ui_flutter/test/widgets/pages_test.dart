@@ -53,25 +53,29 @@ void main() {
       expect(engine.watching, isFalse);
     });
 
-    testWidgets('a model card downloads only after consent, then shows the progress', (tester) async {
+    testWidgets('a model card downloads the recommended model only after consent, then shows the progress', (
+      tester,
+    ) async {
       final engine = FakeEngine();
+      final want = engine.modelsInfo.byFeature('text').firstWhere((m) => m.recommended);
       await pumpApp(tester, engine, size: const Size(1080, 1600));
       await ctrl(tester, LogicalKeyboardKey.digit2);
       await tester.ensureVisible(find.text('Download…').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Download…').first);
       await tester.pumpAndSettle();
-      expect(find.text('Download the meaning model?'), findsOneWidget);
+      expect(find.text('Download ${want.name}?'), findsOneWidget); // the model it gets, not a fixed one
       await tester.tap(find.text('Not now'));
       await tester.pumpAndSettle();
-      expect(engine.calls, isNot(contains('download_meaning')));
+      expect(engine.calls, isNot(contains('model_download')));
       await tester.ensureVisible(find.text('Download…').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Download…').first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Download'));
       await tester.pumpAndSettle();
-      expect(engine.calls, contains('download_meaning'));
+      expect(engine.calls, contains('model_download'));
+      expect(engine.calls, isNot(contains('download_meaning'))); // never the old fixed MiniLM download
       engine.emit(const DownloadEvent(id: 'meaning', state: 'downloading', gotMb: 11.5, sizeMb: 23, mbS: 4));
       await tester.pumpAndSettle();
       expect(find.text('Downloading 12 MB of 23 MB at 4.0 MB/s'), findsOneWidget);
