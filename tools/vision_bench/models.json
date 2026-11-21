@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "models": {
+  "florence2-base-ft": {
+   "repo": "onnx-community/Florence-2-base-ft",
+   "rev": "e88a44eaf3791a35eae0c5a47b3dbcd36e67eb6f",
+   "licence": "MIT",
+   "backend": "ort",
+   "files": {
+    "config.json": [
+     5432,
+     "d90c22ed72eb55291f183fcd9b98ebd3bd3d92bfcffb6c7f6e1606085e793525"
+    ],
+    "preprocessor_config.json": [
+     2673,
+     "c892857e34a7082284983a7717717d39c9bf7e574f1f41d80d4c918c97502efa"
+    ],
+    "tokenizer.json": [
+     2297961,
+     "d69dcdb2323e124ac4f800cb9863ddccea0d7bb11e16125e8df3bd60f2f8aeac"
+    ],
+    "tokenizer_config.json": [
+     197658,
+     "d8e64607233cb53b619fb46664f6cad08176c26e0e8735b2d30d888364f19600"
+    ],
+    "added_tokens.json": [
+     22410,
+     "ba67457c577895525996e7a42d7da60a05856506ea4fd25ff9a023a64662f74b"
+    ],
+    "onnx/vision_encoder_int8.onnx": [
+     93746478,
+     "d7876c1ab0f7ec11998942ca189e99a775c5a4a912b813c7745d0f6fa9343487"
+    ],
+    "onnx/encoder_model_int8.onnx": [
+     43651493,
+     "f4ad7a68f1fb875d3bcf735ea14a7021b7ba7e83baf7cf10289881b4ed6d9b85"
+    ],
+    "onnx/decoder_model_merged_int8.onnx": [
+     98177697,
+     "f22f52f980c33df0efa15932c2f3db6d9d3595ce6387eca938b8cfe23dc4c641"
+    ],
+    "onnx/embed_tokens_int8.onnx": [
+     39390433,
+     "6b2258db1c8ee9b160576ccde3cd3814d83a2edaed0dd1c6ca9ff3c38fa62214"
+    ]
+   }
+  },
+  "smolvlm2-500m": {
+   "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
+   "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
+   "licence": "Apache-2.0",
+   "backend": "llama",
+   "files": {
+    "SmolVLM2-500M-Video-Instruct-Q8_0.gguf": [
+     436808704,
+     "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"
+    ],
+    "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf": [
+     108785184,
+     "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b"
+    ]
+   }
+  },
+  "qwen3vl-2b-q4": {
+   "repo": "Qwen/Qwen3-VL-2B-Instruct-GGUF",
+   "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
+   "licence": "Apache-2.0",
+   "backend": "llama",
+   "files": {
+    "Qwen3VL-2B-Instruct-Q4_K_M.gguf": [
+     1107409952,
+     "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"
+    ],
+    "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf": [
+     445053216,
+     "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82"
+    ]
+   }
+  },
+  "wevisone-vl-2b": {
+   "repo": "mradermacher/WeVisOne-VL-2B-GGUF",
+   "rev": "1c23693c79d8a66d3f5e7e66b979a1b7fe96a76d",
+   "licence": "Apache-2.0",
+   "backend": "llama",
+   "files": {
+    "WeVisOne-VL-2B.Q4_K_M.gguf": [
+     1284559104,
+     "7861125b02d70cdc49c7b77cae49c49aa493c0ca704b99d07589ed70e7ba22bd"
+    ],
+    "WeVisOne-VL-2B.mmproj-Q8_0.gguf": [
+     445053568,
+     "22a805c50839dff146735f4407f9a7be13398fa01530aa63835cb55e7a2f5d18"
+    ]
+   }
+  },
+  "hindi-ocr": {
+   "repo": "PaddlePaddle/devanagari_PP-OCRv5_mobile_rec",
+   "rev": "99dcce6d196bd4aaf268c7a5c72c3cc9f3ea4932",
+   "licence": "Apache-2.0",
+   "backend": "paddle",
+   "files": {
+    "config.json": [
+     12970,
+     "b823d922aa6aedc9fda8412b94e2600885bf8442c5d2197f456a4e672d36481c"
+    ],
+    "inference.json": [
+     217712,
+     "20d3b121184ec6b7de1705015022f4b22117990f6e5728a5d21c314bac9c1444"
+    ],
+    "inference.pdiparams": [
+     7836203,
+     "719be7d20bfe9530e2deae324c999e9911087496bce5e70846767c448d023a01"
+    ],
+    "inference.yml": [
+     5027,
+     "9bd172dd26440c8ce94d1cde5d5baea6aefdc7cf3c5c8492e0beedef656d4e54"
+    ]
+   }
+  },
+  "hindi-ocr-det": {
+   "repo": "PaddlePaddle/PP-OCRv5_mobile_det",
+   "rev": "0d63e78e2b680928f6b1747d76a08db6e645efb7",
+   "licence": "Apache-2.0",
+   "backend": "paddle",
+   "files": {
+    "config.json": [
+     2871,
+     "7ac1c33f377ba58561f4b89d3180b6add2b7c5c60a4edac90fa4e0ceccdc6665"
+    ],
+    "inference.json": [
+     229777,
+     "05feef1acb00aa4cd7362b15f7f501fc4f99d7b1fa73c1c871e0c7b1504b0f5c"
+    ],
+    "inference.pdiparams": [
+     4692937,
+     "afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b"
+    ],
+    "inference.yml": [
+     903,
+     "98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699"
+    ]
+   }
+  }
+ },
+ "llama": {
+  "cpu": {
+   "tag": "b12602",
+   "zip": "llama-b12602-bin-win-cpu-x64.zip",
+   "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12602/llama-b12602-bin-win-cpu-x64.zip",
+   "size": 25012065,
+   "sha256": "9957dab2f52e2599b85921ef3e2661287c1f3ad302bc0be07992e915cc6f7392"
+  },
+  "vulkan": {
+   "tag": "b12602",
+   "zip": "llama-b12602-bin-win-vulkan-x64.zip",
+   "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12602/llama-b12602-bin-win-vulkan-x64.zip",
+   "size": 38857755,
+   "sha256": "723c13b3bc0759c1d86c09316a06cb549c78702cf3a441de5bff64c27f26fded"
+  },
+  "cuda": {
+   "tag": "b12602",
+   "zip": "llama-b12602-bin-win-cuda-12.4-x64.zip",
+   "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12602/llama-b12602-bin-win-cuda-12.4-x64.zip",
+   "size": 357942886,
+   "sha256": "f1553212611a59795854d2bda7a1ce021881b0d6c69448d33a1866c66e0fc014"
+  },
+  "cuda-runtime": {
+   "tag": "b12602",
+   "zip": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+   "url": "https://github.com/ggml-org/llama.cpp/releases/download/b12602/cudart-llama-bin-win-cuda-12.4-x64.zip",
+   "size": 391443627,
+   "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
+  }
+ }
+}
