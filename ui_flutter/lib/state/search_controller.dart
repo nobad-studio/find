@@ -211,6 +211,14 @@ class FindController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 0.9.5: the answer for exactly what is typed now. Enter right after typing ("open bluetooth" + Enter) used to
+  /// act on the answer to an earlier keystroke, or on none, while the newest search was still on its way.
+  Future<void> settle() async {
+    if (_askedFor == _text && !_busy && !(_timer?.isActive ?? false)) return;
+    _timer?.cancel();
+    await run();
+  }
+
   void move(int delta) {
     if (results.isEmpty) return;
     _selected = (_selected + delta) % results.length;

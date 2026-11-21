@@ -383,10 +383,26 @@ def _photo_hits(store, q, photo_text, pindex, limit):
     qvec = ask(q.meaning or q.text)
     where, args = _filters(q)
     among = getattr(pindex, "search_among", None)
-    if where and among is not None:
+    exact_all = pindex.n < getattr(pindex, "FAST_FROM", 0)
+    if where and exact_all:
+        # 0.9.5: every photo ranked in memory (~1 ms for 10,000), then the filter checked by id in score order
+        # until enough fit; the old way joined the photos with the files table on every keystroke (0.4-1.5 s)
+        hits, ranked = [], pindex.search(qvec, k=pindex.n)
+        for i in range(0, len(ranked), 500):
+            part = ranked[i:i + 500]
+            marks = ",".join("?" * len(part))
+            ok = {r[0] for r in store.q(f"SELECT f.id FROM files f WHERE f.id IN ({marks}){where}",
+                                        (*(fid for fid, _s in part), *args))}
+            hits += [h for h in part if h[0] in ok]
+            if len(hits) >= limit * 3:
+                break
+        hits = hits[:limit * 3]
+    elif where and among is not None:
         # filtered ("in downloads", "from march"): rank only the photos that fit, so the PC's best few hundred
         # elsewhere can't push every one of them out before the filter is even looked at
-        fit = [r[0] for r in store.q(f"SELECT f.id FROM files f JOIN pvecs p ON p.file_id = f.id "
+        # 0.9.5: CROSS JOIN keeps the photos (thousands) as the outer loop; SQLite otherwise walked all the files
+        # (a million on a whole-PC index) for the folder filter: 1-3 s per keystroke in the bar
+        fit = [r[0] for r in store.q(f"SELECT f.id FROM pvecs p CROSS JOIN files f ON f.id = p.file_id "
                                      f"WHERE length(p.v) > 0{where} LIMIT {PHOTO_FILTER_MAX}", tuple(args))]
         hits = among(qvec, fit, k=limit * 3)
     else:

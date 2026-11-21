@@ -52,9 +52,15 @@ class PipeEngine implements EngineApi {
   }
 
   @override
-  Future<ActionResult> open(int id) => _pipe.open(id);
+  Future<ActionResult> open(int id) {
+    _letEngineToFront(); // 0.9.5: what it opens may come to the front (Windows' foreground rule)
+    return _pipe.open(id);
+  }
   @override
-  Future<ActionResult> reveal(int id) => _pipe.reveal(id);
+  Future<ActionResult> reveal(int id) {
+    _letEngineToFront();
+    return _pipe.reveal(id);
+  }
   @override
   Future<Uint8List?> thumbnail(int id) => _pipe.thumbnail(id);
 
@@ -157,7 +163,14 @@ class PipeEngine implements EngineApi {
   @override
   Future<ActionResult> modelFolder(String id) => _pipe.modelFolder(id);
   @override
-  Future<ActionResult> runAction(String id) => _pipe.runAction(id);
+  Future<ActionResult> runAction(String id) {
+    _letEngineToFront(); // a Settings page or app opened from the bar used to open behind other windows
+    return _pipe.runAction(id);
+  }
+
+  void _letEngineToFront() {
+    if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid);
+  }
   @override
   Future<UpdateState> updateState() => _pipe.updateState();
   @override

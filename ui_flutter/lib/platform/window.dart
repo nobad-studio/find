@@ -52,10 +52,15 @@ class NoWindow implements WindowControl {
 
 /// Bar geometry in logical pixels (the 0.7.0 quick find bar had the same WIDTH, HEIGHT, ROW, MAX_ROWS).
 abstract final class BarSize {
-  static const width = 640;
+  /// 0.9.5: 840 wide, the list keeps its old 600 and the preview of the selected result takes the rest.
+  static const width = 840;
+  static const preview = 240;
   static const field = 52;
   static const row = 38;
   static const maxRows = 8;
+
+  /// With results on show the window is at least this many rows tall, so the preview has room.
+  static const previewRows = 5;
 
   /// Window height for [rows] result rows (one more pixel for the line above the list).
   static int height(int rows) => rows <= 0 ? field : field + 1 + rows.clamp(0, maxRows) * row;

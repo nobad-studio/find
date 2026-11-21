@@ -113,7 +113,8 @@ class _BarWindowState extends State<BarWindow> {
     final ns = suggestionRows;
     if (find.askedFor.isEmpty) return ns;
     if (find.results.isEmpty) return chipRows + ns + (actionRows > 0 ? actionRows : 1);
-    return overflows ? BarSize.maxRows : chipRows + ns + actionRows + listItems.length;
+    final n = overflows ? BarSize.maxRows : chipRows + ns + actionRows + listItems.length;
+    return n < BarSize.previewRows ? BarSize.previewRows : n; // 0.9.5: room for the preview beside the list
   }
 
   /// ↑/↓ moved the selection: scroll the list so the selected row is in view (every row is BarSize.row tall).
@@ -161,14 +162,17 @@ class _BarWindowState extends State<BarWindow> {
     final x = sug.current;
     if (x == null) {
       sug.close();
-      final act = find.launchAction;            // "open bluetooth" in the bar: open it, the bar hides
-      if (act != null) {
-        unawaited(find.runAction(act).then((ok) {
-          if (ok) widget.window.hide();
-        }));
-        return;
-      }
-      unawaited(_act());
+      unawaited(find.settle().then((_) {        // 0.9.5: act on the answer to what is typed now
+        if (!mounted) return;
+        final act = find.launchAction;          // "open bluetooth" in the bar: open it, the bar hides
+        if (act != null) {
+          unawaited(find.runAction(act).then((ok) {
+            if (ok) hide();
+          }));
+          return;
+        }
+        unawaited(_act());
+      }));
       return;
     }
     _quiet = true;
@@ -371,7 +375,7 @@ class _BarWindowState extends State<BarWindow> {
     return Glass(
       level: GlassLevel.panel,
       radius: 18,
-      fill: c.glass ? c.panel : c.surface,
+      fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
       child: MenuAnchor(
         controller: _menu,
         menuChildren: _menuItems,
@@ -415,11 +419,16 @@ class _BarWindowState extends State<BarWindow> {
                       final best = find.answer.hasGuess ? find.answer.best : null;
                       final items = listItems;
                       final row = BarSize.row.toDouble();
+                      final sel = find.results.isEmpty ? null : find.current;
                       return Container(
                         decoration: BoxDecoration(
                           border: Border(top: BorderSide(color: c.line)),
                         ),
-                        child: Column(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             if (chipRows > 0)
@@ -501,6 +510,14 @@ class _BarWindowState extends State<BarWindow> {
                               ),
                             if (find.results.isNotEmpty && overflows)
                               _MoreLine(count: find.results.length, more: find.answer.more),
+                          ],
+                              ),
+                            ),
+                            if (sel != null && find.askedFor.isNotEmpty)
+                              SizedBox(
+                                width: BarSize.preview.toDouble(),
+                                child: BarPreview(engine: widget.engine, result: sel),
+                              ),
                           ],
                         ),
                       );
@@ -881,6 +898,60 @@ class _ActionLine extends StatelessWidget {
               const Spacer(),
             Text('Open', style: NbType.text(12, c.orange, weight: FontWeight.w600)),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 0.9.5: the selected result beside the bar's list (like Spotlight): a picture for photos and videos, the name,
+/// where it is, its size and age, and the words that matched inside it.
+class BarPreview extends StatelessWidget {
+  const BarPreview({super.key, required this.engine, required this.result});
+  final EngineApi engine;
+  final FileResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final r = result;
+    final facts = [
+      kindTag(r.kind),
+      if (r.size != null) humanSize(r.size),
+      if (r.ago.isNotEmpty) r.ago,
+    ].join(' · ');
+    return Container(
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: c.line))),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      child: Semantics(
+        label: 'Preview of ${r.name}',
+        child: AnimatedSwitcher(
+          duration: NbMotion.of(context, NbMotion.fast),
+          child: Column(
+            key: ValueKey(r.id),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (r.hasThumb) ...[
+                Center(child: ResultThumb(engine: engine, result: r, size: 132)),
+                const SizedBox(height: 10),
+              ],
+              Text(r.name, maxLines: 2, overflow: TextOverflow.ellipsis,
+                  style: NbType.text(13, c.text, weight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(facts, maxLines: 1, overflow: TextOverflow.ellipsis, style: NbType.data(10.5, c.orange)),
+              const SizedBox(height: 4),
+              TailText(r.dir, style: NbType.data(10.5, c.dim)),
+              if (r.snippet.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Flexible(
+                  child: Text.rich(
+                    TextSpan(children: snippetSpans(r.snippet, NbType.text(11.5, c.muted, height: 1.4), c)),
+                    overflow: TextOverflow.fade,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

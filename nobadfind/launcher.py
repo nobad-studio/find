@@ -318,9 +318,18 @@ class Launcher:
         if not w or len(" ".join(w)) < 2:
             return []
         launch = wants_launch(text)
+        # 0.9.5: the question minus its launch word (and a trailing "app" / "page") naming an entry exactly wins:
+        # "open windows update" is Windows Update, not Update history ("windows" alone is a filler word above)
+        full = [x for x in words(text) if x not in ("open", "launch", "start", "run", "go", "to", "please", "the", "my")]
+        while len(full) > 1 and full[-1] in ("app", "page", "window"):
+            full.pop()
+        named = " ".join(full)
+
+        def exact(title):
+            return 0.6 if named and named == " ".join(words(title)) else 0.0
         out = []
         for sid, title, target, extra in SETTINGS:
-            s = _score(w, title, extra)
+            s = _score(w, title, extra) + exact(title)
             if s >= (0.6 if launch else 0.8):
                 kind = "tool" if target.startswith("tool:") else "setting"
                 sub = "Windows Settings" if target.startswith("ms-settings:") else \
@@ -331,6 +340,7 @@ class Launcher:
             apps, catalog = list(self.apps), self.catalog
         pages = {SETTINGS_BY_ID[a["id"]][2] for _s, a in out}
         for s, item in catalog.search(w):
+            s += exact(item["title"])
             if item.get("uri") in pages:
                 continue                                # the same page is already offered by its usual name
             if s >= (0.6 if launch else 0.8):
@@ -338,7 +348,7 @@ class Launcher:
                 out.append((s + (0.05 if launch else 0), {"id": item["id"], "kind": "setting", "title": item["title"],
                                                            "subtitle": sub}))
         for a in apps:
-            s = _score(w, a["name"], a.get("publisher", ""))
+            s = _score(w, a["name"], a.get("publisher", "")) + exact(a["name"])
             if a["name"].lower().startswith("uninstall") and len(w) < 2:
                 s -= 0.4                                # "uninstall" alone: the Installed apps page, not an uninstaller
             if s >= (0.65 if launch else 0.9):
