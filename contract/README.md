@@ -64,7 +64,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   is how the question was read (show as chips), `terms` the words to highlight, `notes` sentences for the user,
   `more` = there were more matches than shown, `error` = `""` or a sentence when the search failed.
   - `Filters` (all optional, `""` = off): `kind` (`pdf document spreadsheet slides text code email image video audio
-    archive ebook app folder`), `modified` (`today week month year`), `size` (`small medium large`), `folder`
+    archive ebook app folder secret`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
     (`here`, a known folder word, or a folder path already in the index; ≤ 2000), `sort` (`newest oldest largest
     name`). Any other key or word is refused (`-32602`).
   - `Result`: `{id: int, path, name, dir, kind: string, size: int|null, mtime: number|null (seconds since 1970),

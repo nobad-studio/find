@@ -387,6 +387,9 @@ abstract final class FilterChoices {
     ('app', 'Programs'),
     ('folder', 'Folders'),
   ];
+  /// 0.9.5: key files, password stores, wallets, by name only; offered while Settings > What to index has
+  /// "Keys and passwords" on (the engine's `secret` filter, search.secret_sql).
+  static const secret = ('secret', 'Keys & passwords (names only)');
   static const modified = [
     ('', 'Any time'),
     ('today', 'Today'),

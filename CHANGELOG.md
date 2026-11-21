@@ -25,6 +25,9 @@
 - See-through window really follows Windows' Transparency effects switch.
 
 ### Privacy and security
+- A "Keys & passwords (names only)" choice in the filter bar's Kind, offered while Settings > What to index has
+  Keys and passwords on: it lists key files, password stores, wallets, .ssh and similar files by name. Their
+  contents are never read, and browsers' saved passwords are never opened.
 - Recent searches come only from your encrypted search history. The window no longer keeps its own plain-text list,
   and the old `ui-recent.json` is deleted. Search history off means none are kept or shown, and "Clear search
   history" clears them too.

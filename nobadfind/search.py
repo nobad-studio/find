@@ -6,6 +6,7 @@ Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and on
 import os
 import time
 
+from .const import BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
 from .query import parse
 from .store import OperationalError, fts_quote
 from .understand import best_guess, folder_finder, parts, place_bases
@@ -70,6 +71,30 @@ def place_roots(place, drives):
     return roots
 
 
+def secret_sql(alias="f"):
+    """0.9.5, the "Keys & passwords" filter: the files scope.Rules calls secrets (key files, password stores, wallets,
+    .ssh and the like, Windows Credentials, browser login and cookie files), as one SQL condition. Only their names
+    are in the index (Rules.names_only): this lists names and never reads anything."""
+    def like(*parts):                                # "!" escapes, so the path's backslashes stay literal
+        safe = [x.replace("!", "!!").replace("_", "!_").replace("%", "!%") for x in parts]
+        return "%\\" + "\\".join(safe) + "\\%"
+    ors, args = [], []
+    exts = sorted(SECRET_EXT)
+    ors.append(f"{alias}.ext IN ({','.join('?' * len(exts))})")
+    args += exts
+    names = sorted(SECRET_FILES)
+    ors.append(f"lower({alias}.name) IN ({','.join('?' * len(names))})")
+    args += names
+    for run in [(n,) for n in sorted(SECRET_NAMES)] + list(SECRET_PATHS):
+        ors.append(f"{alias}.path LIKE ? ESCAPE '!'")
+        args.append(like(*run))
+    browser = sorted(BROWSER_SECRET_FILES)
+    inside = " OR ".join(f"{alias}.path LIKE ? ESCAPE '!'" for _ in NAMES_ONLY_PATHS)
+    ors.append(f"(lower({alias}.name) IN ({','.join('?' * len(browser))}) AND ({inside}))")
+    args += browser + [like(*run) for run in NAMES_ONLY_PATHS]
+    return "(" + " OR ".join(ors) + f") AND {alias}.kind != 'folder'", args
+
+
 def _filters(q, alias="f"):
     sql, args = [], []
     roots = place_roots(q.place, q.drives)
@@ -83,6 +108,10 @@ def _filters(q, alias="f"):
     if q.kinds:
         sql.append(f"{alias}.kind IN ({','.join('?' * len(q.kinds))})")
         args += sorted(q.kinds)
+    if getattr(q, "secrets", False):
+        w, a = secret_sql(alias)
+        sql.append(w)
+        args += a
     if q.folder:
         from .winapi import known_folder
         path = known_folder(q.folder)
@@ -462,6 +491,8 @@ def apply_filters(q, filters, now):
     kind = filters.get("kind")
     if kind in FILTER_KINDS:
         q.kinds = {kind}
+    elif kind == "secret":
+        q.secrets = True                            # 0.9.5: Keys & passwords (names only, see secret_sql)
     days = FILTER_DAYS.get(filters.get("modified"))
     if days and q.t0 is None:
         q.t0, q.t1 = now - days * 86400, now + 60

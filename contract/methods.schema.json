@@ -1216,7 +1216,8 @@
             "archive",
             "ebook",
             "app",
-            "folder"
+            "folder",
+            "secret"
           ]
         },
         "modified": {
