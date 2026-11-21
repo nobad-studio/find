@@ -180,7 +180,25 @@ Extends `hardware.py` (already reads RAM, cores, AVX2/AVX-512, GPU via DXGI incl
 - **Keep getting smarter** (setting, off by default): enables L3 and lets L1 use the GPU at heavy-work times.
   Turning it on shows the §2 estimate first.
 
-## Phases (each its own PR, tests first, CI green)
+## Release: everything ships together as NOBAD Find 1.0.0
+
+Maintainer decision 2026-11-21: all phases below land as separate PRs into a `find-1.0` integration branch and reach
+users together in one release, **1.0.0**. No intermediate public release carries part of the vision engine.
+
+**Download only what is needed, when it is needed.** The installer carries code only (plus the small CPU
+runtimes). Each model or GPU pack is fetched the first time a feature that needs it is turned on or used, after the
+user's consent for that item, and never in advance:
+- Florence-2: when photo understanding (L1) is first turned on.
+- The Hindi OCR model: only when Hindi is among the user's languages and text reading is on.
+- The talk model for this PC: the first time the user presses Describe / Ask / Compare.
+- A GPU pack: only on a PC with that GPU, when the PC analyzer recommends it and the user accepts.
+- A heavier model: only after the user picks it and accepts the estimate (§2).
+Settings -> Models lists every item with its size, whether it's downloaded, and Remove.
+
+**No Ollama.** Find never uses or depends on Ollama (maintainer). The L2 runtime is ONNX Runtime or llama.cpp's
+library, run inside Find's own worker process, as decided by Phase 0.
+
+## Phases (each its own PR into `find-1.0`, tests first, CI green)
 
 0. **Benchmark** (`tools/vision_bench.py`, no product code): Florence-2 ONNX int8 vs WeVisOne-VL-2B (L1);
    SmolVLM2-500M vs Qwen3-VL-2B Q4 vs WeVisOne-VL-2B (L2), each on CPU / DirectML / CUDA where possible, ONNX
@@ -200,7 +218,7 @@ Extends `hardware.py` (already reads RAM, cores, AVX2/AVX-512, GPU via DXGI incl
   reference PC; ROADMAP). Both GPU builds (`onnxruntime-directml`, `onnxruntime-gpu` + CUDA libraries) go into
   optional downloaded **GPU packs**, one per vendor, each a separate runtime folder used only by the vision
   worker exe. Existing text/photo models are unaffected unless a later measurement says otherwise.
-- **Each phase can ship alone.** So Phase 1 already carries the minimum safety: vision work in its own worker
+- **Each phase is safe on its own** (even though all ship together in 1.0): Phase 1 already carries the minimum safety: vision work in its own worker
   process, a per-photo timeout, a memory cap, the poison-file rule, and it runs only at the governor's GENTLE/FULL
   levels and stops at LIGHT/PAUSED. Phase 4 adds the smarter parts (rhythm, VRAM checks, crash → smaller model).
 - **Memory:** vision workers get their own job object (`VISION`, nested in OUTER, kill-on-close) instead of sharing
