@@ -1,5 +1,14 @@
 # NOBAD Find changelog
 
+## 0.9.4 · 2026-11-21
+
+### Fixed
+- Meaning search could find nothing for days after switching to another text model. When the old model's
+  vectors had been cleared (a change in how vectors are made), search still waited for the new model's whole
+  set, about 1.4 million pieces on a whole-PC index, before using any of it. Now the new model takes over at once,
+  and each file counts in meaning search as soon as its vectors are made.
+- A half-finished switch made the old way is started again instead of being kept.
+
 ## 0.9.3 · 2026-11-20
 
 ### Search bar

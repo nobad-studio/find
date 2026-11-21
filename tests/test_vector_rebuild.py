@@ -121,6 +121,40 @@ def test_switching_rebuilds_beside_the_old_vectors_then_swaps(tmp_path, monkeypa
     assert any("BGE base" in a for a in ix._notes)
 
 
+def test_a_switch_away_from_an_empty_set_uses_the_new_model_at_once(tmp_path, monkeypatch):
+    """Found on the reference PC (0.9.3): the MiniLM vectors had been dropped (the vector format changed) while a
+    switch to GTE small was pending, so search kept the empty MiniLM set until all 1.4 million GTE vectors were
+    made: no meaning results for days. With nothing to keep searchable, the new model takes over at once and
+    its vectors count as they're made."""
+    ix, s, st, vi = _ix(tmp_path, monkeypatch, "bge-base-en-v1.5")
+    s.set_meta("vec_model", "minilm-l6-v2")
+    s.set_meta("vec_version", embed.VEC_VERSION)
+    s.set_meta("vec_model_next", "bge-base-en-v1.5")
+    s.add_name_vectors([(1, blob(1, 768))], next=True)     # part of the rebuild was done
+    to_next = []
+    real = s.add_vectors
+    s.add_vectors = lambda rows, next=False: (to_next.append(next), real(rows, next=next))[1]
+    ix._load_embedder()
+    ix._make_vectors()
+    assert True not in to_next                             # nothing waits beside an empty set
+    assert s.meta("vec_model") == "bge-base-en-v1.5" and not s.meta("vec_model_next")
+    assert ix.text_model == "bge-base-en-v1.5" == vi.model and ix.embedder.model_id == "bge-base-en-v1.5"
+    ix._make_vectors()                                     # the next round fills the searched set itself
+    assert s.count_chunks_without_vectors() == 0 and s.q("SELECT count(*) FROM vecs_next")[0][0] == 0
+    assert {len(v) for (v,) in s.q("SELECT v FROM vecs")} == {768 * 2}
+    assert ix.status.get("rebuild") is None
+
+
+def test_a_new_vector_format_also_drops_a_half_built_next_set(tmp_path, monkeypatch):
+    ix, s, st, vi = _ix(tmp_path, monkeypatch, "bge-base-en-v1.5")
+    s.set_meta("vec_model", "minilm-l6-v2")
+    s.set_meta("vec_version", "1")
+    s.set_meta("vec_model_next", "bge-base-en-v1.5")
+    s.add_name_vectors([(1, blob(1, 768))], next=True)     # made the old way
+    ix._load_embedder()
+    assert s.q("SELECT count(*) FROM nvecs_next")[0][0] == 0 and not s.meta("vec_model_next")
+
+
 def test_a_model_not_downloaded_yet_changes_nothing(tmp_path, monkeypatch):
     ix, s, st, vi = _ix(tmp_path, monkeypatch, "minilm-l6-v2")
     ix._load_embedder()
