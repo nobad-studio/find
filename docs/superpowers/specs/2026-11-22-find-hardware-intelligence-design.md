@@ -325,7 +325,8 @@ in plain words.
 2. **PR A, hardware facts + profile:**
    - `hardware.scan()` gets vendor and backends.
    - New `profile.py` (pure: facts + goal → class per axis, preferences).
-   - `performance_goal` setting (`const.DEFAULTS`, `settings.coerce`, schema, a Settings row).
+   - `performance_goal` setting (`const.DEFAULTS`, `settings.coerce`, schema, a Settings row), the one-time
+     `power` migration with its compatibility layer, and "Reset to safe defaults" (8b).
    - No behaviour change beyond showing the profile.
 3. **PR B, variants:**
    - Catalog `variants` / `equivalent_to` / `session` with measured rows.
@@ -336,6 +337,7 @@ in plain words.
    - `capability.assess` returns variant/backend/batch.
    - `op_limits` gains `batch`.
    - Pools read them; GPU pressure → batch down → backend chain.
+   - Per-feature backend/variant/batch overrides (8b), the final allocation check and the learned reserve (6.1, 6.3).
 5. **PR D, benchmarks:**
    - The in-app "Test my PC" fills `measured` per variant and backend.
    - Profile-specific benchmark tables in measurements.md.
