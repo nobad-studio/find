@@ -4,6 +4,29 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-21: photo search baseline (hybrid photo search, step 0)
+
+`python tools/eval_photo_search.py <set>`: 308 openly licensed Wikimedia Commons photos, 60 judged searches (graded
+0/1/2 from what is visible), copied under neutral camera names (`IMG_0001.jpg`) so file names give nothing away;
+the engine's own walk, Windows OCR (37 photos with text), MiniLM and SigLIP base. Reference PC, CPU.
+
+| Ranking | recall@10 (grade 2) | nDCG@10 | MRR@10 |
+|---|---|---|---|
+| Find today (`search.search`, RRF of names/text/meaning/photo) | 0.780 | 0.755 | 0.875 |
+| SigLIP similarity alone, no floors | **0.913** | **0.864** | **0.931** |
+
+nDCG@10 by what the search mostly needs (Find / SigLIP alone): look 0.80 / 0.91, objects 0.77 / 0.88, actions
+0.69 / 0.77, mood 0.50 / 0.65, text in photo 0.64 / 0.88, photo type 0.44 / 0.84.
+
+- **Today's fusion makes photo search worse than its own photo channel.** Two causes seen in the weakest searches:
+  the photo floors (`PHOTO_MIN`, `PHOTO_SPREAD`, `PHOTO_RATIO`) cut good photos ("a handwritten note" returns
+  none; the frustrated-laptop search returns one), and OCR/meaning words pull in look-alikes ("coffee" on a menu
+  ranks above a cup of coffee).
+- With the set's own names (`dog-01.jpg`) Find scored 0.812: the name channel was reading the answer. Always run
+  with neutral names.
+- **The hybrid ranker's gate is therefore SigLIP alone (0.864 nDCG@10), not today's 0.755.**
+- Index build 193 s for 308 photos (OCR + SigLIP + MiniLM, CPU); search p50 214 ms.
+
 ## 2026-11-21: Vision Phase 0, step 3: like-for-like Florence-2 runs and Qwen3-VL-2B speed-ups
 
 Same PC, tool and 32-question set. Objects (detection) and descriptions are scored separately (columns).
