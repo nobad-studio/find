@@ -49,6 +49,22 @@ Several small models share the work instead of one big vision model doing everyt
 - The engine's closed-window memory grows: models load, work and unload.
 - A model crash takes the engine or the UI with it.
 
+## Size, weight and control budgets (maintainer, 2026-11-21: "dont make it too big … super transparency and
+custom by user pref … not overweight even in bg")
+
+- **App size:** installed Find is 153 MB today (0.9.6). 1.0 adds at most **25 MB** to the install; every model and
+  GPU pack is an on-demand download (Release section), never in the installer.
+- **Background weight:** with the window closed and no vision work queued, the engine stays at the existing
+  target (<= 60 MB, CPU ~ 0 %; ROADMAP). Vision work in the background follows the governor's caps (GENTLE 35 %
+  CPU, LIGHT 15 %) and never runs at LIGHT/PAUSED; heavy work only under §3's rules. Defaults are conservative:
+  L1 on idle only, deep pass off, talk on demand.
+- **Every part is the user's choice:** each layer (L1 see/read, Hindi OCR, talk, deep pass, people, usage
+  pattern, GPU use) has its own switch; one "How hard may Find work in the background" choice (Light / Balanced
+  / Max, default Balanced) sets the caps; each can be limited to "only when plugged in" / "only when I'm away".
+- **Transparency:** the Indexing page shows, per layer: on/off and why, the model and its size, queue length and
+  ETA, what it's doing right now, and its live CPU / GPU / RAM; Settings -> Models shows every downloaded item
+  and Remove. No vision work happens that isn't listed there.
+
 ## Constraints
 
 - Windows 10/11 x64. Python engine (`NobadFind.exe`, PyInstaller one-folder) + Flutter UI (`nobad_find.exe`)
