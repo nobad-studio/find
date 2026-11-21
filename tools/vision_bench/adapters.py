@@ -243,10 +243,15 @@ class Florence2(Adapter):
 
     @staticmethod
     def graphs(device):
-        """The four graphs for a device: int8 on CPU; fp16 on a GPU, where the int8 graphs' dynamic quantization
-        ops would fall back to the CPU while the session still reports the GPU."""
-        q = "int8" if device == "cpu" else "fp16"
-        return [f"{g}_{q}.onnx" for g in ("vision_encoder", "encoder_model", "decoder_model_merged", "embed_tokens")]
+        """The graphs for a device: int8 on CPU (one merged decoder); fp16 on a GPU, where the int8 graphs' dynamic
+        quantization ops would fall back to the CPU while the session still reports the GPU. onnx-community's fp16
+        MERGED decoder is an invalid graph for ONNX Runtime ("Subgraph output (logits) is an outer scope value"), so
+        a GPU uses the two plain decoders: the first step, then the steps with the cache."""
+        if device == "cpu":
+            return [f"{g}_int8.onnx" for g in ("vision_encoder", "encoder_model", "decoder_model_merged",
+                                               "embed_tokens")]
+        return [f"{g}_fp16.onnx" for g in ("vision_encoder", "encoder_model", "decoder_model",
+                                           "decoder_with_past_model", "embed_tokens")]
 
     def _arr(self, sess, name, a):
         """a in the dtype the session's input wants (fp16 graphs take float16)."""
@@ -265,9 +270,11 @@ class Florence2(Adapter):
             so.enable_mem_pattern = False
             so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         mk = lambda n: ort.InferenceSession(os.path.join(d, "onnx", n), so, providers=prov)  # noqa: E731
-        self.vis, self.enc, self.dec, self.emb = (mk(n) for n in self.graphs(device))
-        if device != "cpu" and any(s.get_providers()[0] == "CPUExecutionProvider"
-                                   for s in (self.vis, self.enc, self.dec, self.emb)):
+        g = {n.rsplit("_", 1)[0]: mk(n) for n in self.graphs(device)}
+        self.vis, self.enc, self.emb = g["vision_encoder"], g["encoder_model"], g["embed_tokens"]
+        self.dec = g.get("decoder_model_merged") or g["decoder_model"]
+        self.dec_past = g.get("decoder_with_past_model")       # None: the merged decoder does both
+        if device != "cpu" and any(s.get_providers()[0] == "CPUExecutionProvider" for s in g.values()):
             raise GpuNotUsed(f"ONNX Runtime didn't use the {device} provider")
         self.tok = Tokenizer.from_file(os.path.join(d, "tokenizer.json"))
         self.bos, self.eos = self.tok.token_to_id("<s>"), self.tok.token_to_id("</s>")
@@ -291,23 +298,24 @@ class Florence2(Adapter):
         hidden = self.enc.run(None, {"inputs_embeds": self._arr(self.enc, "inputs_embeds", x),
                                      "attention_mask": mask})[0]
         out_ids, past = [self.eos], None   # Florence-2 (BART) starts decoding from </s>
-        names = [i.name for i in self.dec.get_inputs()]
         for _ in range(256):
-            feed = {"inputs_embeds": self._arr(self.dec, "inputs_embeds", self._embed([out_ids[-1]])),
+            dec = self.dec_past if (self.dec_past is not None and past is not None) else self.dec
+            names = [i.name for i in dec.get_inputs()]
+            feed = {"inputs_embeds": self._arr(dec, "inputs_embeds", self._embed([out_ids[-1]])),
                     "encoder_attention_mask": mask}
             if "encoder_hidden_states" in names:
                 feed["encoder_hidden_states"] = hidden
             if "use_cache_branch" in names:
                 feed["use_cache_branch"] = np.array([past is not None])
-            for i in self.dec.get_inputs():
+            for i in dec.get_inputs():
                 if i.name.startswith("past_key_values"):
                     if past is not None:
                         feed[i.name] = past[i.name]
                     else:   # first step: empty caches (use_cache_branch False computes them)
-                        feed[i.name] = self._arr(self.dec, i.name,
+                        feed[i.name] = self._arr(dec, i.name,
                                                  np.zeros((1, i.shape[1], 0, i.shape[3]), np.float32))
-            outs = self.dec.run(None, feed)
-            onames = [o.name for o in self.dec.get_outputs()]
+            outs = dec.run(None, feed)
+            onames = [o.name for o in dec.get_outputs()]
             nxt = int(outs[onames.index("logits")][0, -1].argmax())
             if nxt == self.eos:
                 break

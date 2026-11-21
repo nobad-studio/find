@@ -158,7 +158,12 @@ def test_llama_temp_files_live_under_vbench_tmp_and_are_removed(tmp_path, monkey
 def test_florence_uses_fp16_graphs_on_gpu():
     f = adapters.Florence2()
     assert all(n.endswith("_int8.onnx") for n in f.graphs("cpu"))
-    assert all(n.endswith("_fp16.onnx") for n in f.graphs("directml")) and f.graphs("cuda") == f.graphs("directml")
+    gpu = f.graphs("directml")
+    assert all(n.endswith("_fp16.onnx") for n in gpu) and f.graphs("cuda") == gpu
+    # onnx-community's fp16 MERGED decoder is an invalid graph for ONNX Runtime ("Subgraph output (logits) is an
+    # outer scope value"): a GPU uses the two plain decoders instead
+    assert "decoder_model_merged_fp16.onnx" not in gpu
+    assert {"decoder_model_fp16.onnx", "decoder_with_past_model_fp16.onnx"} <= set(gpu)
     with open(MODELS, encoding="utf-8") as fh:
         files = json.load(fh)["models"]["florence2-base-ft"]["files"]
     for dev in ("cpu", "directml"):

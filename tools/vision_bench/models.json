@@ -51,13 +51,17 @@
      86747414,
      "0d1d929f282963e983b8ac5ac4957f19a8fa48233eab41166951b769e5cf2fd2"
     ],
-    "onnx/decoder_model_merged_fp16.onnx": [
-     194546602,
-     "9b9b12107729891cd6ec981b3eca0cc0639ad8c1a3245565c005952d457deb76"
-    ],
     "onnx/embed_tokens_fp16.onnx": [
      78780290,
      "da2607930eea5e21e4a2bd5fd069de550f1acc30316a4e8f824551a95232ba39"
+    ],
+    "onnx/decoder_model_fp16.onnx": [
+     194198478,
+     "ce583853b630f230eaa1ef201e35001cdda968c84749d67c18ce3707171cfa0c"
+    ],
+    "onnx/decoder_with_past_model_fp16.onnx": [
+     179962402,
+     "ce201a68171d94d80ce49ae23f2eef1b4b4980ebab3cdcdd489c798ec629857b"
     ]
    }
   },
