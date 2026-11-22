@@ -158,7 +158,8 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   brings the open dialog to the front again; don't treat that as a cancel.
 - **`rescan`** `{}` → `Ok`: walk every folder again now.
 - **`wipe`** `{confirm: string}` → `Ok`: delete the whole index and start over, only with `confirm: "DELETE"`; any
-  other word gives `ok: false` and nothing happens.
+  other word gives `ok: false` and nothing happens. It also removes the Never index entries Forget added, empties
+  the log and deletes old `*.unreadable-*` index copies; settings and the user's own Never index folders stay.
 
 ### Models
 
