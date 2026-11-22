@@ -413,7 +413,10 @@ class DetailPane extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 6),
-                      SelectableText(r.dir, style: NbType.data(11.5, c.muted, height: 1.45)),
+                      // selectable only when what is drawn is what is on disk: a copy must paste the real folder
+                      r.dir == r.rawDir
+                          ? SelectableText(r.dir, style: NbType.data(11.5, c.muted, height: 1.45))
+                          : Text(r.dir, style: NbType.data(11.5, c.muted, height: 1.45)),
                       const SizedBox(height: 8),
                       Text(
                         [kindTag(r.kind), r.ext, r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),

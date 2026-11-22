@@ -103,6 +103,22 @@ void main() {
       toasts.dispose();
     });
 
+    test('Copy name copies the real name, not the one drawn with [U+...] marks', () async {
+      final r = FileResult.fromJson({'id': 5, 'name': 'تقرير\u200F.docx', 'dir': 'C:\\Docs\u202E', 'kind': 'document'})!;
+      expect(r.name, 'تقرير[U+200F].docx');
+      expect(r.rawName, 'تقرير\u200F.docx');
+      expect(r.dir, r'C:\Docs[U+202E]');
+      expect(r.rawDir, 'C:\\Docs\u202E');
+      final e = FakeEngine(files: [r]);
+      final copied = <String>[];
+      final f = FindController(e, debounce: Duration.zero, copy: (s) async => copied.add(s));
+      f.setText('docx');
+      await f.run();
+      await f.copyNameSelected();
+      expect(copied, ['تقرير\u200F.docx']);
+      f.dispose();
+    });
+
     test('a forget the engine refuses says why and keeps the result', () async {
       final e = FakeEngine()..forgetError = 'The Never index list is full (5000 entries).';
       final toasts = ToastController();

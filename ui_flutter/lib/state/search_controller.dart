@@ -266,7 +266,7 @@ class FindController extends ChangeNotifier {
   Future<bool> copyNameSelected() async {
     final r = current;
     if (r == null) return false;
-    await _copy(r.name);
+    await _copy(r.rawName); // the real name, not the one drawn with [U+202E] marks
     _say('Name copied.');
     return true;
   }

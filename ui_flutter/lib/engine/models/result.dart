@@ -35,12 +35,20 @@ class FileResult {
     this.weak = false,
     this.ext = '',
     this.disguised = false,
-  });
+    String? rawName,
+    String? rawDir,
+  }) : rawName = rawName ?? name,
+       rawDir = rawDir ?? dir;
 
   final int id;
 
   /// The name as it is drawn: direction controls and invisible characters made visible ([visibleControls]).
   final String name;
+
+  /// The name and folder exactly as they are on disk (direction controls and all): what Copy name and a copied
+  /// folder give, so pasting finds the file (fix round 1, I4). Never drawn: [name] / [dir] are.
+  final String rawName;
+  final String rawDir;
 
   /// The extension Windows opens it by ('.exe'), from the name as it is on disk; '' when it has none.
   final String ext;
@@ -76,6 +84,8 @@ class FileResult {
       name: _shown(json['name']),
       ext: realExtension(_str(json['name'])),
       disguised: hasHiddenControls(_str(json['name'])),
+      rawName: _str(json['name']),
+      rawDir: _str(json['dir']).isNotEmpty ? _str(json['dir']) : _str(json['folder']),
       path: _str(json['path']), // the real path, for Copy path and Add folder; never drawn
       dir: _str(json['dir']).isNotEmpty ? _shown(json['dir']) : _shown(json['folder']),
       kind: _str(json['kind']).isEmpty ? 'other' : _str(json['kind']),

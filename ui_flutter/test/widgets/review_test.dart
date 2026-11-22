@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/services.dart';
+import 'package:material_ui/material_ui.dart' show SelectableText;
 import 'package:flutter/widgets.dart' show EditableText, Opacity, RichText, Text, ValueKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/app/app.dart';
@@ -205,6 +206,26 @@ void main() {
     expect(find.byKey(const ValueKey('disguised-name')), findsOneWidget); // the details pane says it
     expect(find.textContaining('APP   .exe'), findsOneWidget);
   });
+
+  for (final odd in [true, false]) {
+    testWidgets('a folder line is selectable only when it shows what is on disk (hidden characters: $odd)', (
+      tester,
+    ) async {
+      final r = FileResult.fromJson({
+        'id': 8,
+        'name': 'oddfile.txt',
+        'dir': odd ? 'D:\\Down\u202Eloads' : r'D:\Docs',
+        'kind': 'text',
+      })!;
+      await pumpApp(tester, FakeEngine(files: [r]), size: const Size(900, 700));
+      await type(tester, 'oddfile');
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(find.text(r.dir), findsWidgets);
+      expect(find.byWidgetPredicate((w) => w is SelectableText && w.data == r.dir), odd ? findsNothing : findsOneWidget);
+    });
+  }
 
   testWidgets('the quick find bar hides when it loses the focus', (tester) async {
     tester.view.physicalSize = Size(BarSize.width.toDouble(), BarSize.height(8).toDouble());
