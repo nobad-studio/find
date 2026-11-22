@@ -1,6 +1,6 @@
 /// Typed engine → UI events, exactly as contract/events.schema.json (protocol 1): status, status_full,
-/// level, activity, download, notice, show, here, quitting. The UI never polls: everything that changes on its own
-/// changes from these.
+/// level, activity, download, notice, show, here, quitting, models, turbo, update, vision. The UI never polls:
+/// everything that changes on its own changes from these.
 library;
 
 import 'models/update.dart';
@@ -15,6 +15,7 @@ sealed class EngineEvent {
   /// What the main window subscribes to (status_full only while the Indexing page is open).
   static const mainWindow = [
     'status', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', 'models', 'turbo', 'update', //
+    'vision',
   ];
 
   /// What the quick find bar subscribes to.
@@ -63,6 +64,11 @@ sealed class EngineEvent {
         return HereEvent(jStr(m['path']));
       case 'quitting':
         return const QuittingEvent();
+      case 'vision':
+        final job = jIntOrNull(m['job']);
+        final st = jStr(m['state']);
+        if (job == null || !VisionEvent.states.contains(st)) return null;
+        return VisionEvent(job: job, state: st, text: jStr(m['text']), model: jStr(m['model']), note: jStr(m['note']));
     }
     return null;
   }
@@ -155,6 +161,18 @@ class UpdateEvent extends EngineEvent {
 class NoticeEvent extends EngineEvent {
   const NoticeEvent(this.text);
   final String text;
+}
+
+/// Talk about a photo (1.1): job [job] moved on. [state] loading | answering (with the WHOLE answer so far in
+/// [text]) | done | error (the message in [note]) | cancelled ([note] non-empty: the engine stopped it).
+class VisionEvent extends EngineEvent {
+  const VisionEvent({required this.job, required this.state, this.text = '', this.model = '', this.note = ''});
+  static const states = {'loading', 'answering', 'done', 'error', 'cancelled'};
+  final int job;
+  final String state;
+  final String text;
+  final String model;
+  final String note;
 }
 
 /// The engine is ending: exit instead of reconnecting.

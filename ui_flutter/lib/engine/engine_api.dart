@@ -19,8 +19,10 @@ import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
 import 'models/update.dart';
+import 'models/vision.dart';
 
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
+export 'models/vision.dart';
 
 enum Link { connecting, connected, offline, incompatible }
 
@@ -171,6 +173,19 @@ abstract class EngineApi {
 
   /// Windows' "Open with" dialog for the result.
   Future<ActionResult> openWith(int id);
+
+  // ---- talk about a photo (1.1; an older engine: -32601). Photos by result id; the answer comes as VisionEvents,
+  // after the reply that names its job. One job at a time: a new question cancels the old one. ----
+  Future<VisionState> visionState();
+  Future<VisionAnswer> visionDescribe(int fileId);
+
+  /// [more]: run the model even when the text read from the photo answered a question about writing.
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false});
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question});
+  Future<VisionAnswer> visionCancel();
+
+  /// Keep [text] as the photo's description so searches find it ('' forgets it); [VisionAnswer.kept] says which.
+  Future<VisionAnswer> visionKeep(int fileId, String text);
 
   void dispose();
 }

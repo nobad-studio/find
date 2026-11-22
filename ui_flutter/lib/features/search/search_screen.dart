@@ -23,6 +23,7 @@ import '../../engine/models/result.dart';
 import '../../state/categories.dart';
 import '../../state/search_controller.dart';
 import '../../state/suggest_controller.dart';
+import '../../state/talk_controller.dart';
 import '../../platform/demo.dart';
 import '../../widgets/dialogs.dart';
 import '../../widgets/glass.dart';
@@ -56,6 +57,9 @@ class _SearchScreenState extends State<SearchScreen> {
 
   /// Autocomplete (the engine's `suggest`), shown under the box.
   late final SuggestController sug = SuggestController(AppScope.of(context).engine);
+
+  /// Talk about a photo (1.1) on the detail pane or sheet: one question at a time, about the selected photo.
+  late final TalkController talk = TalkController(AppScope.of(context).engine);
   final _boxLink = LayerLink();
   final _dropdown = OverlayPortalController();
   double _boxWidth = 600;
@@ -97,6 +101,7 @@ class _SearchScreenState extends State<SearchScreen> {
     });
     _dropdown.show();
     s.find.addListener(_follow);
+    s.find.addListener(_followPhoto);
     s.find.addListener(_measure);
     s.find.addListener(_takeHandOver);
     _takeHandOver();
@@ -130,6 +135,18 @@ class _SearchScreenState extends State<SearchScreen> {
       recordTiming('keystroke-to-paint ms=${s.find.sinceKeystroke.inMilliseconds} results=${s.find.results.length}');
     });
   }
+
+  /// The photo the detail pane shows now (talk follows it: another selection stops a running answer).
+  void _followPhoto() {
+    final cur = s.find.showingResults ? s.find.current : null;
+    talk.show(cur != null && cur.kind == 'image' ? cur.id : null);
+  }
+
+  /// The image results in the list now (Compare with…).
+  List<FileResult> get _photos => [
+    for (final r in s.find.results)
+      if (r.kind == 'image') r,
+  ];
 
   void _follow() {
     if (s.find.selected == _lastSel) return;
@@ -171,6 +188,8 @@ class _SearchScreenState extends State<SearchScreen> {
     if (identical(Demo.mainBox, box)) Demo.mainBox = null;
     _shows?.cancel();
     s.find.removeListener(_follow);
+    s.find.removeListener(_followPhoto);
+    talk.dispose();
     s.find.removeListener(_measure);
     s.find.removeListener(_takeHandOver);
     sug.dispose();
@@ -348,6 +367,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _escape() {
     if (sug.close()) return;
+    if (talk.running) {
+      unawaited(talk.stop()); // Esc stops an answer before it closes anything
+      return;
+    }
     if (_sheet) {
       setState(() => _sheet = false);
       return;
@@ -551,6 +574,8 @@ class _SearchScreenState extends State<SearchScreen> {
                                                     onReveal: () => _action(ResultAction.reveal),
                                                     onCopy: _copy,
                                                     onForget: _forget,
+                                                    talk: talk,
+                                                    otherPhotos: _photos,
                                                   ),
                                                 ),
                                               ),
@@ -579,6 +604,8 @@ class _SearchScreenState extends State<SearchScreen> {
                               onReveal: () => _action(ResultAction.reveal),
                               onCopy: _copy,
                               onForget: _forget,
+                              talk: talk,
+                              otherPhotos: _photos,
                             ),
                           ),
                         ),

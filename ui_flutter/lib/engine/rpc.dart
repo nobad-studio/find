@@ -412,6 +412,20 @@ class EngineClient {
   Future<TurboSet> turboHelper(String action) async =>
       TurboSet.fromJson(await call('turbo_helper', {'action': action}, false));
 
+  // ---- talk about a photo (1.1): every call answers at once; the answer comes as `vision` events ----
+  Future<VisionState> visionState() async => VisionState.fromJson(await call('vision_state'));
+  Future<VisionAnswer> _vision(String method, Map<String, Object?> params) async =>
+      VisionAnswer.fromJson(await call(method, params));
+  Future<VisionAnswer> visionDescribe(int fileId) => _vision('vision_describe', {'file_id': fileId});
+
+  /// [deeper] and [more] are only sent when true (the engine's default is false).
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false}) =>
+      _vision('vision_ask', {'file_id': fileId, 'question': _cap(question), if (deeper) 'deeper': true, if (more) 'more': true});
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question}) =>
+      _vision('vision_compare', {'a': a, 'b': b, if (question != null && question.trim().isNotEmpty) 'question': _cap(question)});
+  Future<VisionAnswer> visionCancel() => _vision('vision_cancel', const {});
+  Future<VisionAnswer> visionKeep(int fileId, String text) => _vision('vision_keep', {'file_id': fileId, 'text': _cap(text)});
+
   Future<Uint8List?> thumbnail(int id) {
     if (_thumbs.containsKey(id)) {
       final v = _thumbs.remove(id);

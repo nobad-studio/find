@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nobad_find/app/app.dart';
+import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/features/consent/download_consent_dialog.dart';
 import 'package:nobad_find/platform/demo.dart';
@@ -124,6 +125,24 @@ void main() {
           await shoot(tester, 'actions_${size.width.toInt()}_$theme');
         });
       }
+
+      testWidgets('talk about a photo: the detail sheet with a finished description', (tester) async {
+        final engine = engineFor(theme);
+        await pumpApp(tester, engine, size: const Size(1180, 1000));
+        await type(tester, 'jpg');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Describe'));
+        await tester.pump();
+        engine.emit(
+          VisionEvent(
+            job: engine.visionJob!,
+            state: 'done',
+            text: 'A sandy beach under a clear sky, with small waves and two people walking by the water.',
+            model: 'smolvlm2-500m',
+          ),
+        );
+        await shoot(tester, 'talk_1180_$theme');
+      });
 
       testWidgets('welcome', (tester) async {
         await pumpApp(tester, engineFor(theme, welcome: true), size: const Size(1180, 760));

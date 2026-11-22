@@ -872,8 +872,111 @@ class FakeEngine implements EngineApi {
     return _ok;
   });
 
+  // ---------- 1.1: talk about a photo ----------
+  /// What vision_state answers (tests change it): the engine's two talk models, as a PC with room for both.
+  VisionState vision = demoVisionState();
+
+  /// Every vision_* call: (method, params), in order.
+  final visionCalls = <(String, Map<String, Object?>)>[];
+
+  /// The next describe / ask / compare answers this instead of starting a job (a refusal).
+  VisionAnswer? visionRefuse;
+
+  /// What vision_keep kept, by file id.
+  final kept = <int, String>{};
+  int _job = 0;
+  int? _visionJob;
+  Timer? _visionTimer;
+
+  @override
+  Future<VisionState> visionState() => _new('vision_state', () => vision);
+
+  Future<VisionAnswer> _visionStart(String m, Map<String, Object?> p, List<int> ids, {String? answer}) =>
+      _new(m, () {
+        visionCalls.add((m, p));
+        final r = visionRefuse;
+        if (r != null) {
+          visionRefuse = null;
+          return r;
+        }
+        if (ids.any((id) => _file(id) == null)) return const VisionAnswer(error: 'This photo is no longer there.');
+        if (ids.length == 2 && ids[0] == ids[1]) {
+          return const VisionAnswer(error: 'Pick a second, different photo to compare.');
+        }
+        final old = _visionJob;
+        if (old != null) emit(VisionEvent(job: old, state: 'cancelled', model: 'smolvlm2-500m'));
+        final job = _visionJob = ++_job;
+        if (live) _stream(job, answer ?? 'A photo.');
+        return VisionAnswer(ok: true, job: job);
+      });
+
+  /// The demo (live): the answer streams in a few words at a time, as the engine sends it.
+  void _stream(int job, String answer) {
+    _visionTimer?.cancel();
+    final words = answer.split(' ');
+    var n = 0;
+    _visionTimer = Timer.periodic(const Duration(milliseconds: 160), (t) {
+      if (_visionJob != job) return t.cancel();
+      n++;
+      if (n > words.length) {
+        _visionJob = null;
+        t.cancel();
+        emit(VisionEvent(job: job, state: 'done', text: answer, model: 'smolvlm2-500m'));
+        return;
+      }
+      emit(VisionEvent(job: job, state: 'answering', text: words.take(n).join(' '), model: 'smolvlm2-500m'));
+    });
+  }
+
+  /// The job being answered (tests emit its events), or null.
+  int? get visionJob => _visionJob;
+
+  @override
+  Future<VisionAnswer> visionDescribe(int fileId) => _visionStart(
+    'vision_describe',
+    {'file_id': fileId},
+    [fileId],
+    answer: 'A sandy beach under a clear sky, with small waves and two people walking by the water.',
+  );
+
+  @override
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false}) =>
+      _visionStart('vision_ask', {
+        'file_id': fileId,
+        'question': question,
+        if (deeper) 'deeper': true,
+        if (more) 'more': true,
+      }, [fileId]);
+
+  @override
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question}) =>
+      _visionStart('vision_compare', {'a': a, 'b': b, 'question': ?question}, [a, b]);
+
+  @override
+  Future<VisionAnswer> visionCancel() => _new('vision_cancel', () {
+    visionCalls.add(('vision_cancel', const {}));
+    final job = _visionJob;
+    _visionJob = null;
+    _visionTimer?.cancel();
+    if (job != null) emit(VisionEvent(job: job, state: 'cancelled', model: 'smolvlm2-500m'));
+    return const VisionAnswer(ok: true);
+  });
+
+  @override
+  Future<VisionAnswer> visionKeep(int fileId, String text) => _new('vision_keep', () {
+    visionCalls.add(('vision_keep', {'file_id': fileId, 'text': text}));
+    if (_file(fileId) == null) return const VisionAnswer(error: 'This photo is no longer there.');
+    if (text.trim().isEmpty) {
+      kept.remove(fileId);
+      return const VisionAnswer(ok: true);
+    }
+    kept[fileId] = text;
+    return const VisionAnswer(ok: true, kept: true);
+  });
+
   @override
   void dispose() {
+    _visionTimer?.cancel();
     _ticker?.cancel();
     for (final t in _downloads.values) {
       t.cancel();
@@ -1229,6 +1332,26 @@ List<FileResult> demoFiles() => [
     why: ['the picture may show it'],
   ),
 ];
+
+/// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory).
+VisionState demoVisionState({String deeperWhy = '', String notNow = ''}) => VisionState(
+  notNow: notNow,
+  models: [
+    const VisionModel(id: 'smolvlm2-500m', name: 'SmolVLM2 500M', ready: true, ramMb: 942, vramMb: 658, canRun: true),
+    VisionModel(
+      id: 'qwen3vl-2b',
+      name: 'Qwen3-VL 2B',
+      deeper: true,
+      ready: true,
+      ramMb: 2411,
+      vramMb: 2060,
+      canRun: deeperWhy.isEmpty,
+      why: deeperWhy,
+    ),
+  ],
+  runtimeId: 'llama-vulkan',
+  runtimeReady: true,
+);
 
 List<FileResult> manyFiles(int n) => [
   for (var i = 0; i < n; i++)
