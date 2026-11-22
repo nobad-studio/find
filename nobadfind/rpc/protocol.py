@@ -4,7 +4,6 @@ One JSON object per line, at most MAX_MESSAGE bytes. Bad JSON, unknown methods a
 JSON-RPC errors; nothing here raises to the caller.
 """
 import json
-import re
 import threading
 
 from ..log import log
@@ -117,29 +116,27 @@ def _run(fn):
         log(f"rpc after-reply step failed: {type(e).__name__}", "warn")
 
 
-_STRING = re.compile(rb'"(?:[^"\\]|\\.)*"', re.S)
-_BRACKET = re.compile(rb"[\[\]{}]")
-
-
 def too_deep(line, limit=MAX_DEPTH):
-    """True when a message nests arrays / objects deeper than limit (outside strings). Checked before json.loads,
-    which would recurse once per level (security review 2026-11-22, L1: 200,000 "[" raised RecursionError)."""
+    """True when a message nests arrays / objects deeper than limit outside strings. Checked before json.loads,
+    which recurses once per level (security review 2026-11-22, L1: 200,000 "[" raised RecursionError).
+    One linear pass, vectorised (fix round 1, I2: the regex before was quadratic on an unterminated string and held
+    the GIL): escaped backslashes and quotes go first (bytes.replace), so every remaining quote opens or closes a
+    string; a bracket counts only where an even number of quotes came before it, and the depth is the running sum
+    of +1 / -1. About 10 ms for a 1 MB line."""
     if isinstance(line, str):
         line = line.encode("utf-8", "surrogatepass")
     if line.count(b"[") + line.count(b"{") <= limit:
         return False                                    # can't be deeper than the brackets it has
-    depth = 0
-    for m in _BRACKET.finditer(_STRING.sub(b'""', line)):
-        if m.group() in (b"[", b"{"):
-            depth += 1
-            if depth > limit:
-                return True
-        else:
-            depth -= 1
-    return False
+    import numpy as np
+    b = np.frombuffer(line.replace(b"\\\\", b"").replace(b'\\"', b""), dtype=np.uint8)
+    outside = (np.cumsum(b == 34, dtype=np.int64) & 1) == 0          # 34 = '"'
+    step = (((b == 91) | (b == 123)).astype(np.int8) - ((b == 93) | (b == 125)).astype(np.int8)) * outside
+    return bool(step.size) and int(np.cumsum(step, dtype=np.int64).max()) > limit
 
 
 def _handle(line, methods, conn):
+    if len(line) > MAX_MESSAGE:                         # LineBuffer caps the pipe already; any other caller too
+        return error(None, INVALID_REQUEST, "Message too big")
     if too_deep(line):
         return error(None, INVALID_REQUEST, "Message nested too deeply")
     try:

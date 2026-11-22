@@ -101,6 +101,39 @@ def test_nesting_inside_strings_and_ordinary_requests_still_pass():
     assert protocol.handle_line(ok_depth, _methods())["result"]["ok"] is True
 
 
+def test_the_depth_check_is_linear_on_adversarial_lines():
+    """Fix round 1 (I2): 33+ "[" then an unterminated run of \\" made the old pre-scan quadratic (32 KB = 3.5 s)."""
+    import time
+    from nobadfind.rpc import protocol
+    protocol.too_deep(b"[" * 40)                                        # numpy imported once, as in the engine
+    lines = [b"[" * 40 + b'"' + b'\\"' * 500_000,                       # the reviewer's shape, 1 MB
+             b"[" * 40 + b'"' * 1_000_000, b"[]" * 500_000, b"[{" * 250_000 + b"}]" * 250_000,
+             b'["' + b"[{" * 499_000 + b'"]']
+    for line in lines:
+        assert len(line) <= protocol.MAX_MESSAGE + 64
+        t = time.perf_counter()
+        protocol.too_deep(line)
+        assert time.perf_counter() - t < 0.1, len(line)
+    r = protocol.handle_line(lines[0][:protocol.MAX_MESSAGE], _methods())
+    assert r["error"]["code"] in (protocol.INVALID_REQUEST, protocol.PARSE_ERROR)
+
+
+def test_the_depth_check_counts_only_brackets_outside_strings():
+    from nobadfind.rpc import protocol
+    assert not protocol.too_deep(b'{"a":"' + b"[" * 100 + b'\\"' + b"{" * 100 + b'"}')
+    assert not protocol.too_deep(b'{"a":"\\\\"}' + b"[]" * 50)          # an escaped backslash ends the string
+    assert protocol.too_deep(b'{"a":"\\\\",' + b'"b":' + b"[" * 40 + b"]" * 40 + b"}")
+    assert protocol.too_deep(b"[" * 33 + b"]" * 33) and not protocol.too_deep(b"[" * 32 + b"]" * 32)
+    ok = b'{"jsonrpc":"2.0","id":3,"method":"ping","params":{"q":"' + b'[x] ' * 60 + b'"}}'
+    assert protocol.handle_line(ok, _methods())["result"]["ok"] is True
+
+
+def test_an_oversized_line_is_refused_without_parsing():
+    from nobadfind.rpc import protocol
+    r = protocol.handle_line(b" " * (protocol.MAX_MESSAGE + 1), _methods())
+    assert r["error"]["code"] == protocol.INVALID_REQUEST
+
+
 def test_a_recursion_error_from_the_parser_is_a_parse_error(monkeypatch):
     from nobadfind.rpc import protocol
 
