@@ -1,6 +1,7 @@
 """Prompts, question rules and the picture input for talk about a photo."""
 
 import importlib
+import importlib.util
 importlib.import_module("onnxruntime")      # must load before winrt (MSVCP140)
 import pytest
 
@@ -54,3 +55,40 @@ def test_decode_rgb_keeps_aspect():
     assert rgb[10 * 512 * 3] < 5 and rgb[250 * 512 * 3] > 250        # black above, white below
     small = ocr.gray_bmp(300, 200, bytes(300 * 200))
     assert photo.decode_rgb(small, 512)[1:] == (300, 200)           # never enlarged
+
+
+needs_pil = pytest.mark.skipif(importlib.util.find_spec("PIL") is None,
+                               reason="Pillow (dev dependency) not installed")
+
+
+def _jpeg(orientation):
+    """A stored 400 x 200 JPEG: left quarter red, the rest blue, with an EXIF orientation tag."""
+    import io
+    from PIL import Image
+    im = Image.new("RGB", (400, 200), (0, 0, 255))
+    im.paste((255, 0, 0), (0, 0, 100, 200))
+    ex = im.getexif()
+    ex[274] = orientation
+    b = io.BytesIO()
+    im.save(b, "JPEG", exif=ex, quality=95, subsampling=0)
+    return b.getvalue()
+
+
+def _px(rgb, w, x, y):
+    return tuple(rgb[(y * w + x) * 3:(y * w + x) * 3 + 3])
+
+
+@needs_winrt
+@needs_pil
+@pytest.mark.parametrize("orientation, size, red_at, blue_at", [
+    (1, (200, 100), (10, 50), (190, 50)),        # as stored: red on the left
+    (6, (100, 200), (50, 10), (50, 190)),        # turned clockwise: red at the top
+    (8, (100, 200), (50, 190), (50, 10)),        # turned anticlockwise: red at the bottom
+])
+def test_decode_rgb_turns_a_photo_upright_without_squeezing(orientation, size, red_at, blue_at):
+    rgb, w, h = photo.decode_rgb(_jpeg(orientation), 200)
+    assert (w, h) == size
+    r, g, b = _px(rgb, w, *red_at)
+    assert r > 200 and g < 60 and b < 60
+    r, g, b = _px(rgb, w, *blue_at)
+    assert b > 200 and r < 60 and g < 60
