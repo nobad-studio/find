@@ -258,7 +258,7 @@ comes as `vision` events, after the reply that names the job. One job at a time:
   (the text already read from it, no model); the model runs only with `more: true`.
 - **`vision_compare`** `{a, b, question?: string|null}` -> `VisionAnswer`: two different photos.
 - **`vision_cancel`** `{}` -> `VisionAnswer` (`job` null): stop the streaming answer; a `cancelled` event follows.
-- **`vision_keep`** `{file_id, text: string (<= 4000 characters)}` -> `{ok, error, job: null, kept}`: keep the
+- **`vision_keep`** `{file_id, text: string (<= 2000 characters)}` -> `{ok, error, job: null, kept}`: keep the
   description so searches find it; empty text forgets it (`kept` false).
 
 Wrong types (a string or boolean file id, a question that isn't a string or is too long, `deeper`/`more` not booleans)

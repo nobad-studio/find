@@ -3,10 +3,10 @@
 Thin: check the shape of the parameters, call Api.vision_*, shape the answer. Every answer carries `job` (the number
 the `vision` events of that question will carry; null when no job was started). The answer itself comes as `vision`
 events. Photos are named by result id only; the question is cleaned by the Api (prompts.clean_question)."""
+from ...api import MAX_KEPT          # characters of a description the user keeps: the Api's one cap
 from ..protocol import INVALID_PARAMS, RpcError, int_param
 
 MAX_QUESTION = 2000                 # characters, before cleaning
-MAX_KEPT = 4000                     # characters of a description the user keeps
 
 
 def _flag(params, key):

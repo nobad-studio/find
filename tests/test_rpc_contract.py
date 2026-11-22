@@ -147,7 +147,7 @@ BAD = {
     "vision_compare": [{"a": 7, "b": "8"}, {"a": True, "b": 8}, {"a": 7}, {"a": 7, "b": 8, "question": 5},
                        {"a": 7, "b": 8, "question": "x" * 2001}],
     "vision_keep": [{"file_id": "7", "text": "x"}, {"file_id": 7}, {"file_id": 7, "text": None},
-                    {"file_id": 7, "text": "x" * 4001}],
+                    {"file_id": 7, "text": "x" * 2001}],
 }
 
 
@@ -176,6 +176,14 @@ def test_vision_calls_name_photos_by_result_id_and_always_carry_a_job():
     assert call(e.methods, "vision_describe", {"file_id": 999})["result"]["job"] is None      # 0 from the Api -> null
     assert call(e.methods, "vision_cancel")["result"] == {"ok": True, "error": "", "job": None}
     assert call(e.methods, "vision_describe", {"file_id": 7})["result"]["job"] == 2
+
+
+def test_vision_keep_cap_is_the_apis_one_cap():
+    assert METHODS["methods"]["vision_keep"]["params"]["properties"]["text"]["maxLength"] == api_mod.MAX_KEPT
+    e = engine()
+    assert call(e.methods, "vision_keep", {"file_id": 7, "text": "x" * api_mod.MAX_KEPT}, e.conn)["result"]["kept"]
+    r = call(e.methods, "vision_keep", {"file_id": 7, "text": "x" * (api_mod.MAX_KEPT + 1)}, e.conn)
+    assert r["error"]["code"] == protocol.INVALID_PARAMS
 
 
 def test_bad_vision_params_never_reach_the_api():

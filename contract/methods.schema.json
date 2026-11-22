@@ -1102,7 +1102,7 @@
       }
     },
     "vision_keep": {
-      "description": "Keep a description of a photo (at most 4000 characters) so searches find it; empty text forgets it. kept is whether a description is now kept.",
+      "description": "Keep a description of a photo (at most 2000 characters) so searches find it; empty text forgets it. kept is whether a description is now kept.",
       "params": {
         "type": "object",
         "properties": {
@@ -1111,7 +1111,7 @@
           },
           "text": {
             "type": "string",
-            "maxLength": 4000
+            "maxLength": 2000
           }
         },
         "required": [
