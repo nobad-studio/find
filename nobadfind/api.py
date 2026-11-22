@@ -18,6 +18,7 @@ from .indexer import NAME_KINDS
 from .kinds import READABLE_EXT
 from .log import log
 from .search import SORTS, search
+from .vlm import runtime as vlm_runtime
 
 MAX_QUERY = 500
 TOTALS_TTL = 10                  # seconds: the phase counts are COUNT queries, too heavy for every 2 s poll
@@ -893,7 +894,9 @@ class Api:
             if self._mdl.get(mid, {}).get("state") == "downloading":
                 return {"ok": True, "error": ""}            # already on its way: one download per model
             self._mdl[mid] = {"state": "downloading", "got": 0, "size": 0, "error": ""}
-        self._settings.update({"allow_model_download" if m["feature"] == "text" else "allow_photo_model_download": True})
+        if m["feature"] != "runtime":                       # a llama.cpp runtime grants no model consent
+            self._settings.update({"allow_model_download" if m["feature"] == "text" else
+                                   "allow_photo_model_download": True})
         st = self._mdl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()),
                                "error": ""}
         d = models.model_dir(mid, self._mdir())
@@ -901,15 +904,20 @@ class Api:
         def run():
             done = {}
             try:
-                os.makedirs(d, exist_ok=True)
-                for name, (path, size, sha) in m["files"].items():
-                    def progress(_n, got, _size, name=name):
-                        done[name] = got
+                if m["feature"] == "runtime":                   # the pinned zip, then only its pinned DLLs
+                    def zprogress(_n, got, _size):
+                        st["got"] = got
+                    vlm_runtime.install(mid, self._mdir(), zprogress)
+                else:
+                    os.makedirs(d, exist_ok=True)
+                    for name, (path, size, sha) in m["files"].items():
+                        def progress(_n, got, _size, name=name):
+                            done[name] = got
+                            st["got"] = sum(done.values())
+                        embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
+                                              part=".dl.part")      # not the 0.7.0 download's file names
+                        done[name] = size
                         st["got"] = sum(done.values())
-                    embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
-                                          part=".dl.part")      # not the 0.7.0 download's file names
-                    done[name] = size
-                    st["got"] = sum(done.values())
                 st["state"] = "ready"
                 log(f"model {mid} downloaded and verified")
                 wake = getattr(self._indexer, "wake", None)

@@ -95,7 +95,12 @@ Specific to this app:
   size and SHA-256 match the release's .sha256 file and GitHub's digest) and the optional model
   downloads, all through `embed._fetch_verified` (HTTPS, exact size, SHA-256) from the pinned entries in
   `models.CATALOG`, each only after the user's consent (`model_download` with `consent: "DOWNLOAD"`, stored as
-  `allow_model_download` / `allow_photo_model_download`). A new model needs a catalog entry with its revision, file
+  `allow_model_download` / `allow_photo_model_download`). The llama.cpp runtimes for talk about a photo
+  (`llama-cpu`, `llama-vulkan`, find 1.1) are one of those downloads: the pinned b12602 release zip over HTTPS from
+  `github.com/ggml-org/llama.cpp/releases` (GitHub redirects to its `*.githubusercontent.com` asset host),
+  unpacked by `vlm/runtime.py` to only the DLL names pinned in `llama_pins.py` (each size-capped and SHA-256
+  checked, the zip deleted), and `vlm/llama_api.load` loads only the pinned backend DLLs, one by one, never
+  `ggml_backend_load_all_from_path` and never `ggml-rpc.dll`. A new model needs a catalog entry with its revision, file
   sizes and SHA-256s, a measured row in `docs/measurements.md` (`tools/eval_text.py`) and a permissive licence
   (OpenAI CLIP's model card rules out deployment, so it isn't used).
 - Vectors carry their model's id (`meta vec_model`, `pvec_model`); a search never compares vectors from two models

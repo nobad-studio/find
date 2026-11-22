@@ -80,6 +80,33 @@ def test_model_download_needs_the_consent_word(a, monkeypatch):
     assert a.downloads()["multilingual-e5-small"]["state"] in ("ready", "missing")
 
 
+def test_model_download_installs_a_llama_runtime(a, monkeypatch):
+    """The llama.cpp runtimes go through runtime.install (the zip, then only its pinned DLLs), same consent word."""
+    from nobadfind.vlm import runtime
+    calls = []
+
+    def fake_install(mid, data_dir, progress):
+        calls.append((mid, data_dir))
+        progress("zip", 7, 10)
+        return os.path.join(data_dir, "runtime", mid)
+    monkeypatch.setattr(runtime, "install", fake_install)
+    monkeypatch.setattr(api_mod.embed, "_fetch_verified", lambda *a, **k: pytest.fail("not the plain model path"))
+    assert a.model_download("llama-vulkan", "yes")["ok"] is False and calls == []
+    assert a.model_download("llama-cpu", "DOWNLOAD") == {"ok": True, "error": ""}
+    a._mdl_thread.join(5)
+    assert calls == [("llama-cpu", a._models_dir)]
+    st = a._mdl["llama-cpu"]
+    assert st["state"] == "ready" and st["got"] == 7 and st["size"] == models.get("llama-cpu")["files"]["zip"][1]
+    assert not a._settings.get("allow_photo_model_download")   # a runtime grants no model consent
+
+    def failing(mid, data_dir, progress):
+        raise IOError("ggml.dll: checksum mismatch, runtime rejected")
+    monkeypatch.setattr(runtime, "install", failing)
+    a.model_download("llama-vulkan", "DOWNLOAD")
+    a._mdl_thread.join(5)
+    assert a._mdl["llama-vulkan"]["state"] == "missing" and "checksum" in a._mdl["llama-vulkan"]["error"]
+
+
 def test_meaning_and_photo_states_follow_the_model_in_use(a):
     """The Welcome and Index buttons download the chosen model with model_download: the plain meaning / photo
     states (status, download events, Index cards) follow it, not only the old fixed download."""

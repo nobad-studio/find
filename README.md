@@ -71,7 +71,10 @@ they're about, and tells you why each result matched.
   in Settings → Models, pinned to one revision and checked against its SHA-256 before use. The meaning-search
   models are all-MiniLM-L6-v2 (23 MB), GTE small (33 MB), BGE base (106 MB) and multilingual-e5 small and base
   (129 / 282 MB); all MIT or Apache-2.0. The photo models are SigLIP base (211 MB) and SigLIP 2 base (481 MB), by
-  Google, Apache-2.0. (Network drives, if you turn them on, are read over your
+  Google, Apache-2.0. Talking about a photo (1.1) also needs the llama.cpp runtime (MIT, about 24 MB for the
+  CPU or 37 MB for the graphics card), downloaded once from llama.cpp's GitHub release only when you say
+  Download, pinned to release b12602 and checked against its SHA-256; only its pinned DLLs are unpacked, each
+  checked again, and the downloaded zip is deleted. (Network drives, if you turn them on, are read over your
   own network like any other program opening files there.)
 
 ## Windows Search switch

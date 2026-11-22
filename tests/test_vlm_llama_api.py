@@ -35,6 +35,43 @@ def test_load_refuses_a_runtime_without_both_dlls(tmp_path):
         llama_api.load(str(tmp_path))
 
 
+def test_only_pinned_backends_are_loaded_and_one_cpu_variant(tmp_path):
+    """Security ruling: backends are loaded one by one (ggml_backend_load), only the pinned CPU variants and Vulkan;
+    a DLL placed in the folder (ggml-rpc.dll, anything else) is never loaded. Of the CPU variants only the best one
+    this CPU supports (ggml_backend_score), like ggml's own loader: several would each add a CPU device."""
+    assert "ggml-rpc.dll" not in llama_api.BACKENDS and "ggml-vulkan.dll" in llama_api.BACKENDS
+    assert all(n.startswith("ggml-cpu-") for n in llama_api.BACKENDS if n != "ggml-vulkan.dll")
+    for n in ("ggml-cpu-x64.dll", "ggml-cpu-haswell.dll", "ggml-cpu-zen4.dll", "ggml-rpc.dll", "ggml-cpu-evil.dll",
+              "ggml-foo.dll", "ggml-vulkan.dll"):
+        (tmp_path / n).write_bytes(b"")
+    scores = {"ggml-cpu-x64.dll": 1, "ggml-cpu-haswell.dll": 64, "ggml-cpu-zen4.dll": 0, "ggml-cpu-evil.dll": 999}
+    asked = []
+
+    def score(path):
+        asked.append(os.path.basename(path))
+        return scores[os.path.basename(path)]
+    got = llama_api._backend_paths(str(tmp_path), score)
+    assert [os.path.basename(p) for p in got] == ["ggml-cpu-haswell.dll", "ggml-vulkan.dll"]
+    assert sorted(asked) == ["ggml-cpu-haswell.dll", "ggml-cpu-x64.dll", "ggml-cpu-zen4.dll"]   # never the evil one
+    scores["ggml-cpu-haswell.dll"] = scores["ggml-cpu-x64.dll"] = 0
+    assert [os.path.basename(p) for p in llama_api._backend_paths(str(tmp_path), score)] == ["ggml-vulkan.dll"]
+
+
+def test_a_failed_bind_closes_the_dll_directory(tmp_path, monkeypatch):
+    for n in llama_api.DLLS:
+        (tmp_path / n).write_bytes(b"")
+    closed = []
+
+    class Handle:
+        def close(self):
+            closed.append(True)
+    monkeypatch.setattr(llama_api.os, "add_dll_directory", lambda d: Handle(), raising=False)
+    monkeypatch.setattr(llama_api.ctypes, "CDLL", lambda p: object())     # no functions: binding fails
+    with pytest.raises(RuntimeError, match="is not build b12602"):
+        llama_api.load(str(tmp_path))
+    assert closed == [True] and os.path.normcase(str(tmp_path)) not in llama_api._loaded
+
+
 def _values(struct):
     return {name: getattr(struct, name) for name, _ in struct._fields_}
 
@@ -44,6 +81,12 @@ def test_real_runtime_smoke():
     lib = llama_api.load(RUNTIME)
     assert isinstance(lib.llama, ctypes.CDLL) and isinstance(lib.mtmd, ctypes.CDLL)
     assert llama_api.load(RUNTIME) is lib                   # loaded once per folder
+    k32 = ctypes.WinDLL("kernel32")
+    k32.GetModuleHandleW.restype, k32.GetModuleHandleW.argtypes = ctypes.c_void_p, [ctypes.c_wchar_p]
+    assert not k32.GetModuleHandleW("ggml-rpc.dll")         # never loaded, even when it is in the folder
+    assert lib.ggml.ggml_backend_dev_count() >= 1
+    if not os.path.isfile(os.path.join(RUNTIME, "ggml-vulkan.dll")):
+        assert lib.ggml.ggml_backend_dev_count() == 1       # one CPU device: the best variant only
     lib.llama.llama_backend_init()
 
     # Every field's default, from b12602's own source (llama-model.cpp:3596, llama-context.cpp:4400,

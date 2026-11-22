@@ -16,14 +16,23 @@ C types map as: enum -> c_int (MSVC enums are int), bool -> c_bool, size_t -> c_
 pointer -> c_void_p. Use the *_default_params() functions and only change the fields you need.
 
 `load(runtime_dir)` loads ggml.dll, llama.dll and mtmd.dll from that folder (in that order, the folder added to the
-DLL search path for their dependencies), registers the folder's ggml backends (CPU variants, Vulkan, ...: this
-build ships them as separate DLLs, so without that step no device exists), and returns a `Lib` whose `.ggml`,
+DLL search path for their dependencies), registers the folder's ggml backends (this build ships them as separate
+DLLs, so without that step no device exists), and returns a `Lib` whose `.ggml`,
 `.llama` and `.mtmd` have argtypes/restypes set for the functions used. One `Lib` per folder per process.
+
+Backends are loaded ONE BY ONE with `ggml_backend_load` (security ruling, find 1.1), never
+`ggml_backend_load_all_from_path` (which loads every ggml-*.dll it finds): only the pinned names in `BACKENDS`
+(the ggml-cpu-* variants and ggml-vulkan.dll of llama_pins), so a DLL placed in the folder (ggml-rpc.dll, the
+network backend, or anything else) is never loaded. Of the CPU variants only the one with the best
+`ggml_backend_score` for this CPU is registered, as ggml's own loader does (each would add another CPU device).
 """
 import ctypes
 import os
 import threading
+import _ctypes
 from ctypes import POINTER, c_bool, c_char_p, c_float, c_int, c_int8, c_int32, c_size_t, c_uint32, c_void_p
+
+from .. import llama_pins
 
 LLAMA_BUILD = "b12602"
 
@@ -159,7 +168,7 @@ P = c_void_p                                            # opaque handles: model,
 
 # name: (restype, [argtypes])
 GGML_FUNCS = {
-    "ggml_backend_load_all_from_path": (None, [c_char_p]),             # ggml-backend.h:277
+    "ggml_backend_load": (c_void_p, [c_char_p]),                       # ggml-backend.h:272 (a ggml_backend_reg_t)
     "ggml_backend_dev_count": (c_size_t, []),                          # ggml-backend.h:258
 }
 
@@ -207,6 +216,9 @@ MTMD_FUNCS = {
 
 INCOMPLETE = "llama.cpp runtime incomplete"
 DLLS = ("ggml.dll", "llama.dll", "mtmd.dll")             # load order
+# the only backend DLLs ever loaded: the pinned CPU variants and Vulkan (never ggml-rpc.dll, never an unlisted name)
+BACKENDS = tuple(sorted(n for n in {**llama_pins.CPU_DLLS, **llama_pins.VULKAN_DLLS}
+                        if n.startswith("ggml-cpu-") or n == "ggml-vulkan.dll"))
 
 
 class Lib:
@@ -232,6 +244,34 @@ def _bind(dll, funcs, dll_name):
         fn.argtypes = argtypes
 
 
+def _cpu_score(path):
+    """ggml_backend_score() of one pinned CPU variant DLL: 0 when this CPU can't run it (ggml-cpu/ggml-cpu.cpp)."""
+    dll = ctypes.CDLL(path)
+    try:
+        fn = getattr(dll, "ggml_backend_score", None)
+        if fn is None:
+            return 0
+        fn.restype, fn.argtypes = c_int, []
+        return int(fn())
+    finally:
+        _ctypes.FreeLibrary(dll._handle)
+
+
+def _backend_paths(runtime_dir, score=_cpu_score):
+    """The backend DLLs to load from `runtime_dir`: the best-scoring pinned CPU variant on disk, then ggml-vulkan.dll
+    when it is on disk. Only names in BACKENDS are looked at."""
+    present = [n for n in BACKENDS if os.path.isfile(os.path.join(runtime_dir, n))]
+    best, best_score = None, 0
+    for n in present:
+        if n.startswith("ggml-cpu-"):
+            s = score(os.path.join(runtime_dir, n))
+            if s > best_score:
+                best, best_score = n, s
+    out = [best] if best else []
+    out += [n for n in present if n == "ggml-vulkan.dll"]
+    return [os.path.join(runtime_dir, n) for n in out]
+
+
 def load(runtime_dir):
     """Load (once per folder) the llama.cpp b12602 runtime in `runtime_dir`; returns a `Lib`."""
     runtime_dir = os.path.abspath(runtime_dir)
@@ -244,14 +284,18 @@ def load(runtime_dir):
             raise RuntimeError(f"{INCOMPLETE}: {', '.join(missing)} missing in {runtime_dir}")
         dll_dir = os.add_dll_directory(runtime_dir) if hasattr(os, "add_dll_directory") else None
         try:
-            ggml, llama, mtmd = (ctypes.CDLL(os.path.join(runtime_dir, n)) for n in DLLS)
-        except OSError as e:
+            try:
+                ggml, llama, mtmd = (ctypes.CDLL(os.path.join(runtime_dir, n)) for n in DLLS)
+            except OSError as e:
+                raise RuntimeError(f"llama.cpp runtime could not be loaded: {e}") from e
+            _bind(ggml, GGML_FUNCS, "ggml.dll")
+            _bind(llama, LLAMA_FUNCS, "llama.dll")
+            _bind(mtmd, MTMD_FUNCS, "mtmd.dll")
+            for path in _backend_paths(runtime_dir):
+                ggml.ggml_backend_load(os.fsencode(path))      # NULL when it has no device here (e.g. no Vulkan)
+        except BaseException:
             if dll_dir is not None:
                 dll_dir.close()
-            raise RuntimeError(f"llama.cpp runtime could not be loaded: {e}") from e
-        _bind(ggml, GGML_FUNCS, "ggml.dll")
-        _bind(llama, LLAMA_FUNCS, "llama.dll")
-        _bind(mtmd, MTMD_FUNCS, "mtmd.dll")
-        ggml.ggml_backend_load_all_from_path(os.fsencode(runtime_dir))
+            raise
         lib = _loaded[key] = Lib(runtime_dir, dll_dir, ggml, llama, mtmd)
         return lib
