@@ -246,3 +246,76 @@ def test_wipe_without_the_word_touches_nothing(tmp_path):
     s.close()
 
 
+# ---------- L9: the talk worker's memory allowance stays until its process has exited ----------
+class _StuckProc:
+    """A worker process that doesn't exit when asked (a driver's teardown), until `release` is set."""
+
+    def __init__(self):
+        import threading
+        self.release = threading.Event()
+        self.terminated = 0
+
+    def is_alive(self):
+        return not self.release.is_set()
+
+    def join(self, timeout=None):
+        self.release.wait(timeout)
+
+    def terminate(self):
+        self.terminated += 1
+
+
+def _talker(budgets, monkeypatch):
+    from nobadfind.vlm import worker
+    t = worker.Talker(lambda e: None, start=lambda: None, on_budget=budgets.append)
+    monkeypatch.setattr(t, "REAP_WAIT", 0.05)
+    monkeypatch.setattr(t, "REAP_POLL", 0.02)
+    return t
+
+
+def _wait_for(cond, s=5.0):
+    import time
+    end = time.time() + s
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return cond()
+
+
+def test_a_worker_still_there_after_the_join_keeps_its_allowance(monkeypatch):
+    budgets = []
+    t = _talker(budgets, monkeypatch)
+    p = _StuckProc()
+    t._exiting[id(p)] = 1481
+    t._update_budget()
+    assert budgets == [1481]
+    assert t._gone_once_exited(p) is False                            # 0.05 s and still alive
+    assert p.terminated == 1 and budgets == [1481]                    # ended, but the allowance stays
+    import time
+    time.sleep(0.2)
+    assert budgets == [1481] and id(p) in t._exiting
+    p.release.set()                                                    # now it has really exited
+    assert _wait_for(lambda: budgets == [1481, 0])
+    assert id(p) not in t._exiting
+
+
+def test_a_worker_that_exits_in_time_gives_it_back_at_once(monkeypatch):
+    budgets = []
+    t = _talker(budgets, monkeypatch)
+    p = _StuckProc()
+    p.release.set()
+    t._exiting[id(p)] = 520
+    t._update_budget()
+    assert t._gone_once_exited(p) is True and budgets == [520, 0] and p.terminated == 0
+
+
+def test_no_path_gives_the_allowance_back_after_a_plain_join():
+    """Every place that ended the worker waits for its exit: no join(...) followed by _gone() unconditionally."""
+    import inspect
+    from nobadfind.vlm import worker
+    src = inspect.getsource(worker.Talker)
+    assert src.count("self._gone(proc)") == 2                          # _gone_once_exited's two exits only
+    assert "join(10)" not in src
+
+

@@ -52,6 +52,8 @@
 - "Delete the whole index" now also removes the list of files you forgot from the settings file, empties NOBAD
   Find's log, and deletes old index copies kept after a sign-in key problem. Your settings and your own Never index
   folders stay.
+- Fixed: when a talk model was slow to close, NOBAD Find could lower its memory limit while the model was still
+  in memory, so indexing work could fail for a moment. The limit now comes down only once it has really closed.
 
 ## 1.0.1 · 2026-11-22
 

@@ -540,10 +540,7 @@ class Talker:
             if cur is not None:
                 self._emit_safe(self._event(cur, "error", note="The picture model stopped unexpectedly. Try again."))
         if proc is not None:                    # its pipe closed: wait for the process itself, then the limits
-            try:
-                proc.join(10)
-            finally:
-                self._gone(proc)
+            self._gone_once_exited(proc)
 
     def _on(self, conn, msg):
         with self._lock:
@@ -613,6 +610,45 @@ class Talker:
             if self._exiting.pop(id(proc), None) is not None:
                 self._update_budget()
 
+    REAP_WAIT = 10.0                            # s a worker gets to exit before it is terminated
+    REAP_POLL = 5.0                             # s between looks while a terminated worker is still there
+
+    @staticmethod
+    def _exited(proc):
+        try:
+            return not proc.is_alive()
+        except Exception:                       # (a handle Windows already closed: it is gone)
+            return True
+
+    def _gone_once_exited(self, proc, wait=None, terminate=True):
+        """Give the worker's memory allowance back only once its process has really exited (security review
+        2026-11-22, L9: after a 10 s join the limits came down even with the process still there, stuck in a
+        driver's teardown or a TerminateProcess not finished, and a photo or text worker could hit the lowered
+        limit). Waits `wait` s here; a process still there is terminated and a thread keeps waiting until it is
+        gone. True when it was gone now."""
+        try:
+            proc.join(self.REAP_WAIT if wait is None else wait)
+        except Exception:
+            pass
+        if self._exited(proc):
+            self._gone(proc)
+            return True
+        if terminate:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+        def later():
+            while not self._exited(proc):
+                try:
+                    proc.join(self.REAP_POLL)
+                except Exception:
+                    time.sleep(self.REAP_POLL)
+            self._gone(proc)
+        threading.Thread(target=later, daemon=True, name="talk-reap").start()
+        return False
+
     def _kill_locked(self):
         """End the worker at once (it may be hung): TerminateProcess, no waiting for it to read a quit (a thread
         waits for its exit, then gives its allowance back)."""
@@ -624,12 +660,7 @@ class Talker:
             except Exception:
                 pass
 
-            def reap():
-                try:
-                    proc.join(10)
-                finally:
-                    self._gone(proc)
-            threading.Thread(target=reap, daemon=True, name="talk-reap").start()
+            threading.Thread(target=self._gone_once_exited, args=(proc,), daemon=True, name="talk-reap").start()
         if conn is not None:
             try:
                 conn.close()
@@ -659,9 +690,8 @@ class Talker:
                 proc.join(timeout)
                 if proc.is_alive():
                     proc.terminate()
-                    proc.join(2)
             finally:
-                self._gone(proc)            # the limits come back down only now
+                self._gone_once_exited(proc, wait=2)     # the limits come back down only once it has exited
         try:
             conn.close()
         except OSError:
