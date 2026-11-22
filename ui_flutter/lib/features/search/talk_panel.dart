@@ -262,6 +262,8 @@ class _Answer extends StatelessWidget {
     } else if (t.phase == TalkPhase.answering && t.text.isEmpty) {
       children.add(Text('Looking at the photo…', style: note));
     }
+    // the level's CPU cap makes this answer much slower than usual: say why, plainly (vision_state slow_note)
+    if (t.running && t.slowNote.isNotEmpty) children.add(Text(t.slowNote, style: note));
     if (!failed && t.text.isNotEmpty) {
       // plain text: an answer is never read as markdown or HTML
       children.add(SelectableText(t.text, style: NbType.text(13, c.text, height: 1.5)));

@@ -255,12 +255,16 @@ the `vision` events of that question carry, `null` when no job started (a refusa
 comes as `vision` events, after the reply that names the job. One job at a time: a new question cancels the old one.
 
 - **`vision_state`** `{}` -> `{ok, error, job, not_now, models: [{id, name, deeper, ready, missing_mb, ram_mb, vram_mb,
-  load_s, answer_s: [fastest, slowest], can_run, why}], runtime: {id, ready, missing_mb}, loaded, busy, running}`: can
+  load_s, answer_s: [fastest, slowest], slow_note, can_run, why}], runtime: {id, ready, missing_mb}, loaded, busy, running}`: can
   it start now (`not_now` is a sentence when paused or the runtime is downloading, else empty), the quick model first
   and the deeper one second, what is in memory, whether a question is being answered (`job` its number, else null).
   `load_s` (seconds loading adds to the first question) and `answer_s` (seconds an answer takes once loaded) are the
-  catalog's measured figures for the runtime in `runtime` (CPU or Vulkan; docs/measurements.md); 0 / [0, 0] when not
-  measured. The UI says "about N s" only from these, never a number of its own.
+  catalog's measured figures for the runtime in `runtime` (CPU or Vulkan) at the governor's level now (the talk
+  worker runs under the worker group's CPU cap: Full none, Gentle 35 %, Very light 15 % and efficiency mode;
+  docs/measurements.md, tools/measure_talk.py); 0 / [0, 0] when not measured. The UI says "about N s" only from these,
+  never a number of its own. `slow_note` is a short sentence ("Slower now: NOBAD Find is in Very light mode.") when
+  a typical answer at this level was measured at least 1.4 times as long as at Full (`models.SLOW_FACTOR`; on the
+  reference PC: the processor at Very light), else empty.
 - **`vision_describe`** `{file_id}` -> `VisionAnswer`.
 - **`vision_ask`** `{file_id, question: string (<= 2000 characters before cleaning), deeper?: bool, more?: bool}` ->
   `VisionAnswer`. A question about writing in the photo may get a `done` event with note "Text read from the photo"

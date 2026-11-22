@@ -82,7 +82,8 @@ void main() {
     expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget);
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('520 MB download')), findsOneWidget);
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('665 MB graphics memory')), findsOneWidget);
-    const why = 'Needs 16 GB of memory and 8 cores (or a graphics card with 4 GB for DirectML)';
+    const why = 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory';
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.textContaining('DirectML')), findsNothing);
     expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text(why)), findsOneWidget);
     expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('Download anyway…')), findsOneWidget);
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text(why)), findsNothing);

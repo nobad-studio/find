@@ -352,6 +352,8 @@ void main() {
     expect(talk.state!.quick!.label, 'SmolVLM2-500M');
     expect(talk.state!.quick!.loadS, 1); // the measured seconds come over the pipe
     expect(talk.state!.deeper!.answerS, (2, 12));
+    expect(talk.state!.quick!.slowNote, ''); // and the engine's "Slower now" note
+    expect(talk.state!.deeper!.slowNote, 'Slower now: NOBAD Find is in Very light mode.');
     expect(talk.deeperOffer!.label, 'Deeper analysis (Qwen3-VL-2B)');
     expect(talk.deeperOffer!.available, isFalse);
     expect(talk.deeperOffer!.detail, 'Needs a one-time download (1800 MB)'); // not ready comes first

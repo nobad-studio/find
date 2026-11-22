@@ -289,15 +289,33 @@ def test_describe_streams_then_done(env):
 
 
 def test_vision_state_sends_the_measured_timing_of_the_runtime_in_use(env):
-    """The UI's "about N s" comes from the catalog's measured figures for the runtime a question would use."""
-    st = {m["id"]: m for m in env["a"].vision_state()["models"]}
-    assert env["a"].vision_state()["runtime"]["id"] == "llama-cpu"
-    assert st[QWEN]["load_s"] == 12 and st[QWEN]["answer_s"] == [7, 20]          # measured on the CPU
-    assert st[SMOL]["load_s"] == 3 and st[SMOL]["answer_s"] == [3, 7]
+    """The UI's "about N s" comes from the catalog's measured figures for the runtime a question would use, at the
+    governor's level now (I1: the talk worker runs under the worker group's CPU cap)."""
+    a = env["a"]
+
+    def state(level):
+        a._governor.decision = Decision(level, level)
+        try:
+            return {m["id"]: m for m in a.vision_state()["models"]}
+        finally:
+            a._governor.decision = Decision("gentle", "Gentle: you are using the PC")
+    assert a.vision_state()["runtime"]["id"] == "llama-cpu"
+    st = state("full")
+    assert st[QWEN]["load_s"] == 12 and st[QWEN]["answer_s"] == [4, 22]          # measured on the CPU, Full
+    assert st[SMOL]["load_s"] == 3 and st[SMOL]["answer_s"] == [3, 11]
+    assert st[QWEN]["slow_note"] == st[SMOL]["slow_note"] == ""
+    st = state("light")                                                           # 15 % cap + efficiency mode
+    assert st[QWEN]["answer_s"] == [7, 32] and st[SMOL]["answer_s"] == [5, 15]
+    assert st[QWEN]["slow_note"] == st[SMOL]["slow_note"] == "Slower now: NOBAD Find is in Very light mode."
+    st = state("gentle")
+    assert st[SMOL]["answer_s"] == [3, 11] and st[SMOL]["slow_note"] == ""
     _put_files(env["data"], "llama-vulkan")
-    st = {m["id"]: m for m in env["a"].vision_state()["models"]}
-    assert st[QWEN]["load_s"] == 13 and st[QWEN]["answer_s"] == [2, 12]         # measured on Vulkan (Iris Xe)
+    st = state("full")
+    assert st[QWEN]["load_s"] == 13 and st[QWEN]["answer_s"] == [1, 12]         # measured on Vulkan (Iris Xe)
     assert st[SMOL]["load_s"] == 1 and st[SMOL]["answer_s"] == [1, 3]
+    st = state("light")
+    assert st[SMOL]["answer_s"] == [1, 3] and st[SMOL]["slow_note"] == ""     # the graphics do the work: no note
+    assert st[QWEN]["slow_note"] == ""
 
 
 @pytest.mark.parametrize("vram_gb", [0.1, 8.0])        # Iris Xe (shared) and a graphics card: the same need

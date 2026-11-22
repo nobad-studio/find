@@ -1334,9 +1334,19 @@ List<FileResult> demoFiles() => [
 ];
 
 /// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory
-/// and timings: Vulkan on the reference PC's Iris Xe, or its processor with [cpu]).
-VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool deeperReady = true, bool cpu = false}) =>
-    VisionState(
+/// and timings at Full: Vulkan on the reference PC's Iris Xe, or its processor with [cpu]; [veryLight] with [cpu]:
+/// the processor at Very light, slower, with the engine's "Slower now" note).
+VisionState demoVisionState({
+  String deeperWhy = '',
+  String notNow = '',
+  bool deeperReady = true,
+  bool cpu = false,
+  bool veryLight = false,
+}) {
+  // Very light on the processor: the 15 % CPU cap and efficiency mode, measured slower, with the engine's note
+  final slow = cpu && veryLight;
+  final slowNote = slow ? 'Slower now: NOBAD Find is in Very light mode.' : '';
+  return VisionState(
       notNow: notNow,
       models: [
         VisionModel(
@@ -1345,8 +1355,9 @@ VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool dee
           ready: true,
           ramMb: 1031,
           vramMb: 665,
-          loadS: cpu ? 3 : 1,
-          answerS: cpu ? (3, 7) : (1, 3),
+          loadS: cpu && !slow ? 3 : 1,
+          answerS: slow ? (5, 15) : (cpu ? (3, 11) : (1, 3)),
+          slowNote: slowNote,
           canRun: true,
         ),
         VisionModel(
@@ -1357,8 +1368,9 @@ VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool dee
           missingMb: deeperReady ? 0 : 1481,
           ramMb: 2483,
           vramMb: 2062,
-          loadS: cpu ? 12 : 13,
-          answerS: cpu ? (7, 20) : (2, 12),
+          loadS: slow ? 10 : (cpu ? 12 : 13),
+          answerS: slow ? (7, 32) : (cpu ? (4, 22) : (1, 12)),
+          slowNote: slowNote,
           canRun: deeperWhy.isEmpty,
           why: deeperWhy,
         ),
@@ -1366,6 +1378,7 @@ VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool dee
       runtimeId: cpu ? 'llama-cpu' : 'llama-vulkan',
       runtimeReady: true,
     );
+}
 
 List<FileResult> manyFiles(int n) => [
   for (var i = 0; i < n; i++)
@@ -1508,7 +1521,9 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       ramMb: 1031,
       vramMb: 665,
       runtime: 'llama-vulkan',
-      speedNote: "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-7 s on its processor",
+      speedNote:
+          "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-11 s on its processor "
+          '(5-15 s while NOBAD Find runs very light)',
       languages: ['en'],
       improves: 'Answers questions about a photo, on this PC',
     ),
@@ -1526,7 +1541,8 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       languages: ['en', 'multilingual'],
       improves: 'Deeper answers about a photo, on this PC',
       capable: false,
-      capableReason: best,
+      // talk models never use DirectML: their own check (models._talk_capable)
+      capableReason: 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory',
     ),
     const ModelInfo(
       id: 'llama-cpu',

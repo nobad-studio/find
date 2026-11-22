@@ -10,6 +10,7 @@ Tiers (the spec's table):
   best      16 GB+ and 8+ cores, or DirectML   multilingual-e5-base, SigLIP 2 base, Windows OCR
             with 4 GB+ of video memory
 """
+import math
 import os
 
 from .const import DATA_DIR, MODEL_FILES, MODEL_REV
@@ -101,9 +102,12 @@ CATALOG = [
     # (docs/measurements.md, 2026-11-22 1.1.0): ram_mb = the most system memory the worker held (peak private or
     # working set, the bigger, over the CPU and the Vulkan runs: on shared-memory graphics the "video" memory is
     # system RAM too); vram_mb = its peak graphics memory on Vulkan (talk_need_mb picks between them).
-    # timing, per runtime (talk_timing), from the same rows: load_s = what loading adds to the first question (its
-    # first word, cold, minus a warm describe's), answer_s = (fastest, slowest) finished answer once loaded (Ask,
-    # Compare, warm Describe); the UI's "about N s" comes only from these.
+    # timing, per runtime and governor level (talk_timing): the talk worker runs in the worker group under the
+    # level's CPU hard cap (Gentle 35 %, Very light 15 % and efficiency mode), so each level was measured with that
+    # cap in force (tools/measure_talk.py; measurements.md 2026-11-22 "under the real limits"; CPU rows are two to
+    # four runs). load_s = what loading adds to the first question (cold first word minus a warm describe's, the
+    # median over the runs), answer_s = (fastest, slowest) finished answer once loaded (Ask, Compare, warm Describe,
+    # over all runs); the UI's "about N s" comes only from these.
     {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
      "source": HF + "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF", "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
      "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
@@ -114,8 +118,12 @@ CATALOG = [
      "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
      "ram_mb": 1031, "vram_mb": 665,
-     "timing": {"cpu": {"load_s": 3, "answer_s": (3, 7)}, "vulkan": {"load_s": 1, "answer_s": (1, 3)}},
-     "speed_note": "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-7 s on its processor",
+     "timing": {"cpu": {"full": {"load_s": 3, "answer_s": (3, 11)}, "gentle": {"load_s": 1, "answer_s": (3, 11)},
+                        "light": {"load_s": 1, "answer_s": (5, 15)}},
+                "vulkan": {"full": {"load_s": 1, "answer_s": (1, 3)}, "gentle": {"load_s": 1, "answer_s": (1, 3)},
+                           "light": {"load_s": 1, "answer_s": (1, 3)}}},
+     "speed_note": "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-11 s on its processor "
+                   "(5-15 s while NOBAD Find runs very light)",
      "builtin": False},
     {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
      "source": HF + "Qwen/Qwen3-VL-2B-Instruct-GGUF", "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
@@ -127,9 +135,13 @@ CATALOG = [
      "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
      "ram_mb": 2483, "vram_mb": 2062,
-     "timing": {"cpu": {"load_s": 12, "answer_s": (7, 20)}, "vulkan": {"load_s": 13, "answer_s": (2, 12)}},
-     "speed_note": "an answer in about 2-12 s on the reference PC's graphics (Iris Xe), 7-20 s on its processor; "
-                   "the first question also loads it (about 13 s)", "builtin": False},
+     "timing": {"cpu": {"full": {"load_s": 12, "answer_s": (4, 22)}, "gentle": {"load_s": 28, "answer_s": (4, 29)},
+                        "light": {"load_s": 10, "answer_s": (7, 32)}},
+                "vulkan": {"full": {"load_s": 13, "answer_s": (1, 12)}, "gentle": {"load_s": 11, "answer_s": (1, 11)},
+                           "light": {"load_s": 11, "answer_s": (1, 11)}}},
+     "speed_note": "an answer in about 1-12 s on the reference PC's graphics (Iris Xe), 4-22 s on its processor "
+                   "(7-32 s while NOBAD Find runs very light); the first question also loads it (about 10-13 s)",
+     "builtin": False},
     # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
     # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.
     _runtime("llama-cpu", "llama.cpp runtime (CPU)", llama_pins.CPU_ZIP, llama_pins.CPU_DLLS,
@@ -235,11 +247,39 @@ def talk_runtime(pc, data_dir=DATA_DIR):
     return "llama-vulkan" if pc.get("gpu") else "llama-cpu"
 
 
-def talk_timing(m, runtime):
-    """(load_s, (fastest, slowest answer_s)) measured for this talk model on this runtime; (0, (0, 0)) if not."""
-    t = (m.get("timing") or {}).get("vulkan" if runtime == "llama-vulkan" else "cpu") or {}
+TALK_LEVELS = ("full", "gentle", "light")     # the governor's levels talk runs at (paused refuses it)
+LEVEL_NAMES = {"gentle": "Gentle", "light": "Very light"}       # as the UI's level chip says them
+# a level whose typical answer (the middle of its measured range) takes at least this many times Full's gets the
+# "Slower now" note: on the processor at Very light (SmolVLM2 1.4x, Qwen 1.5x); never on Vulkan or at Gentle,
+# where the cap measured no slower (the 4 llama threads fit under 35 % of 16 threads; the graphics do the work)
+SLOW_FACTOR = 1.4
+
+
+def _talk_level(level):
+    level = str(level or "full").lower()
+    return level if level in TALK_LEVELS else ("light" if level == "paused" else "full")
+
+
+def talk_timing(m, runtime, level="full"):
+    """(load_s, (fastest, slowest answer_s)) measured for this talk model on this runtime at this governor level
+    (the worker group's CPU cap and efficiency mode); (0, (0, 0)) if not measured."""
+    by_level = (m.get("timing") or {}).get("vulkan" if runtime == "llama-vulkan" else "cpu") or {}
+    t = by_level.get(_talk_level(level)) or {}
     lo, hi = t.get("answer_s") or (0, 0)
     return int(t.get("load_s") or 0), (int(lo), int(hi))
+
+
+def talk_slow_note(m, runtime, level):
+    """"Slower now: NOBAD Find is in Very light mode." when a typical answer at this level (the middle of its
+    measured range) was measured at least SLOW_FACTOR times as long as at Full on this runtime, else ""."""
+    level = _talk_level(level)
+    if level == "full":
+        return ""
+    _load, (lo, hi) = talk_timing(m, runtime, level)
+    _fl, (flo, fhi) = talk_timing(m, runtime, "full")
+    if flo + fhi and lo + hi >= SLOW_FACTOR * (flo + fhi):
+        return f"Slower now: NOBAD Find is in {LEVEL_NAMES[level]} mode."
+    return ""
 
 
 def talk_need_mb(m, runtime):
@@ -274,11 +314,28 @@ def capable(m, pc, vectors=0):
     if free and free < need_gb + 1:
         return False, (f"Needs {need_gb:.1f} GB on the disk (the model and its vectors) plus 1 GB to spare; "
                        f"{free:.1f} GB is free")
+    if m["feature"] == "talk":
+        return _talk_capable(m, pc, ram, cores)
     if m["tier"] == "best" and not gpu and (ram < need_ram or cores < need_cores):
         return False, "Needs 16 GB of memory and 8 cores (or a graphics card with 4 GB for DirectML)"
     if m["tier"] == "balanced" and (ram < need_ram or cores < need_cores):
         return False, "Needs 8 GB of memory and 4 cores"
     return True, ""
+
+
+def _talk_capable(m, pc, ram, cores):
+    """A talk model never runs on DirectML (llama.cpp: the processor or Vulkan), so it has its own check: the tier's
+    memory and cores for the processor, or a graphics card with its own memory for the model's measured graphics
+    need (vram_mb; shared-memory graphics such as Iris Xe use system memory, so the processor's check applies)."""
+    need_ram, need_cores = NEEDS[m["tier"]]
+    if ram >= need_ram and cores >= need_cores:
+        return True, ""
+    vram_mb = int(m.get("vram_mb") or 0)
+    if pc.get("gpu") and vram_mb and float(pc.get("vram_gb") or 0) * 1024 >= vram_mb:
+        return True, ""
+    gb = math.ceil(vram_mb / 102.4) / 10
+    return False, (f"Needs {round(need_ram + 0.5):.0f} GB of memory and {need_cores} cores, or a graphics card "
+                   f"with {gb:.1f} GB of its own memory")
 
 
 def selected(settings, feature):

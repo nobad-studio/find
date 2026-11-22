@@ -136,6 +136,12 @@ class TalkController extends ChangeNotifier {
     return s.isEmpty ? 'Loading ${m.label}…' : 'Loading ${m.label}… $s';
   }
 
+  /// The engine's "Slower now: …" for the model answering (the level's CPU cap makes it much slower), or ''.
+  String get slowNote {
+    final m = _state?.byId(_model) ?? (_deeper ? _state?.deeper : _state?.quick);
+    return m?.slowNote ?? '';
+  }
+
   /// Why nothing can start now (paused, the runtime downloading), or ''.
   String get notNow => _state?.notNow ?? '';
 
@@ -162,7 +168,8 @@ class TalkController extends ChangeNotifier {
     }
     final gb = (d.ramMb / 1000).toStringAsFixed(1);
     final s = aboutSeconds(d.answerS.$1, d.answerS.$2);
-    final detail = s.isEmpty ? '$gb GB while answering' : '$s, $gb GB while answering';
+    final cost = s.isEmpty ? '$gb GB while answering' : '$s, $gb GB while answering';
+    final detail = d.slowNote.isEmpty ? cost : '$cost. ${d.slowNote}';
     return (label: label, available: true, detail: detail, download: null);
   }
 

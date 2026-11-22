@@ -64,6 +64,27 @@ def test_capable_says_why_not():
     assert models.capable(models.get("minilm-l6-v2"), PC_SMALL) == (True, "")
 
 
+def test_talk_models_have_their_own_check_without_directml():
+    """T9 M5: talk runs on the processor or Vulkan, never DirectML: DirectML doesn't let Qwen through and the reason
+    doesn't name it. The processor's check (tier memory and cores) or a graphics card with its own memory for the
+    model's measured graphics need."""
+    qwen, smol = models.get("qwen3vl-2b"), models.get("smolvlm2-500m")
+    small = {"ram_gb": 7.8, "cores": 4, "gpu": "", "vram_gb": 0.0, "directml": False}
+    ok, why = models.capable(qwen, dict(small, directml=True, vram_gb=8.0))        # DirectML alone: no
+    assert not ok
+    assert why == "Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory"
+    assert "DirectML" not in why
+    assert models.capable(qwen, dict(small, gpu="NVIDIA RTX 3050", vram_gb=4.0)) == (True, "")   # Vulkan path
+    assert not models.capable(qwen, dict(small, gpu="Intel(R) Iris(R) Xe Graphics", vram_gb=0.1))[0]  # shared
+    assert models.capable(qwen, dict(small, ram_gb=15.7, cores=12)) == (True, "")                 # processor
+    assert models.capable(smol, small) == (True, "")
+    ok, why = models.capable(smol, dict(small, ram_gb=3.8, cores=2))
+    assert not ok and why == "Needs 8 GB of memory and 4 cores, or a graphics card with 0.7 GB of its own memory"
+    assert models.capable(smol, dict(small, ram_gb=3.8, cores=2, gpu="GTX 1050", vram_gb=2.0)) == (True, "")
+    ok, why = models.capable(qwen, dict(small, ram_gb=15.7, cores=12, disk_free_gb=0.5))   # the disk check stays
+    assert not ok and "disk" in why
+
+
 def test_tier_current_from_the_settings():
     s = {"semantic": True, "text_model": "multilingual-e5-small", "photo_meaning": True, "photo_model": "siglip-base"}
     assert models.tier_current(s) == "balanced"
@@ -253,12 +274,32 @@ def test_talk_runtime_is_the_one_on_disk_else_by_graphics(tmp_path):
     assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-cpu"     # already there
 
 
-def test_talk_timing_is_measured_for_both_runtimes():
+def test_talk_timing_is_measured_for_both_runtimes_at_every_level():
     for m in models.talk_models():
         for rid in ("llama-cpu", "llama-vulkan"):
-            load, (lo, hi) = models.talk_timing(m, rid)
-            assert load > 0 and 0 < lo <= hi, (m["id"], rid)
+            for level in models.TALK_LEVELS:
+                load, (lo, hi) = models.talk_timing(m, rid, level)
+                assert load > 0 and 0 < lo <= hi, (m["id"], rid, level)
+            assert models.talk_timing(m, rid) == models.talk_timing(m, rid, "full")       # no level known: Full
+            assert models.talk_timing(m, rid, "paused") == models.talk_timing(m, rid, "light")
     assert models.talk_timing({"id": "x"}, "llama-cpu") == (0, (0, 0))       # not measured: no number
+    assert models.talk_timing({"timing": {"cpu": {"full": {"load_s": 2, "answer_s": (1, 2)}}}},
+                              "llama-cpu", "light") == (0, (0, 0))          # that level not measured: no number
+
+
+def test_slower_now_note_only_where_the_cap_measured_much_slower():
+    note = "Slower now: NOBAD Find is in Very light mode."
+    for m in models.talk_models():
+        assert models.talk_slow_note(m, "llama-cpu", "light") == note, m["id"]       # measured 1.4x-1.5x
+        for level in ("full", "gentle"):
+            assert models.talk_slow_note(m, "llama-cpu", level) == "", (m["id"], level)
+        for level in models.TALK_LEVELS:
+            assert models.talk_slow_note(m, "llama-vulkan", level) == "", (m["id"], level)
+    fake = {"timing": {"cpu": {"full": {"load_s": 1, "answer_s": (2, 4)}, "gentle": {"load_s": 1, "answer_s": (4, 6)},
+                               "light": {"load_s": 1, "answer_s": (2, 6)}}}}
+    assert models.talk_slow_note(fake, "llama-cpu", "gentle") == "Slower now: NOBAD Find is in Gentle mode."
+    assert models.talk_slow_note(fake, "llama-cpu", "light") == ""                  # 8 < 1.4 x 6
+    assert models.talk_slow_note({"id": "x"}, "llama-cpu", "light") == ""           # nothing measured
 
 
 def test_talk_need_on_vulkan_is_the_bigger_figure():

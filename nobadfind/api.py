@@ -1132,14 +1132,17 @@ class Api:
         d = self._mdir()
         rid = models.talk_runtime(hw.scan(), d)          # the one a question would use (or ask to download)
         sample = getattr(self._governor, "sample", None)
+        # the talk worker runs in the worker group under the level's CPU cap (and efficiency mode at Light): the
+        # seconds are the ones measured at that level (docs/measurements.md, tools/measure_talk.py)
+        level = getattr(getattr(self._governor, "decision", None), "level", None) or "full"
         out = []
         for i, m in enumerate(models.talk_models()):
             ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
-            load_s, answer_s = models.talk_timing(m, rid)       # measured, for the runtime a question would use
+            load_s, answer_s = models.talk_timing(m, rid, level)    # measured: this runtime, this level
             out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
                         "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
                         "vram_mb": int(m.get("vram_mb") or 0), "load_s": load_s, "answer_s": list(answer_s),
-                        "can_run": ok, "why": why})
+                        "slow_note": models.talk_slow_note(m, rid, level), "can_run": ok, "why": why})
         st = self._talk.state() if self._talk is not None else {"loaded": "", "busy": False, "job": 0,
                                                                "running": False}
         return {"ok": True, "not_now": self._vision_not_now(), "models": out,

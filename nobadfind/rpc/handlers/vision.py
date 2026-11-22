@@ -48,6 +48,7 @@ def _state(api):
                         "ready": bool(m["ready"]), "missing_mb": int(m["missing_mb"]), "ram_mb": int(m["ram_mb"]),
                         "vram_mb": int(m["vram_mb"]), "load_s": int(m.get("load_s") or 0),
                         "answer_s": [int(x) for x in (m.get("answer_s") or (0, 0))][:2],
+                        "slow_note": str(m.get("slow_note") or ""),
                         "can_run": bool(m["can_run"]), "why": str(m["why"] or "")}
                        for m in r["models"]],
             "runtime": {"id": str(r["runtime"]["id"]), "ready": bool(r["runtime"]["ready"]),

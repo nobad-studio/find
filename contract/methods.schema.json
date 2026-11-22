@@ -3594,6 +3594,10 @@
             "minimum": 0
           }
         },
+        "slow_note": {
+          "type": "string",
+          "description": "A short sentence when answers at the governor's level now were measured much slower than at Full (\"Slower now: NOBAD Find is in Very light mode.\"), else empty."
+        },
         "can_run": {
           "type": "boolean"
         },
@@ -3611,6 +3615,7 @@
         "vram_mb",
         "load_s",
         "answer_s",
+        "slow_note",
         "can_run",
         "why"
       ],

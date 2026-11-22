@@ -16,6 +16,7 @@ class VisionModel {
     this.vramMb = 0,
     this.loadS = 0,
     this.answerS = (0, 0),
+    this.slowNote = '',
     this.canRun = false,
     this.why = '',
   });
@@ -25,6 +26,10 @@ class VisionModel {
 
   /// Measured seconds an answer takes once loaded, (fastest, slowest), on that runtime ((0, 0) = not measured).
   final (int, int) answerS;
+
+  /// "Slower now: NOBAD Find is in Very light mode." when answers at the level now were measured much slower
+  /// than at Full (the worker group's CPU cap), else ''.
+  final String slowNote;
 
   final String id;
   final String name;
@@ -52,6 +57,7 @@ class VisionModel {
     return VisionModel(
       loadS: jInt(m['load_s']),
       answerS: (at(0), at(1)),
+      slowNote: jStr(m['slow_note']),
       id: id,
       name: jStr(m['name']).isEmpty ? id : jStr(m['name']),
       deeper: jBool(m['deeper']),
