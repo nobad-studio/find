@@ -20,9 +20,11 @@ def test_recommended_tier_follows_the_spec_table():
 
 def test_catalog_has_every_feature_and_only_permissive_licences():
     ids = {m["id"]: m for m in models.CATALOG}
-    assert {m["feature"] for m in models.CATALOG} == {"text", "photo", "ocr"}
+    assert {m["feature"] for m in models.CATALOG} == {"text", "photo", "ocr", "talk", "runtime"}
     for m in models.CATALOG:
         assert m["licence"] in ("MIT", "Apache-2.0", "Windows"), m["id"]
+        if m["feature"] == "runtime":
+            continue
         assert "clip" not in m["id"].lower() or "siglip" in m["id"].lower()
         if not m["builtin"]:
             assert m["files"] and all(len(sha) == 64 and size > 0 for _p, size, sha in m["files"].values())
@@ -191,3 +193,57 @@ def test_missing_mb_counts_only_the_files_still_to_download(tmp_path):
         f.truncate(94553333)                                                           # the old 8-bit file
     assert models.missing_mb("siglip2-base", str(tmp_path)) == round(m["files"]["vision.onnx"][1] / 1048576) == 177
     assert models.missing_mb("windows-ocr", str(tmp_path)) == 0
+
+
+def test_talk_models_are_pinned_and_measured():
+    t = {m["id"]: m for m in models.talk_models()}
+    assert set(t) == {"smolvlm2-500m", "qwen3vl-2b"}
+    for m in t.values():
+        assert m["feature"] == "talk" and m["licence"] == "Apache-2.0" and len(m["rev"]) == 40
+        assert len(m["files"]) == 2
+        assert all(len(sha) == 64 and size > 0 for _p, size, sha in m["files"].values())
+        assert m["talk"]["side"] == 512 and m["talk"]["n_ctx"] == 1024 and m["talk"]["n_ubatch"] == 256
+        assert m["talk"]["flash_attn"] is True and m["talk"]["kv"] == "q8_0"
+    assert (t["smolvlm2-500m"]["ram_mb"], t["qwen3vl-2b"]["ram_mb"]) == (942, 2411)
+    assert (t["smolvlm2-500m"]["vram_mb"], t["qwen3vl-2b"]["vram_mb"]) == (658, 2060)
+    assert (t["smolvlm2-500m"]["tier"], t["qwen3vl-2b"]["tier"]) == ("balanced", "best")
+    assert t["qwen3vl-2b"]["talk"]["image_max_tokens"] == 160 and "image_max_tokens" not in t["smolvlm2-500m"]["talk"]
+
+
+def test_talk_models_listed_smolvlm2_first():
+    assert [m["id"] for m in models.talk_models()] == ["smolvlm2-500m", "qwen3vl-2b"]
+
+
+def test_runtime_zip_pinned_and_dll_list_complete():
+    for rid in ("llama-cpu", "llama-vulkan"):
+        m = models.get(rid)
+        assert m["feature"] == "runtime" and m["licence"] == "MIT"
+        (name, size, sha), = m["files"].values()
+        assert name.endswith(".zip") and size > 0 and len(sha) == 64
+        z = m["files_in_zip"]
+        assert {"llama.dll", "mtmd.dll", "ggml.dll"} <= set(z)
+        assert all(n.endswith(".dll") and n != "ggml-rpc.dll" for n in z)
+        assert all(len(s) == 64 and sz > 0 for sz, s in z.values())
+    assert "ggml-vulkan.dll" in models.get("llama-vulkan")["files_in_zip"]
+
+
+def test_runtime_for_device(tmp_path):
+    assert models.runtime_for("vulkan", str(tmp_path)) == "llama-cpu"
+    assert models.runtime_for("cpu", str(tmp_path)) == "llama-cpu"
+    d = models.model_dir("llama-vulkan", str(tmp_path))
+    os.makedirs(d)
+    for n, (size, _s) in models.get("llama-vulkan")["files_in_zip"].items():
+        with open(os.path.join(d, n), "wb") as f:
+            f.truncate(size)
+    assert models.ready("llama-vulkan", str(tmp_path))
+    assert models.runtime_for("vulkan", str(tmp_path)) == "llama-vulkan"
+    assert models.runtime_for("cpu", str(tmp_path)) == "llama-cpu"
+
+
+def test_talk_models_are_not_downloaded_by_auto_configure():
+    off = {"talk", "runtime"}
+    for tier in models.TIERS:
+        for focus in models.FOCUSES:
+            assert not off & set(models.tier_choice(tier, focus))
+        assert not off & set(models.TIER_CHOICE[tier])
+    assert off.isdisjoint({m["feature"] for m in models.CATALOG if m["feature"] in models.SEARCH_FEATURES})

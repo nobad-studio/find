@@ -38,7 +38,7 @@ def _fake_download(a, mid):
 def test_models_lists_the_pc_the_tiers_and_every_model(a):
     r = a.models()
     assert r["pc"] == PC and r["tier_recommended"] == "best" and r["language_focus"] == "english"
-    assert {m["id"] for m in r["models"]} == set(models.ids())
+    assert {m["id"] for m in r["models"]} == set(models.ids("text") + models.ids("photo") + models.ids("ocr"))
     by = {m["id"]: m for m in r["models"]}
     assert by["windows-ocr"]["builtin"] and by["minilm-l6-v2"]["state"] == "not_downloaded"
     assert sum(m["recommended"] for m in r["models"] if m["feature"] == "text") == 1

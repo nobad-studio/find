@@ -211,6 +211,8 @@ class FakeApi:
         choice = cat.tier_choice(rec, focus)
         out = []
         for m in cat.CATALOG:
+            if m["feature"] not in cat.SEARCH_FEATURES:
+                continue
             ok, why = cat.capable(m, pc)
             if m["builtin"]:
                 state = "active" if self.settings.get("ocr") else "ready"

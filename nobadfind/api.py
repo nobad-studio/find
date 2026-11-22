@@ -853,6 +853,8 @@ class Api:
         choice = models.tier_choice(rec, focus)
         out = []
         for m in models.CATALOG:
+            if m["feature"] not in models.SEARCH_FEATURES:
+                continue                        # talk models and runtimes: the photo page asks for them (1.1)
             ok, why = models.capable(m, pc)
             if m["feature"] == "ocr" and not ocr.available():
                 ok, why = False, ocr.why_missing() or "Windows OCR isn't available on this PC"

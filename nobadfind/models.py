@@ -13,6 +13,7 @@ Tiers (the spec's table):
 import os
 
 from .const import DATA_DIR, MODEL_FILES, MODEL_REV
+from . import llama_pins
 from .photo import PHOTO_FILES, PHOTO_REV
 
 TIERS = ("light", "balanced", "best")
@@ -21,6 +22,16 @@ HF = "https://huggingface.co/"
 _E5_SMALL_REV = "761b726dd34fb83930e26aab4e9ac3899aa1fa78"
 _E5_BASE_REV = "1ec9243030a27d1a115d5c340572074c125b58b2"
 _SIGLIP2_REV = "ba1f3b0843f24bc5417d38e19c37b287d719b2f4"
+
+
+def _runtime(rid, name, zipinfo, dlls, improves):
+    zname, zurl, size, sha = zipinfo
+    return {"id": rid, "feature": "runtime", "name": name, "tier": "light", "licence": "MIT",
+            "source": "https://github.com/ggml-org/llama.cpp/releases/tag/" + llama_pins.TAG, "rev": llama_pins.TAG,
+            "url": zurl, "files": {"zip": (zname, size, sha)}, "files_in_zip": dict(dlls),
+            "dir": os.path.join("runtime", rid), "languages": [], "improves": improves, "ram_mb": 0,
+            "speed_note": "", "builtin": False}
+
 
 CATALOG = [
     {"id": "minilm-l6-v2", "min_score": 0.25, "spread": 0.29, "name_spread": 0.29, "name_strong": 0.33, "feature": "text", "name": "all-MiniLM-L6-v2", "tier": "light", "licence": "Apache-2.0",
@@ -84,12 +95,45 @@ CATALOG = [
      "improves": "Finds photos with questions in many languages, Hindi included", "ram_mb": 370,
      "speed_note": "about 3 photos a second on 4 threads (SigLIP base about 4); a question in about 90-125 ms",
      "builtin": False},
+    # talk about a photo (find 1.1): a small vision-language model run by llama.cpp (the runtimes below). Not part of
+    # the search tiers: it is offered when the user first asks to talk about a photo. Files, revisions, sizes and
+    # SHA-256s are tools/vision_bench/models.json; ram_mb / vram_mb are peak private memory, measured
+    # (docs/measurements.md, 2026-11-22).
+    {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
+     "source": HF + "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF", "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
+     "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
+     "files": {"model.gguf": ("SmolVLM2-500M-Video-Instruct-Q8_0.gguf", 436808704,
+                              "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"),
+               "mmproj.gguf": ("mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf", 108785184,
+                               "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b")},
+     "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
+     "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
+     "ram_mb": 942, "vram_mb": 658, "speed_note": "about 3 s a photo on the reference PC's GPU", "builtin": False},
+    {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
+     "source": HF + "Qwen/Qwen3-VL-2B-Instruct-GGUF", "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
+     "repo": "Qwen/Qwen3-VL-2B-Instruct-GGUF",
+     "files": {"model.gguf": ("Qwen3VL-2B-Instruct-Q4_K_M.gguf", 1107409952,
+                              "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"),
+               "mmproj.gguf": ("mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf", 445053216,
+                               "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82")},
+     "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
+     "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
+     "ram_mb": 2411, "vram_mb": 2060, "speed_note": "about 5 s a photo (deeper analysis)", "builtin": False},
+    # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
+    # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.
+    _runtime("llama-cpu", "llama.cpp runtime (CPU)", llama_pins.CPU_ZIP, llama_pins.CPU_DLLS,
+             "Runs the talk models on the processor"),
+    _runtime("llama-vulkan", "llama.cpp runtime (graphics card)", llama_pins.VULKAN_ZIP, llama_pins.VULKAN_DLLS,
+             "Runs the talk models on the graphics card (Vulkan)"),
     {"id": "windows-ocr", "feature": "ocr", "name": "Windows OCR", "tier": "light", "licence": "Windows",
      "source": "Windows (Windows.Media.Ocr)", "rev": "", "files": {}, "languages": ["the Windows language packs"],
      "improves": "Reads words in photos, screenshots and scans", "ram_mb": 0, "speed_note": "built into Windows",
      "builtin": True},
 ]
 _BY_ID = {m["id"]: m for m in CATALOG}
+# the features the search tiers, auto_configure and the models page work with; "talk" and "runtime" entries are
+# fetched on use (talk about a photo), never by a tier
+SEARCH_FEATURES = ("text", "photo", "ocr")
 # what each tier uses per feature ("" = off), by language focus (english: the best English model the PC can run;
 # multilingual: multilingual-e5; hindi: the model that scored best on the Hindi set). Measured: measurements.md.
 FOCUSES = ("english", "multilingual", "hindi")
@@ -136,6 +180,9 @@ def ready(mid, data_dir=DATA_DIR):
     if m["builtin"]:
         return True
     d = model_dir(mid, data_dir)
+    if m["feature"] == "runtime":               # the zip is not kept: its kept DLLs are what has to be there
+        return all(os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n)) == size
+                   for n, (size, _sha) in m["files_in_zip"].items())
     return all(os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n)) == size
                for n, (_p, size, _sha) in m["files"].items())
 
@@ -147,6 +194,8 @@ def missing_mb(mid, data_dir=DATA_DIR):
     if m is None or m["builtin"]:
         return 0
     d = model_dir(mid, data_dir)
+    if m["feature"] == "runtime":
+        return 0 if ready(mid, data_dir) else round(size_mb(m))
     left = sum(size for name, (_p, size, _s) in m["files"].items()
                if not (os.path.isfile(os.path.join(d, name)) and os.path.getsize(os.path.join(d, name)) == size))
     return round(left / 1048576)
@@ -154,6 +203,16 @@ def missing_mb(mid, data_dir=DATA_DIR):
 
 def size_mb(m):
     return round(sum(size for _p, size, _s in (m["files"] or {}).values()) / 1048576) if not m["builtin"] else 0
+
+
+def talk_models():
+    """The talk-about-a-photo models, SmolVLM2 first."""
+    return [m for m in CATALOG if m["feature"] == "talk"]
+
+
+def runtime_for(device, data_dir=DATA_DIR):
+    """The llama.cpp runtime id to use: llama-vulkan for "vulkan" when it is on disk, else llama-cpu."""
+    return "llama-vulkan" if device == "vulkan" and ready("llama-vulkan", data_dir) else "llama-cpu"
 
 
 def recommend(pc):
