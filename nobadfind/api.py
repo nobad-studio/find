@@ -140,9 +140,12 @@ class Api:
             pindex = getattr(self._indexer, "pindex", None)
             ready_n = int(getattr(pindex, "n", 0) or 0)
             if not models.ready(pid, self._mdir()):
-                out.append({"model": "photo", "state": "missing", "id": pid, "size_mb": mb, "done": 0, "total": 0,
-                            "text": f"To find what is in your photos, NOBAD Find needs its photo model ({mb} MB, "
-                                    "downloaded once). Until then it only matches names and words in pictures."})
+                left = models.missing_mb(pid, self._mdir()) or mb
+                what = (f"an update of its photo model ({left} MB to download)" if left < mb
+                        else f"its photo model ({left} MB, downloaded once)")
+                out.append({"model": "photo", "state": "missing", "id": pid, "size_mb": left, "done": 0, "total": 0,
+                            "text": f"To find what is in your photos, NOBAD Find needs {what}. Until then it only "
+                                    "matches names and words in pictures."})
             elif not s.get("photo_meaning"):
                 out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
                             "text": "Photo search is off, so only names and words in pictures are matched. "

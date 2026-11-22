@@ -92,6 +92,23 @@ _threads = [2]                                        # set by init_worker from 
 QUESTION_THREADS = 4                                  # a photo question while you type: 45 ms on 2 threads, 28 on 4
 
 
+def open_session(path, opts, providers=("CPUExecutionProvider",)):
+    """An ONNX Runtime session. Some fp16 exports (SigLIP 2's vision, 2026-11-22) make ONNX Runtime 1.27's full
+    graph optimizer fail in GetIndexFromName; those load with basic optimization, measured to give the right
+    vectors (cosine 1.00000 against the fp32 export on 50 photos). Their memory arena is turned off: with basic
+    optimization it grew to 1,275 MB over 20 photos, 207 MB without it (2.9 vs 3.4 photos/s). Any other load
+    error is raised as it is."""
+    import onnxruntime as ort
+    try:
+        return ort.InferenceSession(path, opts, providers=list(providers))
+    except Exception as e:
+        if "GetIndexFromName" not in str(e):
+            raise
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        opts.enable_cpu_mem_arena = False
+        return ort.InferenceSession(path, opts, providers=list(providers))
+
+
 def _vision_session(model_dir):
     """The vision session of the model in model_dir (a model switch gets its own, never the old one)."""
     s = _vision.get(model_dir)
@@ -101,8 +118,7 @@ def _vision_session(model_dir):
         opts.intra_op_num_threads = _threads[0]       # 2.4 photos/s on 2 threads, 7.1 on 8 (CPU-capped by level)
         opts.log_severity_level = 3
         _vision.clear()                               # one model in memory at a time
-        s = _vision[model_dir] = ort.InferenceSession(os.path.join(model_dir, "vision.onnx"), opts,
-                                                      providers=["CPUExecutionProvider"])
+        s = _vision[model_dir] = open_session(os.path.join(model_dir, "vision.onnx"), opts)
     return s
 
 
@@ -189,7 +205,7 @@ class TextEncoder:
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = threads or QUESTION_THREADS
         opts.log_severity_level = 3
-        self.sess = ort.InferenceSession(os.path.join(model_dir, "text.onnx"), opts, providers=["CPUExecutionProvider"])
+        self.sess = open_session(os.path.join(model_dir, "text.onnx"), opts)
         self._lock = threading.Lock()
         self._asked = {}
 

@@ -898,10 +898,11 @@ class Indexer:
         try:
             had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
                 "SELECT 1 FROM pvecs LIMIT 1") else "")
-            if had and had != pid:
+            tag = models.vector_tag(pid)           # the id, plus "#n" when the catalog re-pinned a vision file
+            if had and had != tag:
                 self.store.drop_photo_vectors()
-                log(f"photo model is now {pid}: the photos are looked at again")
-            self.store.set_meta("pvec_model", pid)
+                log(f"photo model is now {tag}: the photos are looked at again")
+            self.store.set_meta("pvec_model", tag)
             spec = models.get(pid)
             d = models.model_dir(pid)
             self.photo_model = pid
@@ -981,7 +982,8 @@ class Indexer:
                     if results is RECYCLE:
                         self._recycle(pool, "photo reader")     # these photos are read again later
                         return
-                    if made_with and (self.photo_model != made_with or self.store.meta("pvec_model") != made_with):
+                    if made_with and (self.photo_model != made_with
+                                      or self.store.meta("pvec_model") != models.vector_tag(made_with)):
                         log("photo model changed during the pass: its batch is thrown away, the next pass uses "
                             "the new model")
                         return                      # vectors are only written under the model that made them

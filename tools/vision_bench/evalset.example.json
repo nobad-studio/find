@@ -1,0 +1,433 @@
+{
+ "version": 1,
+ "_comment": "Example only: put your own photos with these names (or your own) beside a copy of this file named set.json, and write the real expected answers.",
+ "items": [
+  {
+   "id": "detect-01",
+   "image": "detect-01.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "dog"
+   ]
+  },
+  {
+   "id": "detect-02",
+   "image": "detect-02.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "cat",
+    "sofa"
+   ]
+  },
+  {
+   "id": "detect-03",
+   "image": "detect-03.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    [
+     "car",
+     "vehicle"
+    ]
+   ]
+  },
+  {
+   "id": "detect-04",
+   "image": "detect-04.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "person",
+    "bicycle"
+   ]
+  },
+  {
+   "id": "detect-05",
+   "image": "detect-05.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "laptop",
+    "cup"
+   ]
+  },
+  {
+   "id": "detect-06",
+   "image": "detect-06.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "tree"
+   ]
+  },
+  {
+   "id": "detect-07",
+   "image": "detect-07.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "phone"
+   ]
+  },
+  {
+   "id": "detect-08",
+   "image": "detect-08.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "book"
+   ]
+  },
+  {
+   "id": "detect-09",
+   "image": "detect-09.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "chair",
+    "table"
+   ]
+  },
+  {
+   "id": "detect-10",
+   "image": "detect-10.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "bird"
+   ]
+  },
+  {
+   "id": "detect-11",
+   "image": "detect-11.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "bus"
+   ]
+  },
+  {
+   "id": "detect-12",
+   "image": "detect-12.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "cake"
+   ]
+  },
+  {
+   "id": "detect-13",
+   "image": "detect-13.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "umbrella"
+   ]
+  },
+  {
+   "id": "detect-14",
+   "image": "detect-14.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "shoe"
+   ]
+  },
+  {
+   "id": "detect-15",
+   "image": "detect-15.jpg",
+   "task": "detect",
+   "kind": "objects",
+   "expect": [
+    "clock"
+   ]
+  },
+  {
+   "id": "ocr-en-01",
+   "image": "ocr-en-01.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-02",
+   "image": "ocr-en-02.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-03",
+   "image": "ocr-en-03.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-04",
+   "image": "ocr-en-04.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-05",
+   "image": "ocr-en-05.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-06",
+   "image": "ocr-en-06.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-07",
+   "image": "ocr-en-07.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-08",
+   "image": "ocr-en-08.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-09",
+   "image": "ocr-en-09.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-en-10",
+   "image": "ocr-en-10.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ocr-hi-01",
+   "image": "ocr-hi-01.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "बोर्ड पर लिखा शब्द"
+  },
+  {
+   "id": "ocr-hi-02",
+   "image": "ocr-hi-02.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "बोर्ड पर लिखा शब्द"
+  },
+  {
+   "id": "ocr-hi-03",
+   "image": "ocr-hi-03.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "बोर्ड पर लिखा शब्द"
+  },
+  {
+   "id": "ocr-hi-04",
+   "image": "ocr-hi-04.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "बोर्ड पर लिखा शब्द"
+  },
+  {
+   "id": "ocr-hi-05",
+   "image": "ocr-hi-05.jpg",
+   "task": "ocr",
+   "kind": "text",
+   "expect": "बोर्ड पर लिखा शब्द"
+  },
+  {
+   "id": "ask-count-01",
+   "image": "ask-count-01.jpg",
+   "task": "ask",
+   "question": "How many people are in this photo?",
+   "kind": "count",
+   "expect": 2
+  },
+  {
+   "id": "ask-count-02",
+   "image": "ask-count-02.jpg",
+   "task": "ask",
+   "question": "How many people are in this photo?",
+   "kind": "count",
+   "expect": 2
+  },
+  {
+   "id": "ask-count-03",
+   "image": "ask-count-03.jpg",
+   "task": "ask",
+   "question": "How many people are in this photo?",
+   "kind": "count",
+   "expect": 2
+  },
+  {
+   "id": "ask-count-04",
+   "image": "ask-count-04.jpg",
+   "task": "ask",
+   "question": "How many people are in this photo?",
+   "kind": "count",
+   "expect": 2
+  },
+  {
+   "id": "ask-count-05",
+   "image": "ask-count-05.jpg",
+   "task": "ask",
+   "question": "How many people are in this photo?",
+   "kind": "count",
+   "expect": 2
+  },
+  {
+   "id": "ask-sign-01",
+   "image": "ask-sign-01.jpg",
+   "task": "ask",
+   "question": "What is written on the sign?",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ask-sign-02",
+   "image": "ask-sign-02.jpg",
+   "task": "ask",
+   "question": "What is written on the sign?",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ask-sign-03",
+   "image": "ask-sign-03.jpg",
+   "task": "ask",
+   "question": "What is written on the sign?",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ask-sign-04",
+   "image": "ask-sign-04.jpg",
+   "task": "ask",
+   "question": "What is written on the sign?",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "ask-sign-05",
+   "image": "ask-sign-05.jpg",
+   "task": "ask",
+   "question": "What is written on the sign?",
+   "kind": "text",
+   "expect": "TEXT ON THE SIGN"
+  },
+  {
+   "id": "caption-01",
+   "image": "caption-01.jpg",
+   "task": "caption",
+   "kind": "describe",
+   "expect": [
+    "beach",
+    "sunset",
+    "two people"
+   ]
+  },
+  {
+   "id": "caption-02",
+   "image": "caption-02.jpg",
+   "task": "caption",
+   "kind": "describe",
+   "expect": [
+    "beach",
+    "sunset",
+    "two people"
+   ]
+  },
+  {
+   "id": "caption-03",
+   "image": "caption-03.jpg",
+   "task": "caption",
+   "kind": "describe",
+   "expect": [
+    "beach",
+    "sunset",
+    "two people"
+   ]
+  },
+  {
+   "id": "caption-04",
+   "image": "caption-04.jpg",
+   "task": "caption",
+   "kind": "describe",
+   "expect": [
+    "beach",
+    "sunset",
+    "two people"
+   ]
+  },
+  {
+   "id": "caption-05",
+   "image": "caption-05.jpg",
+   "task": "caption",
+   "kind": "describe",
+   "expect": [
+    "beach",
+    "sunset",
+    "two people"
+   ]
+  },
+  {
+   "id": "compare-01",
+   "image": "compare-01a.jpg",
+   "image2": "compare-01b.jpg",
+   "task": "compare",
+   "question": "Were these two photos taken at the same place?",
+   "kind": "yesno",
+   "expect": true
+  },
+  {
+   "id": "compare-02",
+   "image": "compare-02a.jpg",
+   "image2": "compare-02b.jpg",
+   "task": "compare",
+   "question": "Were these two photos taken at the same place?",
+   "kind": "yesno",
+   "expect": true
+  },
+  {
+   "id": "compare-03",
+   "image": "compare-03a.jpg",
+   "image2": "compare-03b.jpg",
+   "task": "compare",
+   "question": "Were these two photos taken at the same place?",
+   "kind": "yesno",
+   "expect": true
+  },
+  {
+   "id": "compare-04",
+   "image": "compare-04a.jpg",
+   "image2": "compare-04b.jpg",
+   "task": "compare",
+   "question": "Were these two photos taken at the same place?",
+   "kind": "yesno",
+   "expect": true
+  },
+  {
+   "id": "compare-05",
+   "image": "compare-05a.jpg",
+   "image2": "compare-05b.jpg",
+   "task": "compare",
+   "question": "Were these two photos taken at the same place?",
+   "kind": "yesno",
+   "expect": true
+  }
+ ]
+}

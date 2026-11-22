@@ -1,6 +1,6 @@
 # NOBAD Find changelog
 
-## Unreleased
+## 1.0.1 · (in development)
 
 ### Opening Windows settings and apps
 - Fixed: "open windows update" (and every other "open ..." question) opened the first file, often Settings on its
@@ -10,6 +10,35 @@
 - "open ..." answers come quicker: when the question opens a page or an app, files are found by name and words
   only, without waiting for the meaning model.
 - Network & internet opens `ms-settings:network-status`, the address in Microsoft's list (was `ms-settings:network`).
+
+## 1.0.0 · 2026-11-22
+
+### Fixed
+- **Photo search finds the right photos more often.** A score cut-off threw away photos that clearly matched
+  ("a cup of coffee" lost two of four real coffee photos), and loosely matching words read inside other photos
+  pushed in wrong ones. Measured on 556 openly licensed photos and 146 described searches: the share of clearly
+  matching photos in the top 10 went from 67% to 82%. On 45 searches that were never used to tune anything, the
+  ranking score (nDCG@10) went from 0.60 to 0.71.
+- **Photos that only may match are still shown,** after the sure results and marked "the picture may show it",
+  instead of being dropped.
+- **"Show me all photos", "find photos" and "pictures from yesterday" list your pictures again** (with the date or
+  folder you gave), instead of ranking them by what the word "photos" looks like.
+- **"A screenshot of program code" or "a screenshot of a spreadsheet" now searches your pictures.** Before, every
+  word was read as a file type and nothing was left to look for.
+- **The "best" photo model (SigLIP 2) found photos much worse than it should have:** the compressed part of the
+  model that looks at pictures blurred them (measured: worse than the standard model). It now uses the
+  full-precision version. If you use it, NOBAD Find downloads the one changed file (177 MB) and looks at your
+  photos again; the standard model (SigLIP base) and its photo index are not affected. With the fix, SigLIP 2
+  finds the right photos more often than the standard model (+0.035 on the 45 untouched searches).
+- The photo model is no longer asked about folder names, dates, sort words or mixed Hindi and English: those go to
+  the filters, and only the description goes to the photo model (it understands English).
+- A file found by a loosely matching name is no longer dropped from photo results.
+- The "needs its photo model" hint gives the size still to download, not the whole model's.
+
+### Known
+- A plain keyword search such as "lease" can also list weak photo matches after the sure results. The fix is being
+  measured before it ships.
+- `NOBAD_FIND_PHOTO_V2=0` (an environment variable) brings back the earlier photo ranking, if you need it.
 
 ## 0.9.6 · 2026-11-21
 

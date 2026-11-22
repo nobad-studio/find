@@ -47,7 +47,7 @@ def _search_result(r):
                    if isinstance(best, dict) and best.get("id") in ids else None)
     if r.get("cancelled"):
         out["cancelled"] = True         # a newer search on the same channel replaced it: show nothing from it
-    # 0.9.6 fix: these two were dropped here, so the window never saw them ("open windows update" + Enter opened
+    # 1.0.1 fix: these two were dropped here, so the window never saw them ("open windows update" + Enter opened
     # the first file, Settings' home, instead of the Windows Update page)
     needs = [_need(n) for n in (r.get("needs") or []) if isinstance(n, dict) and n.get("model") in NEED_MODELS
              and n.get("state") in NEED_STATES]
