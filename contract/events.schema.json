@@ -149,7 +149,7 @@
       "$ref": "methods.schema.json#/$defs/update_state"
     },
     "vision": {
-      "description": "An answer about a photo moved on. text is the WHOLE answer so far while answering (replace, don't append), the final answer on done, empty on error and cancelled. model is the model id (empty for the stored text). note: the loading sentence on loading; on done \"Text read from the photo\" (finished text read earlier, no model ran) or \"may not be exact\" (answer contains Devanagari); on cancelled a reason (see the README: non-empty means the engine stopped it); on error the plain-language reason.",
+      "description": "An answer about a photo moved on. text is the WHOLE answer so far while answering (replace, don't append), the final answer on done, empty on error and cancelled. model is the model id (empty for the stored text). note: the loading sentence on loading (first \"Loading <model name>\", then the engine's progress line as the worker reports it: \"Loading <model name>… 60 %\", \"Loading the vision part of <model name>… 40 %\", \"Stopping the last answer…\"; a note containing … is shown as it is; loading may repeat); on done \"Text read from the photo\" (finished text read earlier, no model ran) or \"may not be exact\" (answer contains Devanagari); on cancelled a reason (see the README: non-empty means the engine stopped it); on error the plain-language reason.",
       "type": "object",
       "properties": {
         "job": {

@@ -60,6 +60,28 @@ void main() {
     expect(find.text('Keep this description'), findsOneWidget);
   });
 
+  testWidgets('loading shows the engine\'s phase and how far it got', (tester) async {
+    final e = await openPhoto(tester);
+    await describe(tester);
+    say(e, 'loading', note: 'Loading SmolVLM2 500M');
+    await tester.pump();
+    expect(find.text('Loading SmolVLM2-500M… about 1 s'), findsOneWidget);
+    say(e, 'loading', note: 'Loading SmolVLM2 500M… 60 %');
+    await tester.pump();
+    expect(find.text('Loading SmolVLM2 500M… 60 %'), findsOneWidget);
+    expect(find.textContaining('about 1 s'), findsNothing);
+    say(e, 'loading', note: 'Loading the vision part of SmolVLM2 500M… 40 %');
+    await tester.pump();
+    expect(find.text('Loading the vision part of SmolVLM2 500M… 40 %'), findsOneWidget);
+    say(e, 'loading', note: 'Stopping the last answer…');
+    await tester.pump();
+    expect(find.text('Stopping the last answer…'), findsOneWidget);
+    expect(find.text('Stop'), findsOneWidget);
+    say(e, 'answering');
+    await tester.pump();
+    expect(find.text('Looking at the photo…'), findsOneWidget);
+  });
+
   testWidgets('stop cancels', (tester) async {
     final e = await openPhoto(tester);
     await describe(tester);

@@ -100,6 +100,18 @@ def test_worker_priority_back_to_normal():
     assert out == "True 2"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows priorities")
+def test_talk_worker_activity_raises_memory_and_io_priority_only():
+    """The talk worker while a job runs: normal memory and I/O priority, the CPU stays idle; and back after."""
+    out = py("import procinfo; from nobadfind import winapi; winapi.worker_priority(True); "
+             "a = winapi.worker_activity(True); "
+             "on = (procinfo.priority_class() == procinfo.IDLE_PRIORITY_CLASS, procinfo.memory_priority(), "
+             "procinfo.io_priority()); b = winapi.worker_activity(False); "
+             "off = (procinfo.priority_class() == procinfo.IDLE_PRIORITY_CLASS, procinfo.memory_priority(), "
+             "procinfo.io_priority()); print(a, b, on, off)")
+    assert out == "True True (True, 5, 2) (True, 2, 0)"
+
+
 def test_launch_imports_the_app_only_after_freeze_support():
     """NobadFind.exe: a frozen worker runs launch.py as __main__ and freeze_support() takes over (and exits) there,
     so nothing above it may import the app. Checked on the source, since a test can't be a frozen worker."""

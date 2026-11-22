@@ -1362,7 +1362,10 @@ def talk_fits(m, sample):
 
 def talk_assess(m, sample, pc):
     """(can run now, why) for the deeper talk model. capability.assess (PR #16) when it is there; until it merges,
-    this fallback: models.capable (the installed PC) and talk_fits (free memory now). Delete the fallback then."""
+    this fallback: models.capable (the installed PC) and talk_fits (free memory now).
+    TEMPORARY (find 1.1 release fix, maintainer ruling): the fallback, talk_fits' use here and TALK_MARGIN_* go
+    when PR #16 merges; tests/test_vlm_progress.py::test_talk_assess_uses_capability_assess_when_the_module_is_there
+    proves the capability path is taken (and the fallback isn't) as soon as nobadfind.capability exists."""
     try:
         from . import capability
     except ImportError:

@@ -17,7 +17,7 @@ from nobadfind import api as api_mod, embed, models, search
 from nobadfind.governor import Decision
 from nobadfind.store import KEPT_ORD
 from nobadfind.vlm import worker
-from nobadfind.vlm.session import AllocFailed
+from nobadfind.vlm.session import AllocFailed, Cancelled
 
 from test_api_status import make
 
@@ -28,18 +28,30 @@ IMG = (b"\x00" * 12, 2, 2)
 
 
 class FakeSession:
-    """Stands in for vlm.session.Session. `script` is the answer's tokens; `fail_after` raises AllocFailed then."""
+    """Stands in for vlm.session.Session. `script` is the answer's tokens; `fail_after` raises AllocFailed then.
+    Like the real one it tells `progress` its phases; `load_steps` load fractions (each after `step_s`) are
+    reported in "model", and a False from progress raises Cancelled (a Stop reaching llama's load)."""
     log = []
 
     def __init__(self, model, settings, gpu_layers, script=("A ", "red ", "circle."), delay=0.0, fail_after=None,
-                 hang=None):
+                 hang=None, progress=None, load_steps=0, step_s=0.0):
+        go = progress or (lambda phase, frac=None: True)
+        if not go("model", None):
+            raise Cancelled()
         if hang is not None:
             hang.wait(30)                       # a driver stall while loading (I3)
+        for i in range(load_steps):
+            time.sleep(step_s)
+            if not go("model", (i + 1) / load_steps):
+                FakeSession.log.append(("load stopped", model["id"], i + 1))
+                raise Cancelled()
+        if not (go("context", None) and go("vision", None) and go("vision", 1.0)):
+            raise Cancelled()
         self.model, self.settings, self.gpu_layers = model, settings, gpu_layers
         self.script, self.delay, self.fail_after = list(script), delay, fail_after
         FakeSession.log.append(("load", model["id"], dict(settings), gpu_layers))
 
-    def answer(self, images, prompt, max_tokens, on_token, cancelled):
+    def answer(self, images, prompt, max_tokens, on_token, cancelled, progress=None):
         FakeSession.log.append(("answer", len(images), prompt))
         out = []
         for i, t in enumerate(self.script):
@@ -71,7 +83,7 @@ class ThreadProc:
         self.terminated = True
 
 
-def thread_start(opts, decode=None, pid=0):
+def thread_start(opts, decode=None, pid=0, activity=None):
     """A Talker start() that runs the real worker loop on a thread (opts: FakeSession keyword arguments, read at
     each load, so a test can change them between jobs)."""
     started = []
@@ -82,8 +94,8 @@ def thread_start(opts, decode=None, pid=0):
     def start():
         a, b = multiprocessing.Pipe()
         t = threading.Thread(target=worker.serve, args=(b,), daemon=True,
-                             kwargs={"open_session": lambda m, s, g: FakeSession(m, s, g, **opts),
-                                     "decode": decode or fake_decode})
+                             kwargs={"open_session": lambda m, s, g, p=None: FakeSession(m, s, g, progress=p, **opts),
+                                     "decode": decode or fake_decode, "activity": activity})
         t.start()
         started.append(t)
         start.procs.append(ThreadProc(t, pid))
@@ -262,7 +274,7 @@ def test_compare_needs_two_different_photos(env):
 def test_the_worker_refuses_more_than_two_pictures():
     a, b = multiprocessing.Pipe()
     t = threading.Thread(target=worker.serve, args=(b,), daemon=True,
-                         kwargs={"open_session": lambda m, s, g: FakeSession(m, s, g), "decode": lambda p, s: IMG})
+                         kwargs={"open_session": lambda m, s, g, p=None: FakeSession(m, s, g), "decode": lambda p, s: IMG})
     t.start()
     a.send({"op": "compare", "job": 1, "paths": ["x", "y", "z"], "question": "", "model": {"id": SMOL},
             "settings": {}, "gpu_layers": 0})
@@ -279,9 +291,11 @@ def test_describe_streams_then_done(env):
     assert r["ok"] and r["error"] == "" and r["job"] >= 1
     assert _wait(lambda: _final(ev, r["job"]))
     mine = [e for e in ev if e["job"] == r["job"]]
-    assert [e["state"] for e in mine] == ["loading", "answering", "answering", "answering", "answering", "done"]
-    assert mine[0]["note"] == "Loading SmolVLM2 500M" and all(e["model"] == SMOL for e in mine)
-    assert [e["text"] for e in mine[1:]] == ["", "A ", "A red ", "A red circle.", "A red circle."]
+    assert [e["state"] for e in mine] == ["loading"] * 3 + ["answering"] * 4 + ["done"]
+    assert [e["note"] for e in mine[:3]] == ["Loading SmolVLM2 500M", "Loading the vision part of SmolVLM2 500M…",
+                                             "Loading the vision part of SmolVLM2 500M… 100 %"]
+    assert all(e["model"] == SMOL for e in mine)
+    assert [e["text"] for e in mine[3:]] == ["", "A ", "A red ", "A red circle.", "A red circle."]
     load = [x for x in FakeSession.log if x[0] == "load"]
     assert load == [("load", SMOL, {**models.get(SMOL)["talk"], "need_mb": models.get(SMOL)["ram_mb"]}, 0)]
     st = a.vision_state()
@@ -611,12 +625,14 @@ def test_a_hung_worker_is_ended_and_the_next_question_gets_a_fresh_one(env):
     stuck = threading.Event()
     env["opts"].update(hang=stuck)
     a._talk = worker.Talker(ev.append, start=env["start"], clock=lambda: now[0])
+    stall = worker.PHASES["model"][0]
     try:
         r = a.vision_describe(env["ids"]["sea.jpg"])
         assert _wait(lambda: any(e["job"] == r["job"] and e["state"] == "loading" for e in ev))
-        now[0] = worker.LOAD_S - 1
+        assert _wait(lambda: (a._talk.work() or {}).get("phase") == "model")      # no load fraction ever comes
+        now[0] = stall - 1
         assert a.vision_tick() is False and a.vision_state()["busy"]
-        now[0] = worker.LOAD_S + 1
+        now[0] = stall + 1
         assert a.vision_tick() is True
         assert _final(ev, r["job"]) == {"job": r["job"], "state": "error", "text": "", "model": SMOL,
                                         "note": "The photo model stopped responding. Try again."}
@@ -636,11 +652,12 @@ def test_no_token_for_too_long_also_counts_as_hung(env):
     env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
     r = a.vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
-    now[0] = worker.LOAD_S + worker.ANSWER_S - 5                      # tokens keep coming: deadline moves on
-    assert _wait(lambda: a._talk._job and a._talk._job["deadline"] > now[0])
+    now[0] = worker.PHASES["image"][0] + worker.ANSWER_S - 5          # tokens keep coming: deadline moves on
+    assert _wait(lambda: (a._talk.work() or {}).get("deadline", 0) > now[0])
     assert a.vision_tick() is False
     now[0] += worker.ANSWER_S + 1
-    a._talk._job["deadline"] = now[0] - 1                             # no token since (frozen fake clock)
+    with a._talk._lock:
+        a._talk._work["deadline"] = now[0] - 1                        # no token since (frozen fake clock)
     assert a.vision_tick() is True and _final(ev, r["job"])["note"] == worker.HUNG
 
 
@@ -836,10 +853,10 @@ def test_the_allowance_drops_only_after_the_worker_exited(env):
     order.clear()
     a._talk = worker.Talker(ev.append, start=start, on_budget=order.append, clock=lambda: now[0])
     r = a.vision_describe(env["ids"]["sea.jpg"])
-    assert _wait(lambda: any(e["job"] == r["job"] and e["state"] == "loading" for e in ev))
-    now[0] = worker.LOAD_S + 1
+    assert _wait(lambda: (a._talk.work() or {}).get("phase") == "model")
+    now[0] = worker.PHASES["model"][0] + 1
     assert a.vision_tick() is True
-    assert 0 not in order                              # the (fake) process hasn't ended yet
+    assert 0 not in order                             # the (fake) process hasn't ended yet
     stuck.set()                                        # now it does
     assert _wait(lambda: order[-2:] == ["joined", 0])
 

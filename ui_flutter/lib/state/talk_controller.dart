@@ -128,8 +128,11 @@ class TalkController extends ChangeNotifier {
   /// "Keep this description": a finished Describe only.
   bool get canKeep => _phase == TalkPhase.done && _kind == TalkKind.describe && _text.trim().isNotEmpty;
 
-  /// "Loading SmolVLM2-500M… about 1 s" while the model loads (the engine's measured `load_s`).
+  /// "Loading SmolVLM2-500M… about 1 s" while the model loads (the engine's measured `load_s`); once the engine
+  /// says how far it got, its own line as it is ("Loading Qwen3-VL 2B… 60 %", "Loading the vision part of …",
+  /// "Stopping the last answer…": every such note ends in or contains '…').
   String get loadingLine {
+    if (_note.contains('…')) return _note;
     final m = _state?.byId(_model) ?? (_deeper ? _state?.deeper : _state?.quick);
     if (m == null) return _note.isEmpty ? 'Loading…' : '$_note…';
     final s = aboutSeconds(m.loadS);

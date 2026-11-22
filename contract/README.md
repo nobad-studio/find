@@ -325,7 +325,11 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`vision`** -> `{job, state: loading|answering|done|error|cancelled, text, model, note}`: the answer to a photo
   question moved on (subscribe to it before asking). `text` is the WHOLE answer so far while `answering` (replace what
   you show, never append), the final answer on `done`, empty on `error` and `cancelled`. `model` is the model id (empty
-  for stored text). `note`: on `loading` what is loading; on `done` "Text read from the photo" (stored text, no model ran)
+  for stored text). `note`: on `loading` what is loading: first "Loading <model name>", then, as the worker reports
+  real progress, "Loading <model name>… 60 %", "Loading the vision part of <model name>…" / "… 40 %", or "Stopping
+  the last answer…" (a new question waits for the last one to stop; it can't be cut in every step). A note with
+  "…" is a whole line to show as it is. `loading` may come several times; `answering` with empty `text` is the photo
+  being read. On `done` "Text read from the photo" (stored text, no model ran)
   or "may not be exact" (Devanagari in the answer); otherwise empty. States: `cancelled` with a non-empty `note` means
   the engine stopped it (a pause, memory, a runtime update, the model removed): show the note. `cancelled` with an
   empty `note` means the user cancelled or a newer question replaced it: show nothing. `error` means a crash, a hang,

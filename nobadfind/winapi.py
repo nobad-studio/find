@@ -987,8 +987,24 @@ def worker_priority(low=True):
     if not WIN:
         return False
     k, _ps = _own_dll()
+    ok = bool(k.SetPriorityClass(k.GetCurrentProcess(), _IDLE_PRIORITY_CLASS if low else _NORMAL_PRIORITY_CLASS))
+    return _memory_and_io_priority(low) and ok
+
+
+def worker_activity(active):
+    """The talk worker while a job is loading or answering (active=True): NORMAL memory and I/O priority, so the
+    model it reads (1.1 GB for Qwen) is not the first memory Windows takes back nor queued behind every other
+    disk read; back to low / very low when the job ends (active=False). The CPU priority stays idle (and the
+    WORKERS job's CPU cap and EcoQoS stay as the governor set them): the user's level keeps the CPU."""
+    if not WIN:
+        return False
+    return _memory_and_io_priority(not active)
+
+
+def _memory_and_io_priority(low):
+    k, _ps = _own_dll()
     h = k.GetCurrentProcess()
-    ok = bool(k.SetPriorityClass(h, _IDLE_PRIORITY_CLASS if low else _NORMAL_PRIORITY_CLASS))
+    ok = True
     mem = wintypes.ULONG(_MEMORY_PRIORITY_LOW if low else _MEMORY_PRIORITY_NORMAL)
     ok = bool(k.SetProcessInformation(h, _PROCESS_MEMORY_PRIORITY, ctypes.byref(mem), 4)) and ok
     try:

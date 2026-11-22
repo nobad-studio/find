@@ -31,9 +31,10 @@ STRUCTS = [
     (L.ChatMessage, "llama.h", "llama_chat_message"),
 ]
 
-# functions whose argument list is checked against the header (find 1.1: the log callbacks the talk worker sets)
+# functions whose argument list is checked against the header (find 1.1: the callbacks the talk worker sets)
 FUNCS = [
     ("llama.h", "llama_log_set", L.LLAMA_FUNCS),
+    ("llama.h", "llama_set_abort_callback", L.LLAMA_FUNCS),
     ("mtmd.h", "mtmd_log_set", L.MTMD_FUNCS),
     ("mtmd-helper.h", "mtmd_helper_log_set", L.MTMD_FUNCS),
 ]

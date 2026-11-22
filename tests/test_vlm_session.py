@@ -23,8 +23,14 @@ class FakeLib:
     """Records every call; handles are ints kept in `live` until freed. `reply` is the token script (EOG = 0)."""
 
     def __init__(self, reply=(5, 6, 7, EOG), load_fails=False, ctx_fails=False, mtmd_fails=False, eval_ret=0,
-                 prompt_tokens=40, template=b"<|im_start|>"):
+                 prompt_tokens=40, template=b"<|im_start|>", load_steps=0, mtmd_steps=0, eval_nodes=0):
+        """load_steps / mtmd_steps: llama's / mtmd's progress callback is called that many times through its C
+        pointer, and the load returns NULL as soon as it answers false (as llama.cpp does); eval_nodes: that many
+        graph nodes in the image eval, each through mtmd's cb_eval (ask, and after a split node) and llama's
+        abort_callback; a stop there makes the eval return 2 (aborted)."""
         self.reply, self.prompt_tokens, self.eval_ret = list(reply), prompt_tokens, eval_ret
+        self.load_steps, self.mtmd_steps, self.eval_nodes = load_steps, mtmd_steps, eval_nodes
+        self.progress_seen, self.abort_set = [], []
         self.live, self.calls, self.kv_at_eval, self.texts = set(), [], [], []
         self.kv, self._next, self._pos = 0, 100, 0
         self.model_params = self.ctx_params = self.mtmd_params = None
@@ -48,8 +54,22 @@ class FakeLib:
         L.llama_context_default_params = lambda: llama_api.ContextParams(n_ctx=512, n_batch=2048, n_ubatch=512)
         L.llama_sampler_chain_default_params = lambda: llama_api.SamplerChainParams()
 
+        def through(ptr, user, steps, what):
+            """Call a progress callback by its C address, as llama / mtmd do: False ends the load."""
+            if not ptr or not steps:
+                return True
+            cb = llama_api.PROGRESS_CALLBACK(ptr)
+            for i in range(steps + 1):
+                go = cb(i / steps, user)
+                self.progress_seen.append((what, i / steps, go))
+                if not go:
+                    return False
+            return True
+
         def load_model(path, mp):
             self.model_params = mp
+            if not through(mp.progress_callback, mp.progress_callback_user_data, self.load_steps, "model"):
+                return None
             return None if load_fails else handle("model")
         L.llama_model_load_from_file = load_model
         L.llama_model_free = free("model")
@@ -98,12 +118,20 @@ class FakeLib:
             self.kv += batch.n_tokens
             return 0
         L.llama_decode = decode
+        self.abort = None
+
+        def set_abort(ctx, cb, data):
+            self.abort = cb if cb else None             # a NULL ABORT_CALLBACK() is falsy
+            self.abort_set.append(bool(cb))
+        L.llama_set_abort_callback = set_abort
 
         M.mtmd_default_marker = lambda: MARKER
         M.mtmd_context_params_default = lambda: llama_api.MtmdContextParams()
 
         def mtmd_init(path, model, mp):
             self.mtmd_params = mp
+            if not through(mp.progress_callback, mp.progress_callback_user_data, self.mtmd_steps, "vision"):
+                return None
             return None if mtmd_fails else handle("mtmd")
         M.mtmd_init_from_file = mtmd_init
         M.mtmd_free = free("mtmd")
@@ -121,6 +149,13 @@ class FakeLib:
 
         def eval_chunks(mctx, ctx, chunks, n_past, seq, n_batch, logits_last, new_n_past):
             self.kv_at_eval.append(self.kv)
+            ev = llama_api.EVAL_CALLBACK(self.mtmd_params.cb_eval) if self.mtmd_params.cb_eval else None
+            for i in range(self.eval_nodes):
+                if i < self.eval_nodes // 2:            # the image encode on clip's graph
+                    if ev is not None and ev(i, True, None) and not ev(i, False, None):
+                        return 2
+                elif self.abort and self.abort(None):   # the prompt eval: llama's abort callback
+                    return 2
             if self.eval_ret:
                 return self.eval_ret
             self.kv += self.prompt_tokens
@@ -191,6 +226,76 @@ def test_cancel_before_any_token(files):
     lib = FakeLib(reply=(5,))
     s = vs.Session(lib, *files, TALK, 99)
     assert s.answer([IMG], "hi", 200, _no, lambda: True) == ""
+
+
+# ---------- progress and Stop through llama's / mtmd's own callbacks (release fix) ----------
+def test_load_progress_reaches_the_hook_through_llamas_and_mtmds_callbacks(files):
+    lib = FakeLib(load_steps=4, mtmd_steps=2)
+    seen = []
+    s = vs.Session(lib, *files, TALK, 0, progress=lambda phase, frac: seen.append((phase, frac)) or True)
+    assert seen == [("model", None), ("model", 0.0), ("model", 0.25), ("model", 0.5), ("model", 0.75),
+                    ("model", 1.0), ("context", None), ("vision", None), ("vision", 0.0), ("vision", 0.5),
+                    ("vision", 1.0)]
+    assert lib.model_params.progress_callback and lib.mtmd_params.progress_callback and lib.mtmd_params.cb_eval
+    s.close()
+
+
+@pytest.mark.parametrize("where, at", [("model", 3), ("vision", 2)])
+def test_stop_during_a_load_aborts_it_through_the_callback(files, where, at):
+    """A Stop while llama (or mtmd) loads: the progress callback answers false, the load returns NULL, and that is
+    Cancelled (not "not enough memory"), with everything freed."""
+    lib = FakeLib(load_steps=10, mtmd_steps=10)
+    n = [0]
+
+    def hook(phase, frac):
+        if phase == where and frac is not None:
+            n[0] += 1
+        return n[0] < at
+    with pytest.raises(vs.Cancelled):
+        vs.Session(lib, *files, TALK, 0, progress=hook)
+    assert lib.progress_seen[-1] == (where, (at - 1) / 10, False)        # llama / mtmd saw the false: no more calls
+    assert lib.live == set()
+
+
+def test_stop_before_the_context_is_made_is_cancelled(files):
+    lib = FakeLib(load_steps=2)
+    with pytest.raises(vs.Cancelled):
+        vs.Session(lib, *files, TALK, 0, progress=lambda phase, frac: phase != "context")
+    assert lib.live == set() and lib.ctx_params is None
+
+
+def test_the_photo_eval_says_still_computing_and_stops_through_the_eval_and_abort_callbacks(files, monkeypatch):
+    monkeypatch.setattr(vs, "ASK_EVERY", 0.0)
+    lib = FakeLib(reply=(5, 6, EOG), eval_nodes=4 * vs.EVAL_EVERY)
+    s = vs.Session(lib, *files, TALK, 0)
+    seen = []
+    assert s.answer([IMG], "hi", 200, _no, _no, progress=lambda p, f: seen.append((p, f)) or True) == "t5 t6"
+    calls = [p for p, f in seen]
+    assert calls[0] == "image" and calls[-1] == "answer" and set(calls[1:-1]) == {"image"}
+    assert all(f is None for p, f in seen)                               # never a fraction: "still computing"
+    assert 2 <= len(seen) - 2 and lib.abort_set == [True, False]         # the abort callback: only for the eval
+    for stop_after in (1, 2 * vs.EVAL_EVERY):                            # in the encode (cb_eval), the eval (abort)
+        n = [0]
+
+        def hook(p, f):
+            n[0] += 1
+            return n[0] <= stop_after
+        lib.calls.clear()
+        with pytest.raises(vs.Cancelled):
+            s.answer([IMG], "hi", 200, _no, _no, progress=hook)
+        assert not [c for c in lib.calls if c[0] == "free" and c[1] in ("model", "ctx", "mtmd")]   # model stays
+        assert {k for k, _ in lib.live} == {"model", "ctx", "mtmd", "sampler"}                     # bitmaps freed
+    assert s.answer([IMG], "again", 200, _no, _no) == "t5 t6"            # and it answers the next question
+    s.close()
+
+
+def test_a_failing_hook_never_stops_the_work(files):
+    def boom(phase, frac):
+        raise RuntimeError("x")
+    lib = FakeLib(load_steps=3, mtmd_steps=3, eval_nodes=2 * vs.EVAL_EVERY)
+    s = vs.Session(lib, *files, TALK, 0, progress=boom)
+    assert s.answer([IMG], "hi", 200, _no, _no, progress=boom) == "t5 t6 t7"
+    s.close()
 
 
 @pytest.mark.parametrize("fail", ["load_fails", "ctx_fails", "mtmd_fails"])

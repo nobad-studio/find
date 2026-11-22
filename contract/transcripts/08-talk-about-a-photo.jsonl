@@ -1,4 +1,4 @@
-{"note": "1.1: talk about a photo. Answers name a job; the text arrives as vision events (state loading, answering with the WHOLE answer so far, done, error, cancelled). cancelled with a note: the engine stopped it; with an empty note: the user did, or a newer question replaced it."}
+{"note": "1.1: talk about a photo. Answers name a job; the text arrives as vision events (state loading, its note saying what loads and how far once the engine knows, answering with the WHOLE answer so far, done, error, cancelled). cancelled with a note: the engine stopped it; with an empty note: the user did, or a newer question replaced it."}
 {"send": {"jsonrpc": "2.0", "id": 1, "method": "subscribe", "params": {"events": ["vision"]}}}
 {"recv": {"jsonrpc": "2.0", "id": 1, "result": {"events": ["vision"]}}}
 {"send": {"jsonrpc": "2.0", "id": 2, "method": "vision_state", "params": {}}}
@@ -7,6 +7,8 @@
 {"recv": {"jsonrpc": "2.0", "id": 3, "result": {"ok": true, "error": "", "job": 1}}}
 {"engine": {"do": "vision", "event": {"job": 1, "state": "loading", "text": "", "model": "smolvlm2-500m", "note": "Loading SmolVLM2 500M"}}}
 {"recv": {"jsonrpc": "2.0", "method": "vision", "params": {"job": 1, "state": "loading", "text": "", "model": "smolvlm2-500m", "note": "Loading SmolVLM2 500M"}}}
+{"engine": {"do": "vision", "event": {"job": 1, "state": "loading", "text": "", "model": "smolvlm2-500m", "note": "Loading SmolVLM2 500M… 60 %"}}}
+{"recv": {"jsonrpc": "2.0", "method": "vision", "params": {"job": 1, "state": "loading", "text": "", "model": "smolvlm2-500m", "note": "Loading SmolVLM2 500M… 60 %"}}}
 {"engine": {"do": "vision", "event": {"job": 1, "state": "answering", "text": "", "model": "smolvlm2-500m", "note": ""}}}
 {"recv": {"jsonrpc": "2.0", "method": "vision", "params": {"job": 1, "state": "answering", "text": "", "model": "smolvlm2-500m", "note": ""}}}
 {"engine": {"do": "vision", "event": {"job": 1, "state": "answering", "text": "A red ", "model": "smolvlm2-500m", "note": ""}}}

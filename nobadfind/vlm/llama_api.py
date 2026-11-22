@@ -172,6 +172,16 @@ class ChatMessage(ctypes.Structure):
 P = c_void_p                                            # opaque handles: model, context, vocab, sampler, ...
 # typedef void (*ggml_log_callback)(enum ggml_log_level level, const char * text, void * user_data); ggml.h:2715
 LOG_CALLBACK = ctypes.CFUNCTYPE(None, c_int, c_char_p, c_void_p)
+# typedef bool (*llama_progress_callback)(float progress, void * user_data); llama.h:256 (mtmd_progress_callback,
+# mtmd.h:106, is the same). Model loading continues while it returns true; false aborts the load (NULL comes back).
+PROGRESS_CALLBACK = ctypes.CFUNCTYPE(c_bool, c_float, c_void_p)
+# typedef bool (*ggml_abort_callback)(void * data); ggml.h:558. Called by ggml's CPU backend between graph nodes of
+# a llama_decode (llama.h:412-416: "currently works only with CPU execution"); true aborts it (llama_decode -> 2).
+ABORT_CALLBACK = ctypes.CFUNCTYPE(c_bool, c_void_p)
+# typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor * t, bool ask, void * user_data);
+# ggml-backend.h:333. ask=true: "do you want this node's result?" (true splits the graph there); then, once that node
+# is computed, ask=false: returning false stops the computation. Used on mtmd's (clip's) graph: its image encode.
+EVAL_CALLBACK = ctypes.CFUNCTYPE(c_bool, c_void_p, c_bool, c_void_p)
 
 # name: (restype, [argtypes])
 GGML_FUNCS = {
@@ -206,6 +216,7 @@ LLAMA_FUNCS = {
     "llama_sampler_init_greedy": (P, []),                              # llama.h:1500
     "llama_sampler_sample": (llama_token, [P, P, c_int32]),            # llama.h:1666
     "llama_log_set": (None, [LOG_CALLBACK, P]),                        # llama.h:1692 (also sets ggml's logger)
+    "llama_set_abort_callback": (None, [P, ABORT_CALLBACK, P]),        # llama.h:1129
 }
 
 MTMD_FUNCS = {

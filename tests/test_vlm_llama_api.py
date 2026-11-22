@@ -33,7 +33,9 @@ def test_log_functions_match_b12602_headers():
 
 
 def test_the_function_check_finds_a_wrong_binding(tmp_path, monkeypatch):
-    (tmp_path / "llama.h").write_text("// x\nLLAMA_API void llama_log_set(ggml_log_callback cb, void * user_data);\n")
+    (tmp_path / "llama.h").write_text("// x\nLLAMA_API void llama_log_set(ggml_log_callback cb, void * user_data);\n"
+                                      "LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, "
+                                      "ggml_abort_callback abort_callback, void * abort_callback_data);\n")
     (tmp_path / "mtmd.h").write_text("MTMD_API void mtmd_log_set(ggml_log_callback log_callback, void * user_data);")
     (tmp_path / "mtmd-helper.h").write_text("MTMD_API int mtmd_helper_log_set(ggml_log_callback cb);")
     assert header_check.parse_func(str(tmp_path / "llama.h"), "llama_log_set") == (
