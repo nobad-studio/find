@@ -34,10 +34,12 @@
 
 ### Privacy and security (review of 2026-11-22)
 - **What other programs record is no longer read:** PowerShell's command history, shell and database-client
-  histories, Windows' Recent items, FileZilla and WinSCP saved servers, and sign-in files of the GitHub CLI, Maven,
+  histories, FileZilla and WinSCP saved servers, and sign-in files of the GitHub CLI, Maven,
   Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
   when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
   the index stays as it is.
+- Windows' and Office's Recent items and jump lists (the lists of what you opened) are never indexed, not even
+  by name with "Keys and password stores" on; any already in the index are removed after the update.
 - Fixed: a change Windows reported with an old-style short name (`APPDAT~1\...\CREDEN~1`) could get a password
   store past those rules; such paths are now read by their full names first.
 - Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The

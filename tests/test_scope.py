@@ -345,8 +345,6 @@ def test_scope_info_names_the_credential_stores(tmp_path):
 PROGRAM_RECORDS = [
     os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine", "ConsoleHost_history.txt"),
     os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine", "Visual Studio Code Host_history.txt"),
-    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "plan.docx.lnk"),
-    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "AutomaticDestinations", "5f7b5f1e01b83767.automaticDestinations-ms"),
     os.path.join(ROAMING, "FileZilla", "sitemanager.xml"), os.path.join(ROAMING, "FileZilla", "recentservers.xml"),
     os.path.join(ROAMING, "FileZilla", "filezilla.xml"), os.path.join(PROF, "Documents", "sitemanager.xml"),
     os.path.join(ROAMING, "GitHub CLI", "hosts.yml"), os.path.join(PROF, ".config", "gh", "hosts.yml"),
@@ -412,9 +410,41 @@ def test_lookalikes_of_program_records_are_ordinary_files():
 def test_the_rule_lists_are_one_data_table():
     """Every extra rule is data in const (a name, a folder run or a file in a folder run), not code."""
     from nobadfind import const
-    for run in const.SECRET_PATHS + const.NAMES_ONLY_PATHS:
+    for run in const.SECRET_PATHS + const.NAMES_ONLY_PATHS + const.ALWAYS_OUT_PATHS:
         assert isinstance(run, tuple) and run and all(x == x.lower() for x in run), run
     for run in const.SECRET_FILES_IN:
         assert isinstance(run, tuple) and len(run) >= 2 and all(x == x.lower() for x in run), run
     assert all(n == n.lower() for n in const.SECRET_FILES)
     assert scope.RULES_REV
+
+
+# ---------- fix round 1 (I1): what Windows and Office record of what you opened is always out ----------
+RECENT = [
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "Divorce lawyer letter.docx.lnk"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "AutomaticDestinations", "5f7b5f1e01b83767.automaticDestinations-ms"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "CustomDestinations", "x.customDestinations-ms"),
+    os.path.join(ROAMING, "Microsoft", "Office", "Recent", "payslip-2026-10.pdf.LNK"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent"),
+]
+
+
+@pytest.mark.parametrize("path", RECENT)
+def test_recent_items_and_jump_lists_are_out_even_with_every_switch_on(path):
+    r = rules(include_caches=True, include_system=True, include_secrets=True)
+    assert r.category(path) == "other_profiles" and r.out(path), path
+
+
+def test_the_walk_never_lists_recent_items_with_secrets_on(tmp_path):
+    root = tmp_path / "r"
+    rec = root / "Microsoft" / "Windows" / "Recent"
+    rec.mkdir(parents=True)
+    (rec / "plan.docx.lnk").write_text("x")
+    (root / "notes.txt").write_text("x")
+    got = walk(root, include_secrets=True)
+    assert "notes.txt" in got and not any("Recent" in g for g in got), got
+
+
+def test_a_folder_named_history_is_not_a_secret():
+    r = rules()
+    p = os.path.join(PROF, "proj", ".history")                         # VS Code's Local History folder
+    assert r.category(p) is None and not r.out(p)

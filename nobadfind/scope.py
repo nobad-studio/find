@@ -20,8 +20,8 @@ Rules is the one place the walker (walker.Walker), live changes (Walker.excluded
 """
 import os
 
-from .const import (BROWSER_SECRET_FILES, CACHE_NAMES, DATA_DIR, DEFAULTS, FIXED_NAMES, NAMES_ONLY_EXT,
-                    NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS,
+from .const import (ALWAYS_OUT_PATHS, BROWSER_SECRET_FILES, CACHE_NAMES, DATA_DIR, DEFAULTS, FIXED_NAMES,
+                    NAMES_ONLY_EXT, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS,
                     SYSTEM_NAMES)
 
 SCOPES = ("whole_pc", "my_files", "custom")
@@ -29,7 +29,7 @@ CATEGORIES = ("system", "caches", "secrets", "other_profiles", "removable", "net
 # The revision of the rule lists in const (SECRET_*, NAMES_ONLY_*). Bump it when one grows: an index made with older
 # rules then loses, once, the content (text, vectors, photo vectors) of every file the new rules make names only, and
 # the rows they put out (indexer.Indexer._apply_new_rules); nothing else in the index is touched.
-RULES_REV = "2"
+RULES_REV = "3"
 SYSTEM_DIRS = ("Windows", "ProgramData", "Recovery", "PerfLogs", "Program Files", "Program Files (x86)")
 
 
@@ -171,6 +171,8 @@ class Rules:
         if n in self.system_set:
             return "system"
         parts = n.split("\\")
+        if any(tuple(parts[-len(pat):]) == pat for pat in ALWAYS_OUT_PATHS):
+            return "other_profiles"                     # Recent items, jump lists: always out (activity history)
         if any(tuple(parts[-len(pat):]) == pat for pat in SECRET_PATHS):
             return "secrets"                            # Windows Credentials/Vault/Protect, chat app tokens
         if n == self.appdata:
@@ -369,7 +371,8 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
         {"id": "other_profiles", "name": "Other people's files",
          "summary": "Other accounts on this PC, recycle bins and restore points.", "names_only": "none",
          "why": "Other accounts on this PC (their profiles and recycle bins) and Windows' restore points (System "
-                "Volume Information) are never indexed, not even by the turbo index: they aren't yours to search.",
+                "Volume Information) are never indexed, not even by the turbo index: they aren't yours to search. "
+                "Nor are the lists Windows and Office keep of what you opened (Recent items, jump lists).",
          "examples": [os.path.join(os.path.dirname(prof), "<another account>"), os.path.join(
              system_drive(), "$Recycle.Bin"), os.path.join(system_drive(), "System Volume Information")],
          "included": False, "locked": True,

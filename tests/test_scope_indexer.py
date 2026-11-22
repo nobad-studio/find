@@ -285,3 +285,24 @@ def test_new_rules_run_at_the_start_of_the_indexer(tmp_path):
     src = open(indexer.__file__, encoding="utf-8").read()
     run = src[src.index("    def _run(self):"):]
     assert run.index("self._apply_new_rules()") < run.index("self._load_embedder()")
+
+
+def test_new_rules_remove_recent_items_even_with_secrets_on(tmp_path):
+    """Fix round 1 (I1): an index made while Recent items were names-only loses them at the next start."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    rec = os.path.join(PROF, "AppData", "Roaming", "Microsoft", "Windows", "Recent")
+    jump = os.path.join(rec, "AutomaticDestinations")
+    docs = os.path.join(PROF, "Documents")
+    s.upsert_files([(rec, "Recent", os.path.dirname(rec), "", "folder", 0, 5.0, 5.0, 1),
+                    (os.path.join(rec, "plan.docx.lnk"), "plan.docx.lnk", rec, ".lnk", "app", 1, 5.0, 5.0, 1),
+                    (os.path.join(jump, "a.automaticDestinations-ms"), "a.automaticDestinations-ms", jump, "",
+                     "other", 1, 5.0, 5.0, 1),
+                    (os.path.join(docs, "Recent"), "Recent", docs, "", "folder", 0, 5.0, 5.0, 1),
+                    (os.path.join(docs, "plan.docx"), "plan.docx", docs, ".docx", "document", 1, 5.0, 5.0, 1)])
+    s.set_meta("scope_rules", "2")
+    ix = indexer.Indexer(s, S(include_secrets=True))
+    ix._apply_new_rules()
+    names = {r[0] for r in s.q("SELECT path FROM files")}
+    assert names == {os.path.join(docs, "Recent"), os.path.join(docs, "plan.docx")}
+    assert s.meta("scope_rules") == scope.RULES_REV
+    s.close()

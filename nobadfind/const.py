@@ -48,9 +48,9 @@ SECRET_FILES = {"key3.db", "key4.db", "logins.json", "cookies.sqlite", "places.s
 # scope.RULES_REV, so an index made with the old rules loses their content once (indexer.Indexer._apply_new_rules).
 SECRET_FILES |= {
     # command histories other programs keep (shells, REPLs, database clients, editors)
-    "consolehost_history.txt", ".bash_history", ".zsh_history", ".sh_history", ".history", ".python_history",
+    "consolehost_history.txt", ".bash_history", ".zsh_history", ".sh_history", ".python_history",
     ".node_repl_history", ".psql_history", ".mysql_history", ".sqlite_history", ".rediscli_history",
-    ".irb_history", ".lesshst", ".viminfo", "_viminfo", ".wget-hsts",
+    ".irb_history", ".lesshst", ".viminfo", "_viminfo", ".wget-hsts",   # (not ".history": VS Code's folder)
     # saved servers and passwords: FileZilla, WinSCP, PostgreSQL, S3 tools, Terraform, Vault
     "sitemanager.xml", "recentservers.xml", "filezilla.xml", "winscp.ini", ".pgpass", "pgpass.conf", ".s3cfg",
     ".boto", "credentials.tfrc.json", ".vault-token",
@@ -69,9 +69,9 @@ BROWSER_SECRET_FILES = {"login data", "login data for account", "cookies", "hist
 # ... and by folder: these folder names one after the other anywhere in a path (lower case)
 SECRET_PATHS = (("microsoft", "credentials"), ("microsoft", "vault"), ("microsoft", "protect"),
                 ("discord", "local storage"), ("slack", "local storage"), ("teams", "local storage"),
-                # security review 2026-11-22 (M2): PowerShell's command history, Windows' Recent items and jump
-                # lists, FileZilla's saved sites, GitHub CLI tokens, GnuPG's keyrings on Windows
-                ("powershell", "psreadline"), ("windows", "recent"), ("roaming", "filezilla"),
+                # security review 2026-11-22 (M2): PowerShell's command history, FileZilla's saved sites, GitHub
+                # CLI tokens, GnuPG's keyrings on Windows
+                ("powershell", "psreadline"), ("roaming", "filezilla"),
                 ("roaming", "github cli"), (".config", "gh"), ("roaming", "gnupg"))
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
@@ -90,6 +90,9 @@ CACHE_NAMES = {"node_modules", "__pycache__", ".git", ".svn", ".hg", ".venv", "v
 SYSTEM_NAMES = {"windowsapps", "winsxs", "$windows.~bt", "$windows.~ws"}
 # Never indexed, whatever the settings say: other people's deleted files, restore points, Find's own data
 FIXED_NAMES = {"$recycle.bin", "system volume information", "nobad"}
+# ... and by folder run: the lists Windows and Office keep of what you opened (Recent items, jump lists). Their file
+# NAMES are the activity history AGENTS.md rules out, so they are out even with secrets on (fix round 1, I1).
+ALWAYS_OUT_PATHS = (("windows", "recent"), ("office", "recent"))
 
 DEFAULTS = {
     "roots": [],                    # empty = the user's profile folders plus every other fixed drive

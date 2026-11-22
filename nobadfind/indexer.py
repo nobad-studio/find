@@ -178,6 +178,7 @@ class Indexer:
         Returns (content dropped, rows removed)."""
         if self.store.meta("scope_rules") == scope.RULES_REV:
             return (0, 0)
+        from .const import ALWAYS_OUT_PATHS
         from .search import secret_sql
         rules = self.rules()
         quiet = [fid for fid, path in self.store.with_content() if rules.names_only(path)]
@@ -187,10 +188,16 @@ class Indexer:
             where, args = secret_sql("f")
             gone = [r[0] for r in self.store.q(f"SELECT f.path FROM files f WHERE {where}", args)
                     if rules.category(r[0]) == "secrets"]
-            self.store.remove_paths(gone)
+        # always out, whatever the switches (Recent items, jump lists): the folders and everything in them
+        likes = ["%\\" + "\\".join(run) for run in ALWAYS_OUT_PATHS]
+        cond = " OR ".join("lower(path) LIKE ? OR lower(path) LIKE ?" for _ in likes)
+        args = [x for lk in likes for x in (lk, lk + "\\%")]
+        gone += [r[0] for r in self.store.q(f"SELECT path FROM files WHERE {cond}", args)
+                 if rules.category(r[0]) == "other_profiles"]
+        self.store.remove_paths(gone)
         self.store.set_meta("scope_rules", scope.RULES_REV)
         if dropped or gone:
-            log(f"new names-only rules: content of {dropped} files dropped, {len(gone)} secrets out of the index")
+            log(f"new names-only rules: content of {dropped} files dropped, {len(gone)} rows out of the index")
         return (dropped, len(gone))
 
     def known_drives(self):

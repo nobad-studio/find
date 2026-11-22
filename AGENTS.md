@@ -83,14 +83,15 @@ Specific to this app:
 - What's indexed follows `scope.Rules` (maintainer decision 2026-11-19: nothing skipped silently; every category
   is shown by `scope_info`): system folders and caches are user choices (default on), secrets (`const.SECRET_*`:
   keys, browser passwords/cookies/history, Windows Credentials/Vault/Protect, chat and developer tokens, wallets,
-  and what other programs record: PowerShell/shell/REPL command histories, Windows' Recent items, FileZilla/WinSCP
+  and what other programs record: PowerShell/shell/REPL command histories, FileZilla/WinSCP
   saved sites, GitHub CLI/Maven/Cargo/Terraform tokens; security review 2026-11-22) are
   off by default and **names only** when on (never read, never thumbnailed). The lists are data in `const`
   (`SECRET_NAMES`, `SECRET_FILES`, `SECRET_FILES_IN`, `SECRET_PATHS`, `NAMES_ONLY_*`); growing one bumps
   `scope.RULES_REV`, and the indexer then drops the content of the newly covered files once
   (`Indexer._apply_new_rules`, meta `scope_rules`) without rebuilding anything else. Browser profiles and app databases
   (`const.NAMES_ONLY_*`) are names only even with caches on, other people's files and
-  `const.FIXED_NAMES` are always out. The walk, `Walker.excluded` (live changes) and the turbo helper's `ntfs.Filter`
+  `const.FIXED_NAMES` and `const.ALWAYS_OUT_PATHS` (Windows' and Office's Recent items and jump lists: their
+  names are the activity history ruled out above) are always out. The walk, `Walker.excluded` (live changes) and the turbo helper's `ntfs.Filter`
   all use `scope.Rules`; keep them in step.
 - OCR (`ocr.py`) uses only the Windows built-in `Windows.Media.Ocr` through the pinned `winrt-*` 3.2.1 packages
   (keep every winrt package on one version), inside the text worker processes. No OCR model downloads.
