@@ -1,6 +1,6 @@
 # NOBAD Find changelog
 
-## 1.0.1 · (in development)
+## 1.0.1 · 2026-11-22
 
 ### Opening Windows settings and apps
 - Fixed: "open windows update" (and every other "open ..." question) opened the first file, often Settings on its
@@ -10,6 +10,11 @@
 - "open ..." answers come quicker: when the question opens a page or an app, files are found by name and words
   only, without waiting for the meaning model.
 - Network & internet opens `ms-settings:network-status`, the address in Microsoft's list (was `ms-settings:network`).
+
+### Known
+- If you use the SigLIP 2 photo model, photo search finds fewer photos while NOBAD Find looks at your photos again
+  after the 1.0.0 update (about an hour per 10,000 photos; your own folders first). A later update keeps the old
+  photo index answering during such a rebuild.
 
 ## 1.0.0 · 2026-11-22
 
