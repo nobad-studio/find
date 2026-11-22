@@ -1,7 +1,7 @@
 // Security review 2026-11-22 (M1): the window talks only to NOBAD Find's engine, not to whatever took the pipe's
 // name first. engineProblem decides from what Windows says about the serving process (faked here).
 import 'dart:ffi';
-import 'dart:io' show Platform;
+import 'dart:io' show Directory, File, Platform;
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -64,6 +64,43 @@ void main() {
 
   test("when Windows can't say who serves the pipe, nothing is sent", () {
     expect(engineProblem(ServerProcess.unknown, uiExe: ui, exists: installed), isNotNull);
+  });
+
+  test('the installed engine is matched by file identity, so a short 8.3 image path is still the engine', () {
+    const short = r'C:\Users\me\AppData\Local\Programs\NOBADF~1\NobadFind.exe';
+    expect(engineProblem(proc(image: short), uiExe: ui, exists: installed), isNotNull); // by text: refused
+    bool sameFile(String a, String b) => {a.toLowerCase(), b.toLowerCase()}.difference({short.toLowerCase(), engine.toLowerCase()}).isEmpty;
+    expect(engineProblem(proc(image: short), uiExe: ui, exists: installed, sameFile: sameFile), isNull);
+    expect(
+      engineProblem(proc(image: r'C:\Temp\NobadFind.exe'), uiExe: ui, exists: installed, sameFile: sameFile),
+      contains('next to this window'),
+    );
+  });
+
+  test('sameFileOnDisk compares the files, not the spelling', () {
+    final dir = Directory.systemTemp.createTempSync('nbf long folder name ');
+    try {
+      final f = File('${dir.path}\\NobadFind engine.exe')..writeAsStringSync('x');
+      final other = File('${dir.path}\\other.exe')..writeAsStringSync('x');
+      final k32 = DynamicLibrary.open('kernel32.dll');
+      final getShort = k32
+          .lookupFunction<Uint32 Function(Pointer<Utf16>, Pointer<Utf16>, Uint32), int Function(Pointer<Utf16>, Pointer<Utf16>, int)>(
+            'GetShortPathNameW',
+          );
+      final src = f.path.toNativeUtf16();
+      final buf = calloc<Uint16>(1024).cast<Utf16>();
+      final n = getShort(src, buf, 1024);
+      final shortPath = n > 0 ? buf.toDartString(length: n) : f.path;
+      calloc.free(src);
+      calloc.free(buf);
+      expect(sameFileOnDisk(shortPath, f.path), isTrue);
+      expect(sameFileOnDisk(f.path.toUpperCase(), f.path), isTrue);
+      expect(sameFileOnDisk(other.path, f.path), isFalse);
+      expect(sameFileOnDisk(r'C:\no\such\file.exe', r'C:\no\such\file.exe'), isTrue); // unopenable: text decides
+      expect(sameFileOnDisk(r'C:\no\such\a.exe', f.path), isFalse);
+    } finally {
+      dir.deleteSync(recursive: true);
+    }
   });
 
   test('the installed engine path is NobadFind.exe next to the window', () {

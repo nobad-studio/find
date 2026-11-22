@@ -267,7 +267,15 @@ String installedEngine(String uiExe) => '${_dirOf(uiExe)}\\NobadFind.exe';
 /// Python that runs the source tree (python.exe / pythonw.exe) or a frozen NobadFind.exe. Either way it runs as
 /// this user at medium integrity, outside any AppContainer: a sandboxed or low-integrity process that took the
 /// name first (pipe squatting) is refused, and the window sends it nothing.
-String? engineProblem(ServerProcess p, {required String uiExe, required bool Function(String path) exists}) {
+///
+/// The installed engine is compared by file identity ([sameFile]: volume serial + file index), not by spelling:
+/// Windows reports an image started through an 8.3 path (`NOBADF~1`) in that short form (fix round 1, I3).
+String? engineProblem(
+  ServerProcess p, {
+  required String uiExe,
+  required bool Function(String path) exists,
+  bool Function(String a, String b) sameFile = samePathText,
+}) {
   if (p.integrity < 0 || p.image.isEmpty) return "Windows can't say which program serves the pipe";
   if (!p.sameUser) return 'it runs as another account';
   if (p.appContainer) return 'it runs in an app sandbox (AppContainer)';
@@ -275,11 +283,49 @@ String? engineProblem(ServerProcess p, {required String uiExe, required bool Fun
   if (p.integrity >= integrityHigh) return 'it runs as administrator, which the engine never does';
   final engine = installedEngine(uiExe);
   if (exists(engine)) {
-    return _plainPath(p.image) == _plainPath(engine) ? null : "it isn't the NobadFind.exe next to this window";
+    return sameFile(p.image, engine) ? null : "it isn't the NobadFind.exe next to this window";
   }
   return const {'python.exe', 'pythonw.exe', 'nobadfind.exe'}.contains(_nameOf(p.image))
       ? null
       : "it isn't NOBAD Find's engine";
+}
+
+/// The same path text (case, `/`, a `\\?\` prefix aside): the fallback when the files can't be opened.
+bool samePathText(String a, String b) => _plainPath(a) == _plainPath(b);
+
+final _getFileInformationByHandle = _k32
+    .lookupFunction<Int32 Function(IntPtr, Pointer<Uint8>), int Function(int, Pointer<Uint8>)>(
+      'GetFileInformationByHandle',
+    );
+
+/// (volume serial, file index) of a file, or null when it can't be opened.
+(int, int, int)? _fileId(String path) => using((arena) {
+  final h = _createFile(
+    path.toNativeUtf16(allocator: arena),
+    0, // no access needed for its identity
+    7, // share read, write and delete: never in the way of the running exe
+    nullptr,
+    _openExisting,
+    0x02000000, // FILE_FLAG_BACKUP_SEMANTICS
+    0,
+  );
+  if (h == _invalidHandle) return null;
+  try {
+    final info = arena<Uint8>(52); // BY_HANDLE_FILE_INFORMATION
+    if (_getFileInformationByHandle(h, info) == 0) return null;
+    final d = info.asTypedList(52).buffer.asByteData();
+    return (d.getUint32(28, Endian.little), d.getUint32(44, Endian.little), d.getUint32(48, Endian.little));
+  } finally {
+    _closeHandle(h);
+  }
+});
+
+/// The same file on disk (volume serial + file index), whatever the spelling: long or 8.3 short names, case. When
+/// either can't be opened, the path texts decide.
+bool sameFileOnDisk(String a, String b) {
+  final x = _fileId(a), y = _fileId(b);
+  if (x == null || y == null) return samePathText(a, b);
+  return x == y;
 }
 
 /// The process serving the pipe at [handle], as Windows sees it.
@@ -346,6 +392,7 @@ class PipeTransport implements Transport {
         serverProcess(h),
         uiExe: Platform.resolvedExecutable,
         exists: (p) => File(p).existsSync(),
+        sameFile: sameFileOnDisk,
       );
       if (problem != null) {
         _closeHandle(h); // before a single byte is written
