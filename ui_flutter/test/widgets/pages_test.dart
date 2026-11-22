@@ -175,6 +175,7 @@ void main() {
       expect(find.textContaining('may include passwords and tokens'), findsOneWidget);
       expect(find.textContaining("NOBAD Find's encrypted index on this PC"), findsOneWidget);
       expect(find.textContaining('can appear in search results'), findsOneWidget);
+      expect(find.textContaining('"App data, caches and code folders" is on'), findsOneWidget); // M2
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(engine.settingsSet.where((c) => c.containsKey('secret_app_files')), isEmpty);
@@ -183,10 +184,13 @@ void main() {
       await tester.tap(find.text('Read them'));
       await tester.pumpAndSettle();
       expect(engine.settingsSet.last, {'secret_app_files': true});
-      await tester.tap(sw); // off: no question, the engine removes what was read
+      expect(engine.consents.last, 'READ_APP_SECRETS'); // the engine turns it on only with this word (M7)
+      expect(tester.widget<NbSwitch>(sw).value, isTrue); // the engine took it
+      await tester.tap(sw); // off: no question and no word, the engine removes what was read
       await tester.pumpAndSettle();
       expect(find.text('Read these files?'), findsNothing);
       expect(engine.settingsSet.last, {'secret_app_files': false});
+      expect(engine.consents.last, isNull);
     });
 
     testWidgets('Windows Search: one click, and the words say what happens', (tester) async {

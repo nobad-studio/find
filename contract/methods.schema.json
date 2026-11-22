@@ -421,12 +421,17 @@
       }
     },
     "set_settings": {
-      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
+      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. secret_app_files: true is ignored unless consent is \"READ_APP_SECRETS\" (sent only after the user's yes in the confirm dialog). A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
       "params": {
         "type": "object",
         "properties": {
           "changes": {
             "$ref": "#/$defs/settings_changes"
+          },
+          "consent": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "\"READ_APP_SECRETS\": the user said yes to reading command histories, saved logins and tool tokens (needed to turn secret_app_files on)."
           }
         },
         "required": [
@@ -442,6 +447,12 @@
           },
           {
             "changes": {}
+          },
+          {
+            "changes": {
+              "secret_app_files": true
+            },
+            "consent": "READ_APP_SECRETS"
           }
         ]
       },

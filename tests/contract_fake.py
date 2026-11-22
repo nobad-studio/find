@@ -145,10 +145,14 @@ class FakeApi:
     def get_settings(self):
         return dict(self.settings)
 
-    def set_settings(self, changes):
-        """Like Settings.update: every value through the real settings.coerce."""
+    def set_settings(self, changes, consent=None):
+        """Like Settings.update: every value through the real settings.coerce; secret_app_files goes on only with
+        the consent word, like Api.set_settings."""
+        from nobadfind.const import APP_FILES_CONSENT
         new = {k: coerce(k, v) for k, v in changes.items()
                if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
+        if new.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
+            del new["secret_app_files"]
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)
         out = {"changed": changed}

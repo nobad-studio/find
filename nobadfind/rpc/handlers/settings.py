@@ -16,7 +16,10 @@ def methods(api, events=None):
         changes = params.get("changes")
         if not isinstance(changes, dict):
             raise RpcError(INVALID_PARAMS, "'changes' must be an object of setting names and values")
-        r = api.set_settings(changes) or {}
+        consent = params.get("consent")
+        if consent is not None and not (isinstance(consent, str) and len(consent) <= 40):
+            raise RpcError(INVALID_PARAMS, "'consent' must be a short string")
+        r = (api.set_settings(changes, consent) if consent is not None else api.set_settings(changes)) or {}
         out = {"changed": list(r.get("changed") or []), "settings": api.get_settings()}
         if isinstance(r.get("hotkeys"), dict):
             out["hotkeys"] = r["hotkeys"]

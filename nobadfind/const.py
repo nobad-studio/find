@@ -98,6 +98,8 @@ APP_SECRET_PATHS = (("powershell", "psreadline"), ("roaming", "filezilla"), ("ro
 # .env files (".env", ".env.local", ".env.production", ...): often a project's passwords and API keys. Names only
 # unless secret_app_files is on (1.1.0); unlike the rest of that class they are listed by name even with secrets off.
 ENV_FILE = ".env"
+# The word set_settings needs (param consent) to turn secret_app_files on; the UI sends it after the confirm dialog
+APP_FILES_CONSENT = "READ_APP_SECRETS"
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
                     ("brave-browser", "user data"), ("vivaldi", "user data"), ("opera software",),
@@ -171,7 +173,7 @@ DEFAULTS = {
     # 1.1.0 (maintainer ruling 2026-11-22): READ what other programs record and developer tools' plain-text sign-ins
     # (const.APP_SECRET_*: command histories, FileZilla/WinSCP sites, gh/npm/cargo... tokens, .env files) into the
     # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off removes what was read.
-    "secret_app_files": False,
+    "secret_app_files": False,      # turned on only with set_settings consent APP_FILES_CONSENT (below)
     "turbo": False,                 # the optional NTFS index helper (ntfs.py); asks for admin once (turbosvc.py)
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.

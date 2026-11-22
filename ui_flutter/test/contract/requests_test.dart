@@ -80,7 +80,7 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
     case 'get_settings':
       return c.getSettings();
     case 'set_settings' when p['changes'] is Map:
-      return c.setSettings(Map<String, Object?>.from(p['changes'] as Map));
+      return c.setSettings(Map<String, Object?>.from(p['changes'] as Map), consent: p['consent'] as String?);
     case 'hotkey_state':
       return c.hotkeyState();
     case 'hotkey_probe' when p['which'] is String && p['spec'] is String:

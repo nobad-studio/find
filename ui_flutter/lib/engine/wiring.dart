@@ -115,7 +115,8 @@ class PipeEngine implements EngineApi {
   @override
   Future<Settings> getSettings() => _pipe.getSettings();
   @override
-  Future<SettingsChange> setSettings(Map<String, Object?> changes) => _pipe.setSettings(changes);
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent}) =>
+      _pipe.setSettings(changes, consent: consent);
   @override
   Future<HotkeyState> hotkeyState() => _pipe.hotkeyState();
   @override

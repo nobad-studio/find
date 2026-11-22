@@ -77,7 +77,9 @@ Specific to this app:
   exception is the user's **opt-in to read app files that hold secrets** (maintainer ruling 2026-11-22, setting
   `secret_app_files`, **off by default**, `const.APP_SECRET_*`): command histories, FTP/SSH tools' saved sites and
   logins, developer tool tokens and `.env` files, read into the encrypted index only after the confirm dialog in
-  Settings > Privacy that names them and says they may hold passwords and tokens and can appear in results; off
+  Settings > Privacy that names them and says they may hold passwords and tokens and can appear in results (the
+  engine turns it on only with `set_settings` `consent: "READ_APP_SECRETS"`, sent after that yes); a read that
+  finishes after it went off is dropped (`Store.set_text` `allow`, checked under the write lock); off
   removes their content (and their rows while secrets are off) with a targeted purge (`Api._purge_app_files`), no
   rebuild. Recent items and jump lists stay out whatever it says.
 - **Everything indexed is untrusted:** file names, folder names and file contents go to the UI only through

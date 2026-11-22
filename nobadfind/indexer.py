@@ -174,6 +174,20 @@ class Indexer:
                 keep.append(r)
         return keep
 
+    RULE_KEYS = ("include_system", "include_caches", "include_secrets", "secret_app_files")
+
+    def _rules_key(self):
+        return tuple(bool(self.settings.get(k)) for k in self.RULE_KEYS)
+
+    def _may_read(self, path):
+        """What was read from path may be kept: the current rules don't make it names only (every secret is, so a
+        file secret_app_files no longer covers is too). The Rules are made again only when a switch changed."""
+        key = self._rules_key()
+        got = getattr(self, "_read_rules", None)
+        if got is None or got[0] != key:
+            got = self._read_rules = (key, self.rules())
+        return not got[1].names_only(path)
+
     def _app_extras(self, rows, exts):
         """Rows (id, path, ext, size, mtime) the text pass got by name (secret_app_files) rather than by extension
         are read only when they are one of those files (scope.app_file): a "credentials" file elsewhere is an
@@ -602,6 +616,7 @@ class Indexer:
         plan_ = self.status["plan"]
         gentle, full = plan_.get("text_workers", 2), plan_.get("text_workers_idle", 2)
         inflight, queued = {}, []                    # future -> (job, started)
+        queued_key = self._rules_key()               # the rules the queue was made with
         alone = set()                                # file ids sent while nothing else was being read
         size = max(gentle, full)
 
@@ -635,6 +650,10 @@ class Indexer:
                     limit = 1 if careful else max(1, workers_for(level, plan_))
                 else:
                     limit = 1 if careful else (full if away else gentle)
+                key = self._rules_key()
+                if queued and key != queued_key:
+                    queued = []                     # the rules changed (secret_app_files off...): ask again
+                queued_key = key
                 if careful:
                     if not inflight:
                         queued = [self._suspects.pop(0)]
@@ -691,8 +710,10 @@ class Indexer:
                             continue
                         err = "too big"                 # out of memory with nothing else running: as before
                     alone.discard(job[0])
-                    self.store.set_text(fid, mtime, chunks, err)
-                    self.status["texts"] += 1
+                    # the rules as they are now, checked under the write lock: a file the user took out while it
+                    # was being read (secret_app_files off, then Api._purge_app_files) gets nothing back
+                    if self.store.set_text(fid, mtime, chunks, err, allow=lambda p=job[1]: self._may_read(p)):
+                        self.status["texts"] += 1
                 stuck = [(f, j) for f, (j, t) in inflight.items() if self._clock() - t > JOB_TIMEOUT]
                 if stuck:
                     for _f, j in stuck:

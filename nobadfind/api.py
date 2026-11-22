@@ -629,11 +629,14 @@ class Api:
     def get_settings(self):
         return self._settings.all()
 
-    def set_settings(self, changes):
+    def set_settings(self, changes, consent=None):
         if not isinstance(changes, dict):
             return {"changed": []}
         changes = {k: v for k, v in changes.items()
                    if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
+        from .const import APP_FILES_CONSENT
+        if changes.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
+            del changes["secret_app_files"]          # on only with the confirm dialog's word (fix round 1, M7)
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:

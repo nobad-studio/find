@@ -366,8 +366,12 @@ class EngineClient {
 
   // ---- settings and the index ----
   Future<Settings> getSettings() async => Settings.fromJson(await call('get_settings'));
-  Future<SettingsChange> setSettings(Map<String, Object?> changes) =>
-      _inOrder('settings', () async => SettingsChange.fromJson(await call('set_settings', {'changes': changes})));
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent}) => _inOrder(
+    'settings',
+    () async => SettingsChange.fromJson(
+      await call('set_settings', {'changes': changes, 'consent': ?consent}),
+    ),
+  );
   Future<HotkeyState> hotkeyState() async => HotkeyState.fromJson(await call('hotkey_state'));
   Future<HotkeyProbe> hotkeyProbe(String which, String spec) async =>
       HotkeyProbe.fromJson(await call('hotkey_probe', {'which': which, 'spec': spec}));

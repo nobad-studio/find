@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
+import '../../../engine/models/settings.dart' show appFilesConsent;
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
 import '../settings_parts.dart';
@@ -30,7 +31,9 @@ class AppFilesSetting extends StatelessWidget {
   static const askTitle = 'Read these files?';
   static const ask =
       'Their contents may include passwords and tokens. They stay in NOBAD Find\'s encrypted index on this PC, '
-      'and they can appear in search results. Turn this off to remove them from the index again.';
+      'and they can appear in search results. Turn this off to remove them from the index again.\n\n'
+      'PowerShell, FileZilla and GitHub CLI keep their files in AppData: those are read only while "App data, '
+      'caches and code folders" is on in What to index.';
 
   @override
   Widget build(BuildContext context) =>
@@ -46,7 +49,7 @@ class AppFilesSetting extends StatelessWidget {
         label: label,
         onChanged: (v) async {
           if (v && !await confirmDialog(context, title: askTitle, question: ask, yes: 'Read them')) return;
-          await s.set('secret_app_files', v);
+          await s.set('secret_app_files', v, consent: v ? appFilesConsent : null);
         },
       ),
     );

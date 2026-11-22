@@ -374,13 +374,22 @@ class Store:
             self.db.commit()
         return n
 
-    def set_text(self, file_id, mtime, chunks, err=None):
+    def set_text(self, file_id, mtime, chunks, err=None, allow=None):
+        """What was read from a file, and that it was read at mtime. allow: checked under the write lock, right
+        before writing (the indexer's rules as they are NOW: a setting turned off while the file was being read,
+        and the purge that followed, win); False = nothing is written and the file isn't marked read. A file whose
+        row is gone gets nothing (no orphan text). Returns True when it was written."""
         with self.wlock:
+            if allow is not None and not allow():
+                return False
+            if chunks and self.one("SELECT 1 FROM files WHERE id=?", (file_id,)) is None:
+                return False
             self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord IS NOT ?", (file_id, KEPT_ORD))
             self.db.executemany("INSERT INTO chunks(file_id, ord, body) VALUES(?,?,?)",
                                 [(file_id, i, c) for i, c in enumerate(chunks)])
             self.db.execute("UPDATE files SET text_mtime=?, text_err=? WHERE id=?", (mtime, err, file_id))
             self.db.commit()
+        return True
 
     def reset_scanned_pdfs(self, min_chars=200):
         """PDFs that gave (almost) no text are probably scans: read them again, now with OCR."""

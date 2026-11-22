@@ -70,6 +70,9 @@ class FakeEngine implements EngineApi {
   final thumbsAsked = <int>[];
   final forgotten = <int>[];
   final settingsSet = <Map<String, Object?>>[];
+
+  /// The consent word sent with each set_settings (null: none).
+  final consents = <String?>[];
   final calls = <String>[];
   bool openOk = true;
 
@@ -457,17 +460,20 @@ class FakeEngine implements EngineApi {
 
   /// Like settings.coerce: a value that doesn't fit becomes the default; unknown names and wsearch_prev are ignored.
   @override
-  Future<SettingsChange> setSettings(Map<String, Object?> changes) => _answer('set_settings', () {
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent}) => _answer('set_settings', () {
     final fail = failNext;
     if (fail != null) {
       failNext = null;
       throw fail;
     }
     settingsSet.add(changes);
+    consents.add(consent);
     final changed = <String>[];
     for (final e in changes.entries) {
       final known = {...Settings.defaults, ...scopeDefaults};
       if (e.key == 'wsearch_prev' || !known.containsKey(e.key)) continue;
+      // like the engine: on only with the confirm dialog's word
+      if (e.key == 'secret_app_files' && e.value == true && consent != appFilesConsent) continue;
       final want = known[e.key];
       final fits = switch (want) {
         bool _ => e.value is bool,

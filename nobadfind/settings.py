@@ -90,8 +90,8 @@ class Settings:
     apart in FORGOTTEN_FILE next to it, protected with DPAPI for this Windows account, never in settings.json.
     In memory `exclude` holds both (the walk, the turbo filter and the Never index list see one list); _save
     splits them again. When the protected file can't be read (it is never overwritten then) or written (DPAPI, an
-    antivirus lock: tried FORGOT_TRIES times), new entries are kept in memory only, never in plain text, and every
-    later save tries again (`note` says so; 1.1.0, review minors (a) and (c)). Entries that were in settings.json
+    antivirus lock: once in the save, then FORGOT_TRIES - 1 times more on a thread that waits without the lock),
+    new entries are kept in memory only, never in plain text, and every later save tries again (`note` says so; 1.1.0, review minors (a) and (c)). Entries that were in settings.json
     before they were kept apart stay there until the protected file holds them."""
 
     FORGOT_TRIES = 3
@@ -106,6 +106,7 @@ class Settings:
         self._forgot_saved = True                       # the protected file holds every forgotten entry
         self._plain = set()                             # exclude entries read from settings.json
         self.note = ""                                  # FORGOT_NOTE while some are kept in memory only
+        self._retry_thread = None                       # _retry_later
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
         try:
             with open(path, encoding="utf-8") as f:
@@ -223,23 +224,35 @@ class Settings:
         os.replace(tmp, self._fpath)
         return True
 
-    def _write_forgotten_retrying(self, paths):
-        """_write_forgotten, tried FORGOT_TRIES times (an antivirus or backup tool can hold the file for a moment).
-        False when it still didn't work: the caller keeps the entries in memory, never in settings.json."""
-        import time
-        for i in range(self.FORGOT_TRIES):
-            try:
-                if self._write_forgotten(paths):
-                    return True
-            except OSError:
-                pass
-            if i + 1 < self.FORGOT_TRIES:
-                time.sleep(self.FORGOT_WAIT_S * (i + 1))
+    def _write_forgotten_once(self, paths):
+        """_write_forgotten without raising: False when it didn't work (DPAPI, an antivirus or backup tool holding
+        the file). The caller keeps the entries in memory, never in settings.json, and _retry_later tries again."""
+        try:
+            if self._write_forgotten(paths):
+                return True
+        except OSError:
+            pass
         try:
             os.remove(self._fpath + ".tmp")
         except OSError:
             pass
         return False
+
+    def _retry_later(self):
+        """Try the protected list again FORGOT_TRIES - 1 times, waiting FORGOT_WAIT_S, 2x, ... in between, on a
+        thread that waits WITHOUT the settings lock (fix round 1, M3: a locked file never makes a save slow). One
+        such thread at a time; a save after it gave up starts another."""
+        if self._retry_thread is not None and self._retry_thread.is_alive():
+            return
+        import time
+
+        def run():
+            for i in range(self.FORGOT_TRIES - 1):
+                time.sleep(self.FORGOT_WAIT_S * (i + 1))
+                if self.retry_forgotten():
+                    return
+        self._retry_thread = threading.Thread(target=run, daemon=True, name="forgotten-retry")
+        self._retry_thread.start()
 
     def _migrate(self):
         """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
@@ -312,7 +325,7 @@ class Settings:
         forgot = [e for e in ex if e in self._forgot]
         plain = dict(self.data)
         # the protected file first: a crash in between leaves both copies, never none
-        self._forgot_saved = self._forgot_read and self._write_forgotten_retrying(forgot)
+        self._forgot_saved = self._forgot_read and self._write_forgotten_once(forgot)
         if self._forgot_saved:
             plain["exclude"] = [e for e in ex if e not in self._forgot]
             self._plain -= self._forgot
@@ -323,6 +336,7 @@ class Settings:
                 from .log import log
                 log("the forgotten list couldn't be saved protected; new entries are kept in memory", "warn")
             self.note = FORGOT_NOTE
+            self._retry_later()
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plain, f, indent=1)

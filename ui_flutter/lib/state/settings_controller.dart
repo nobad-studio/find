@@ -81,13 +81,14 @@ class SettingsController extends ChangeNotifier {
   }
 
   /// Change one setting. Shown at once; if the engine doesn't take it, says so and shows the real value again.
-  Future<bool> set(String key, Object? value) async {
+  /// [consent]: the word a setting needs to go on (`appFilesConsent`), sent only after the user said yes.
+  Future<bool> set(String key, Object? value, {String? consent}) async {
     final before = _settings;
     _settings = _settings.merged({key: value});
     _changed();
     SettingsChange r;
     try {
-      r = await engine.setSettings({key: value});
+      r = await engine.setSettings({key: value}, consent: consent);
     } on Object catch (e) {
       _say(errorText(e, invalid: "That value wasn't accepted.", other: "Couldn't save that. Try again."));
       _settings = before;

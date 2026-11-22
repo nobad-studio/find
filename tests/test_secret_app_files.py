@@ -8,7 +8,7 @@ import os
 import pytest
 
 from nobadfind import indexer, scope, settings as settings_mod
-from nobadfind.const import DEFAULTS
+from nobadfind.const import APP_FILES_CONSENT, DEFAULTS
 from nobadfind.kinds import READABLE_EXT
 from nobadfind.store import Store
 from nobadfind.walker import Walker
@@ -29,6 +29,22 @@ def test_the_setting_is_off_by_default_and_a_plain_switch():
     assert DEFAULTS["secret_app_files"] is False
     assert settings_mod.coerce("secret_app_files", True) is True
     assert settings_mod.coerce("secret_app_files", "yes") is False
+
+
+def test_the_pipe_turns_it_on_only_with_the_consent_word(tmp_path):
+    """Fix round 1 (M7): like model_download's DOWNLOAD, set_settings needs READ_APP_SECRETS to turn it on."""
+    from nobadfind.rpc.handlers import settings as h
+    from nobadfind.rpc.protocol import RpcError
+    a, s = make_api(tmp_path)
+    m = h.methods(a)
+    assert m["set_settings"]({"changes": {"secret_app_files": True}})["changed"] == []
+    assert m["set_settings"]({"changes": {"secret_app_files": True}, "consent": "DOWNLOAD"})["changed"] == []
+    with pytest.raises(RpcError):
+        m["set_settings"]({"changes": {"secret_app_files": True}, "consent": 1})
+    r = m["set_settings"]({"changes": {"secret_app_files": True}, "consent": APP_FILES_CONSENT})
+    assert r["changed"] == ["secret_app_files"] and r["settings"]["secret_app_files"] is True
+    assert m["set_settings"]({"changes": {"secret_app_files": False}})["changed"] == ["secret_app_files"]
+    s.close()
 
 
 # ---------- the scope rules, off and on ----------
@@ -188,7 +204,7 @@ def test_recent_items_of_the_profile_the_rules_are_for():
 def _app_index(tmp_path, **kw):
     a, s = make_api(tmp_path)
     if kw:
-        a.set_settings(kw)
+        a.set_settings(kw, consent=APP_FILES_CONSENT)
     psr = os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine")
     proj = os.path.join(PROF, "proj")
     docs = os.path.join(PROF, "Documents")
@@ -244,7 +260,11 @@ def test_turning_it_on_reads_the_names_only_rows_again_but_not_keys(tmp_path):
     s.upsert_files([r + (10, 5.0, 5.0, 1) for r in rows])
     for fid, in s.q("SELECT id FROM files"):
         s.set_text(fid, 5.0, [], indexer.NAMES_ONLY)
-    a.set_settings({"secret_app_files": True})
+    assert a.set_settings({"secret_app_files": True})["changed"] == []          # no consent word: stays off
+    assert s.one("SELECT count(*) FROM files WHERE text_mtime IS NULL") == 0
+    a.set_settings({"secret_app_files": True}, consent="yes")
+    assert a.get_settings()["secret_app_files"] is False
+    a.set_settings({"secret_app_files": True}, consent=APP_FILES_CONSENT)
     got = {r[0]: r[1] for r in s.q("SELECT name, text_mtime FROM files")}
     assert got[".npmrc"] is None and got[".env.local"] is None        # read again by the text pass
     assert got["id_rsa"] == 5.0                                       # a key stays names only
@@ -271,6 +291,87 @@ def test_the_text_pass_reads_app_files_without_a_readable_extension(tmp_path):
     assert keep == {os.path.join(PROF, ".bash_history"), os.path.join(proj, ".env.local"),
                     os.path.join(PROF, ".cargo", "credentials")}
     assert s.one("SELECT text_err FROM files WHERE path=?", (os.path.join(PROF, "Documents", "credentials"),))
+    s.close()
+
+
+# ---------- fix round 1 (I1): turned off while being read, nothing comes back ----------
+def _pass_with_a_flip(tmp_path, monkeypatch, secrets):
+    """A text pass with the opt-in on and a queue of its files; the user turns it off while the first one is being
+    read (the purge runs then). Returns (store, ids, indexer, api)."""
+    import concurrent.futures as cf
+    from nobadfind import api as api_mod
+    from test_scope_indexer import Ix
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    st = settings_mod.Settings(str(tmp_path / "s.json"))
+    st.update({"secret_app_files": True, "include_secrets": secrets, "content_max_mb": 1, "ocr": False})
+    a = api_mod.Api(s, st, Ix(), None)
+    psr = os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine")
+    docs = os.path.join(PROF, "Documents")
+    rows = [(os.path.join(psr, "ConsoleHost_history.txt"), "ConsoleHost_history.txt", psr, ".txt", "text"),
+            (os.path.join(PROF, ".bash_history"), ".bash_history", PROF, "", "other"),
+            (os.path.join(PROF, ".npmrc"), ".npmrc", PROF, "", "other"),
+            (os.path.join(PROF, "proj", ".env"), ".env", os.path.join(PROF, "proj"), "", "other"),
+            (os.path.join(docs, "notes.txt"), "notes.txt", docs, ".txt", "text")]
+    # the class files are the newest, so they are read first (needs_text: newest first)
+    s.upsert_files([r + (10, 9.0 if r[1] != "notes.txt" else 1.0, 9.0 if r[1] != "notes.txt" else 1.0, 1)
+                    for r in rows])
+    ids = {r[1]: r[0] for r in s.q("SELECT id, name FROM files")}
+    ix = indexer.Indexer(s, st)
+    ix.status["plan"] = {"text_workers": 1, "text_workers_idle": 1}        # one in flight, the rest queued
+    monkeypatch.setattr(ix, "_check_pause", lambda: "")
+    monkeypatch.setattr(ix, "_away", lambda: False)
+    sent, flipped = [], []
+
+    class Pool:
+        def __init__(self, *a, **k):
+            pass
+
+        def submit(self, fn, job):
+            sent.append(os.path.basename(job[1]))
+            if not flipped:
+                flipped.append(1)
+                a.set_settings({"secret_app_files": False})                # mid-read: off, and the purge runs
+            f = cf.Future()
+            f.set_result((job[0], job[3], [f"secret text of {os.path.basename(job[1])}"], None))
+            return f
+
+        def shutdown(self, **k):
+            pass
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", Pool)
+    ix._read_texts()
+    return s, ids, ix, a, sent
+
+
+@pytest.mark.parametrize("secrets", [False, True])
+def test_turning_it_off_mid_pass_leaves_no_content(tmp_path, monkeypatch, secrets):
+    s, ids, ix, a, sent = _pass_with_a_flip(tmp_path, monkeypatch, secrets)
+    assert sent[0] != "notes.txt" and "notes.txt" in sent
+    assert not {".npmrc", ".env"} & set(sent[1:])                            # the stale queue was dropped
+    read = {r[0] for r in s.q("SELECT DISTINCT f.name FROM chunks c JOIN files f ON f.id = c.file_id")}
+    assert read == {"notes.txt"}
+    assert s.one("SELECT count(*) FROM chunks WHERE file_id NOT IN (SELECT id FROM files)") == 0   # no orphans
+    names = {r[0] for r in s.q("SELECT name FROM files")}
+    if secrets:                                                              # names only: kept, marked, not read
+        assert names == set(ids)
+        assert s.one("SELECT text_err FROM files WHERE name='ConsoleHost_history.txt'") == indexer.NAMES_ONLY
+    else:                                                                    # out: gone, .env's name stays
+        assert names == {"notes.txt", ".env"}
+    assert s.one("SELECT text_err FROM files WHERE name='.env'") == indexer.NAMES_ONLY
+    # the next pass: nothing of theirs is read again
+    sent.clear()
+    ix._read_texts()
+    assert sent == [] and {r[0] for r in s.q(
+        "SELECT DISTINCT f.name FROM chunks c JOIN files f ON f.id = c.file_id")} == {"notes.txt"}
+    s.close()
+
+
+def test_on_again_after_a_flip_reads_them_normally(tmp_path, monkeypatch):
+    s, ids, ix, a, sent = _pass_with_a_flip(tmp_path, monkeypatch, True)
+    a.set_settings({"secret_app_files": True}, consent=APP_FILES_CONSENT)
+    sent.clear()
+    ix._read_texts()
+    read = {r[0] for r in s.q("SELECT DISTINCT f.name FROM chunks c JOIN files f ON f.id = c.file_id")}
+    assert read == {"notes.txt", "ConsoleHost_history.txt", ".bash_history", ".npmrc", ".env"}
     s.close()
 
 
@@ -302,6 +403,7 @@ def test_an_unreadable_forgotten_list_never_lets_new_forgets_into_settings_json(
     assert a._settings.retry_forgotten() is True and a._settings.note == ""
     assert "f0.txt" not in (tmp_path / "s.json").read_text(encoding="utf-8")
     assert settings_mod.Settings(str(tmp_path / "s.json")).forgotten() == [path]
+    a._settings._retry_thread.join(5)
     s.close()
 
 
@@ -318,7 +420,9 @@ def test_a_locked_forgotten_list_is_tried_again_and_settings_still_save(tmp_path
         return real(src, dst)
     monkeypatch.setattr(settings_mod.os, "replace", locked)
     r, path = _forget_one(a, s)
-    assert r["ok"] is True and r["error"] and len(tries) == settings_mod.Settings.FORGOT_TRIES
+    assert r["ok"] is True and r["error"]
+    a._settings._retry_thread.join(5)
+    assert len(tries) == settings_mod.Settings.FORGOT_TRIES                       # once now, then in the background
     assert a._settings.update({"theme": "light"}) == ["theme"]                    # (c) other settings still save
     plain = (tmp_path / "s.json").read_text(encoding="utf-8")
     assert '"light"' in plain and "f0.txt" not in plain
@@ -326,6 +430,32 @@ def test_a_locked_forgotten_list_is_tried_again_and_settings_still_save(tmp_path
     monkeypatch.setattr(settings_mod.os, "replace", real)                          # the lock is gone
     assert a._settings.update({"theme": "dark"}) == ["theme"] and a._settings.note == ""
     assert settings_mod.Settings(str(tmp_path / "s.json")).forgotten() == [path]
+    s.close()
+
+
+def test_a_locked_forgotten_list_never_holds_the_settings_lock_while_it_waits(tmp_path, monkeypatch):
+    """Fix round 1 (M3): the save tries once; the waits between retries are on a thread, without the lock."""
+    import time
+    a, s = make_api(tmp_path)
+    monkeypatch.setattr(settings_mod.Settings, "FORGOT_WAIT_S", 0.5)
+    real = os.replace
+
+    def locked(src, dst):
+        if str(dst).endswith(settings_mod.FORGOTTEN_FILE):
+            raise PermissionError(13, "in use by another process")
+        return real(src, dst)
+    monkeypatch.setattr(settings_mod.os, "replace", locked)
+    t0 = time.monotonic()
+    r, _path = _forget_one(a, s)
+    assert r["ok"] is True and r["error"] and time.monotonic() - t0 < 0.4
+    assert a._settings._retry_thread.is_alive()                                     # waiting to try again
+    assert a._settings._lock.acquire(timeout=0.2)                                   # ... without the lock
+    a._settings._lock.release()
+    t0 = time.monotonic()
+    assert a._settings.update({"theme": "light"}) == ["theme"] and time.monotonic() - t0 < 0.4
+    monkeypatch.setattr(settings_mod.os, "replace", real)                          # the lock is gone
+    a._settings._retry_thread.join(5)
+    assert a._settings.note == "" and a._settings.forgotten_saved()                # the retry saved it
     s.close()
 
 
@@ -352,6 +482,8 @@ def test_the_move_out_of_settings_json_is_not_done_while_entries_stay_there(tmp_
     assert a._settings.note                                                      # in memory only, said
     assert "medical.pdf" in (tmp_path / "s.json").read_text(encoding="utf-8")   # still there: not lost
     assert s.meta("forgotten_moved") != "1"                                      # so the move isn't done
+    a._settings._retry_thread.join(5)                                            # (its retries fail too)
+    assert "medical.pdf" in (tmp_path / "s.json").read_text(encoding="utf-8")
     monkeypatch.undo()
     a2 = api_mod.Api(s, settings_mod.Settings(str(tmp_path / "s.json")), Ix(), None)
     assert "medical.pdf" not in (tmp_path / "s.json").read_text(encoding="utf-8")
