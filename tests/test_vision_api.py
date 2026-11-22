@@ -772,3 +772,165 @@ def test_real_worker_process_describes_a_drawing(tmp_path, monkeypatch, capfd):
     assert "colour" not in out + err and "load_backend" not in err             # llama.cpp's logging is off
     print(f"\n[{rid}] first describe (process start + load + answer) {first:.2f}s: {end['text']!r}"
           f"\n  warm ask {warm:.2f}s: {_final(ev, r2['job'])['text']!r}")
+
+
+def test_the_allowance_drops_only_after_the_worker_exited(env):
+    """N1: Find's limits come back down only once the old worker process is gone (stop, and a hung-worker kill)."""
+    a, ev = env["a"], env["events"]
+    order = []
+
+    def start():
+        conn, proc = env["start"]()
+        join = proc.join
+
+        def joined(timeout=None):
+            join(timeout)
+            order.append("joined")
+        proc.join = joined
+        return conn, proc
+    a._talk = worker.Talker(ev.append, start=start, on_budget=order.append)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(ev, r["job"]))
+    a.vision_stop()
+    need = models.get(SMOL)["ram_mb"]
+    assert order[0] == need and order[-2:] == ["joined", 0] and order.count(0) == 1
+    # a hung worker: terminated, and the allowance waits for its exit (the reaper thread)
+    now = [0.0]
+    stuck = threading.Event()
+    env["opts"].update(hang=stuck)
+    order.clear()
+    a._talk = worker.Talker(ev.append, start=start, on_budget=order.append, clock=lambda: now[0])
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: any(e["job"] == r["job"] and e["state"] == "loading" for e in ev))
+    now[0] = worker.LOAD_S + 1
+    assert a.vision_tick() is True
+    assert 0 not in order                              # the (fake) process hasn't ended yet
+    stuck.set()                                        # now it does
+    assert _wait(lambda: order[-2:] == ["joined", 0])
+
+
+# ---------- the deeper model (Qwen) in the real worker process, inside the real WORKERS job (dev only) ----------
+QWEN_DIR = os.environ.get("NOBAD_FIND_QWEN_DIR")
+
+
+def _peak_private_mb(pid):
+    """PeakPagefileUsage (peak private commit) of one process, MB."""
+    import ctypes
+    from nobadfind import jobs
+    h = jobs._k.OpenProcess(0x1000, False, int(pid))
+    if not h:
+        return 0
+    try:
+        pmc = jobs._PMC()
+        pmc.cb = ctypes.sizeof(jobs._PMC)
+        ok = jobs._psapi.GetProcessMemoryInfo(h, ctypes.byref(pmc), pmc.cb)
+        return round(pmc.PeakPagefileUsage / 1048576) if ok else 0
+    finally:
+        jobs._k.CloseHandle(h)
+
+
+def _job_limit_mb():
+    import ctypes
+    from nobadfind import jobs
+    info = jobs._Extended()
+    jobs._k.QueryInformationJobObject(jobs.WORKERS.handle, jobs._CLS_EXTENDED, ctypes.byref(info),
+                                      ctypes.sizeof(info), None)
+    return int(info.JobMemoryLimit // 1048576)
+
+
+def qwen_child(tmp):
+    """Run in a separate Python (it puts itself in Find's job objects): vision_ask(deeper=True) through the real
+    worker process, the real watchdog checking during the answer. Prints one JSON line."""
+    import json
+    from nobadfind import engine, jobs
+    from nobadfind import watchdog as wd
+    from nobadfind.activity import Activity
+    from test_vlm_session import _drawing
+    jobs.setup()                                       # OUTER + WORKERS (with its memory limit), as engine.run does
+    base = jobs._base_limit[0]
+    a, s = make(__import__("pathlib").Path(tmp))
+    data = os.path.join(tmp, "data")
+    a._models_dir = data
+    m = models.get(QWEN)
+    names = {"model.gguf": "Qwen3VL-2B-Instruct-Q4_K_M.gguf", "mmproj.gguf": "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"}
+    for name, remote in names.items():
+        _link(os.path.join(QWEN_DIR, remote), os.path.join(models.model_dir(QWEN, data), name))
+    rid = "llama-vulkan" if os.path.isfile(os.path.join(RUNTIME, "ggml-vulkan.dll")) else "llama-cpu"
+    for name in models.get(rid)["files_in_zip"]:
+        _link(os.path.join(RUNTIME, name), os.path.join(models.model_dir(rid, data), name))
+    for name, (_p, size, _s) in m["files"].items():
+        assert os.path.getsize(os.path.join(models.model_dir(QWEN, data), name)) == size, name
+    pic = os.path.join(tmp, "red.png")
+    with open(pic, "wb") as f:
+        f.write(_drawing())
+    s.upsert_files([(pic, "red.png", tmp, ".png", "image", os.path.getsize(pic), 5.0, 5.0, 1)])
+    fid = s.one("SELECT id FROM files WHERE name='red.png'")
+    ev, limits, kills, acts = [], [], [], Activity()
+    a._on_vision = ev.append
+    a._on_talk_budget = lambda mb: (jobs.set_talk_allowance(mb), limits.append((mb, _job_limit_mb())))
+    hooks = engine.worker_hooks({"api": a})
+
+    def kill(pid):
+        kills.append(pid)
+        wd.kill_process(pid)
+    w = wd.Watchdog(acts, kill=kill, **{k: hooks[k] for k in ("release", "recycle", "names", "talk_mb",
+                                                            "release_talk")})
+    peak_ws, peak_job_ws, checks, stop = [0], [0], [0], threading.Event()
+
+    def watch():
+        while not stop.wait(0.25):
+            for pid in a.vision_pids():
+                peak_ws[0] = max(peak_ws[0], jobs.process_info(pid)["memory_mb"])
+            peak_job_ws[0] = max(peak_job_ws[0], jobs.OUTER.usage()["memory_mb"])
+            w.check()
+            checks[0] += 1
+    t = threading.Thread(target=watch, daemon=True)
+    t.start()
+    out = {"runtime": rid, "base_limit_mb": base}
+    try:
+        t0 = time.perf_counter()
+        r = a.vision_ask(fid, "What colour is the shape?", deeper=True)
+        out["reply"] = r
+        if r["ok"]:
+            _wait(lambda: _final(ev, r["job"]), 300)
+            out["seconds"] = round(time.perf_counter() - t0, 2)
+            out["final"] = _final(ev, r["job"])
+            pids = list(a.vision_pids())
+            out["worker_peak_private_mb"] = _peak_private_mb(pids[0]) if pids else 0
+            out["job_peak_commit_mb"] = jobs.WORKERS.memory_peak_mb()
+            out["budget_mb"] = a.vision_budget_mb()
+            out["worker_limit_mb"] = w.worker_limit("talk worker")
+            out["find_limit_mb"] = w.job_limit()
+            out["job_commit_limit_mb"] = _job_limit_mb()
+            out["still_running"] = a.vision_state()["running"]
+    finally:
+        stop.set()
+        t.join(2)
+        a.vision_stop()
+        s.close()
+    out.update(kills=kills, checks=checks[0], peak_working_set_mb=peak_ws[0], find_peak_working_set_mb=peak_job_ws[0],
+               limits=limits, limit_after_mb=_job_limit_mb(), activity=[x["text"] for x in acts.recent(20)])
+    print("QWEN " + json.dumps(out), flush=True)
+
+
+@pytest.mark.skipif(not (RUNTIME and QWEN_DIR), reason="NOBAD_FIND_LLAMA_DIR / NOBAD_FIND_QWEN_DIR not set (dev only)")
+@pytest.mark.skipif(importlib.util.find_spec("PIL") is None, reason="Pillow (dev dependency) not installed")
+def test_real_qwen_deeper_answer_inside_the_workers_job(tmp_path):
+    import json
+    here = os.path.dirname(os.path.abspath(__file__))
+    code = f"import sys; sys.path[:0] = [{here!r}, {os.path.dirname(here)!r}]; import test_vision_api as t; " \
+           f"t.qwen_child({str(tmp_path)!r})"
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=600, cwd=here)
+    line = next((x for x in p.stdout.splitlines() if x.startswith("QWEN ")), None)
+    assert line, p.stdout[-2000:] + p.stderr[-2000:]
+    got = json.loads(line[5:])
+    print("\n" + json.dumps(got, indent=1))
+    assert got["reply"]["ok"], got["reply"]
+    assert got["final"]["state"] == "done", got["final"]                       # an answer arrived ...
+    assert got["final"]["model"] == QWEN and got["final"]["text"].strip()
+    assert got["kills"] == [] and got["still_running"]                         # ... the worker wasn't killed ...
+    assert "memory" not in got["final"]["note"].lower()                        # ... and no allocation failure
+    need = models.get(QWEN)["vram_mb" if got["runtime"] == "llama-vulkan" else "ram_mb"]
+    assert got["budget_mb"] == need and got["job_commit_limit_mb"] == got["base_limit_mb"] + need
+    assert got["limit_after_mb"] == got["base_limit_mb"]                       # back down once it has gone
+    assert got["checks"] > 0

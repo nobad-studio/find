@@ -268,6 +268,7 @@ class Talker:
         self._loaded = ""
         self._need = {}                         # model id -> its measured need (MB), from the jobs sent
         self._budget = 0
+        self._exiting = {}                      # id(process) -> MB it may still hold until it has really exited
         self._used = clock()
         self._ids = itertools.count(1)
         self.answers = deque(maxlen=16)         # (file ids, op, text, model id) of finished answers (vision_keep)
@@ -296,6 +297,7 @@ class Talker:
         b = self._need.get(self._loaded, 0) if self._loaded else 0
         if self._job is not None:
             b = max(b, self._job["need"])
+        b = max([b, *self._exiting.values()])      # an ended worker keeps its allowance until it is gone
         if b != self._budget:
             self._budget = b
             if self._on_budget is not None:
@@ -366,11 +368,16 @@ class Talker:
         with self._lock:
             if self._conn is not conn:
                 return                          # stopped on purpose (or replaced): nothing to say
-            cur = self._job
+            cur, proc = self._job, self._proc
             self._job = None
             self._drop()
             if cur is not None:
                 self._emit_safe(self._event(cur, "error", note="The picture model stopped unexpectedly. Try again."))
+        if proc is not None:                    # its pipe closed: wait for the process itself, then the limits
+            try:
+                proc.join(10)
+            finally:
+                self._gone(proc)
 
     def _on(self, conn, msg):
         with self._lock:
@@ -415,12 +422,23 @@ class Talker:
 
     # -- lifetime --
     def _drop(self):
+        """Forget the worker. Its memory allowance stays (in _exiting) until _gone() says the process ended, so
+        Find's limits never drop while it still holds the model (the worker group would be over its normal limit,
+        and a photo or text worker allocating then would fail)."""
+        if self._proc is not None and self._budget:
+            self._exiting[id(self._proc)] = self._budget
         self._conn = self._proc = None
         self._loaded = ""
         self._update_budget()
 
+    def _gone(self, proc):
+        with self._lock:
+            if self._exiting.pop(id(proc), None) is not None:
+                self._update_budget()
+
     def _kill_locked(self):
-        """End the worker at once (it may be hung): TerminateProcess, no waiting for it to read a quit."""
+        """End the worker at once (it may be hung): TerminateProcess, no waiting for it to read a quit (a thread
+        waits for its exit, then gives its allowance back)."""
         conn, proc = self._conn, self._proc
         self._drop()
         if proc is not None:
@@ -428,6 +446,13 @@ class Talker:
                 proc.terminate()
             except Exception:
                 pass
+
+            def reap():
+                try:
+                    proc.join(10)
+                finally:
+                    self._gone(proc)
+            threading.Thread(target=reap, daemon=True, name="talk-reap").start()
         if conn is not None:
             try:
                 conn.close()
@@ -451,10 +476,13 @@ class Talker:
         except (OSError, ValueError):
             pass
         if proc is not None:
-            proc.join(timeout)
-            if proc.is_alive():
-                proc.terminate()
-                proc.join(2)
+            try:
+                proc.join(timeout)
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join(2)
+            finally:
+                self._gone(proc)            # the limits come back down only now
         try:
             conn.close()
         except OSError:
