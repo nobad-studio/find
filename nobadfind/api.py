@@ -312,8 +312,27 @@ class Api:
                 return {"ok": False, "error": "NOBAD Find couldn't save the Never index list."}
             if keep not in (self._settings.get("exclude") or []):
                 return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
+            self._note_forgotten(keep)
         self._store.forget_path(p)
         return {"ok": True}
+
+    FORGOTTEN = "forgotten"                     # meta: the Never index entries Forget added (JSON list), for Wipe
+
+    def _forgotten(self):
+        try:
+            v = json.loads(self._store.meta(self.FORGOTTEN, "[]") or "[]")
+        except ValueError:
+            v = []
+        return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+    def _note_forgotten(self, path):
+        """Remember, inside the encrypted index, that Forget (not the user's folder list) added path to exclude."""
+        try:
+            got = self._forgotten()
+            if path not in got:
+                self._store.set_meta(self.FORGOTTEN, json.dumps((got + [path])[-20000:]))
+        except Exception as e:
+            log(f"forget: not noted for Wipe ({type(e).__name__})", "warn")
 
     # ---------- status and settings ----------
     def status(self):
@@ -777,9 +796,24 @@ class Api:
         return {"ok": True}
 
     def wipe(self, confirm):
+        """Delete the whole index and start over. Security review 2026-11-22 (L10): nothing of the old index stays
+        in plain text either: the Never index entries Forget added (noted in the index; from before that, the ones
+        that are files) leave settings.json, the log is emptied, the index copies set aside after a key problem
+        (*.unreadable-*) and the previews in memory go. What the app needs to start stays: the settings, the
+        user's own Never index folders, the index key, downloaded models."""
         if confirm != "DELETE":
             return {"ok": False}
+        forgot = set(self._forgotten())
+        exclude = list(self._settings.get("exclude") or [])
+        keep = [e for e in exclude if e not in forgot and not os.path.isfile(e)]
+        if keep != exclude:
+            self._settings.update({"exclude": keep})
         self._store.wipe()
+        self._store.remove_aside_copies()
+        thumbs.clear()
+        from . import log as log_mod
+        log_mod.clear()
+        log(f"index wiped ({len(exclude) - len(keep)} forgotten entries removed)")
         self._indexer.rescan()
         return {"ok": True}
 

@@ -202,3 +202,47 @@ def test_suggestions_place_labels_and_app_actions_show_hidden_characters(tmp_pat
     assert titles and all("\u202e" not in t for t in titles), titles
 
 
+# ---------- L10: Wipe leaves nothing of the old index in plain text ----------
+def test_wipe_removes_forgotten_paths_logs_and_aside_copies_but_keeps_what_starts_the_app(tmp_path, monkeypatch):
+    from nobadfind import log as log_mod, thumbs
+    a, s = make_api(tmp_path)
+    mine = str(tmp_path / "MyNeverFolder")
+    os.makedirs(mine)
+    legacy = tmp_path / "old-forgotten.txt"                         # forgotten before Forget noted it in the index
+    legacy.write_text("x")
+    a._settings.update({"exclude": [mine, str(legacy)], "theme": "light"})
+    ids = _add(s, 2)
+    assert a.forget(ids["f0.txt"])["ok"]
+    secret = os.path.join(PROF, "Docs", "f0.txt")
+    assert secret in a._settings.get("exclude")
+    for name in ("i.db.unreadable-20261122-101010", "i.db.key.unreadable-20261122-101010"):
+        (tmp_path / name).write_bytes(b"old index")
+    logf = tmp_path / "find.log"
+    monkeypatch.setattr(log_mod, "_path", str(logf))
+    log_mod.log("something about the old index")
+    (tmp_path / "find.log.1").write_text("older")
+    thumbs._cache[("C:\\x.jpg", 1.0)] = "data:image/png;base64,AA=="
+
+    assert a.wipe("DELETE") == {"ok": True}
+    assert a._settings.get("exclude") == [mine]                      # the user's own folder stays
+    assert a._settings.get("theme") == "light"                       # and every other setting
+    assert secret not in open(tmp_path / "s.json", encoding="utf-8").read()
+    assert not [p for p in os.listdir(tmp_path) if ".unreadable-" in p]
+    assert not (tmp_path / "find.log.1").exists()
+    assert "old index" not in logf.read_text(encoding="utf-8")
+    assert not thumbs._cache
+    assert s.one("SELECT count(*) FROM files") == 0 and s.meta(a.FORGOTTEN) is None
+    assert "rescan" in a._indexer.calls
+    s.close()
+
+
+def test_wipe_without_the_word_touches_nothing(tmp_path):
+    a, s = make_api(tmp_path)
+    ids = _add(s, 1)
+    a.forget(ids["f0.txt"])
+    before = a._settings.get("exclude")
+    assert a.wipe("delete") == {"ok": False}
+    assert a._settings.get("exclude") == before
+    s.close()
+
+

@@ -49,6 +49,9 @@
 - A file name can no longer hide what it is with invisible direction characters (a program named to look like
   `Invoice_exe.pdf`): those characters are shown as `[U+202E]`, the details show the real extension, and a
   disguised program says "opening it runs a program".
+- "Delete the whole index" now also removes the list of files you forgot from the settings file, empties NOBAD
+  Find's log, and deletes old index copies kept after a sign-in key problem. Your settings and your own Never index
+  folders stay.
 
 ## 1.0.1 · 2026-11-22
 

@@ -128,6 +128,7 @@ def _load_key(key_path):
 class Store:
     def __init__(self, db_path, key_path=None, encrypt=True):
         self.db_path = db_path
+        self.key_path = key_path or db_path + ".key"
         self.encrypted = bool(encrypt and _cipher and winapi.WIN)
         self._key = None
         if self.encrypted:
@@ -569,6 +570,25 @@ class Store:
             self.db.execute("INSERT INTO text(text) VALUES('rebuild')")
             self.db.commit()
             self.db.execute("VACUUM")
+
+    def remove_aside_copies(self):
+        """Delete the index and key copies set aside when the key couldn't be read (*.unreadable-<stamp>): they hold
+        an old index (Wipe: nothing of it stays). Returns how many went."""
+        n = 0
+        for p in (self.db_path, self.key_path):
+            folder, base = os.path.split(p)
+            try:
+                names = os.listdir(folder or ".")
+            except OSError:
+                continue
+            for name in names:
+                if name.startswith(base + ".unreadable-"):
+                    try:
+                        os.remove(os.path.join(folder, name))
+                        n += 1
+                    except OSError as e:
+                        log(f"couldn't delete an old index copy (error {e.errno})", "warn")
+        return n
 
     def stats(self):
         return {

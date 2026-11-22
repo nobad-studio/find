@@ -97,7 +97,10 @@ class PrivacyPage extends StatelessWidget {
           rows: [
             SettingRow(
               label: 'Delete the whole index',
-              help: 'Removes everything NOBAD Find has stored. It starts again from scratch.',
+              help:
+                  'Removes everything NOBAD Find has stored about your files: the index, its log, and the list of '
+                  'files you forgot (they can be indexed again). Your settings and Never index folders stay. It '
+                  'starts again from scratch.',
               control: NbButton(
                 'Delete index',
                 kind: NbButtonKind.danger,

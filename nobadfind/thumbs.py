@@ -17,6 +17,12 @@ _lock = threading.Lock()
 CACHE_SIZE = 400
 
 
+def clear():
+    """Every preview out of memory (Wipe)."""
+    with _lock:
+        _cache.clear()
+
+
 def data_url(path, mtime):
     key = (path, mtime)
     with _lock:
