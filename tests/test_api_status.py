@@ -315,7 +315,8 @@ def test_open_outside_job_starts_explorer_with_breakaway(monkeypatch):
         def __init__(self, argv, **kw):
             calls.append((argv, kw))
     monkeypatch.setattr(winapi.subprocess, "Popen", P)
-    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Planted")                  # never from the environment (review L3)
+    monkeypatch.setattr(winapi, "windows_dir", lambda: r"C:\Windows")
     path = "C:\\a, b & c\\\u00e4 \u65e5.txt"
     winapi.open_outside_job(path)
     argv, kw = calls[0]

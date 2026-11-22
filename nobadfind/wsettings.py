@@ -114,9 +114,13 @@ _SHELL = re.compile(r"^shell:::\{[0-9A-Fa-f\-]{36}\}(?:\\\d+\\::\{[0-9A-Fa-f\-]{
 
 
 def _windir():
-    buf = ctypes.create_unicode_buffer(260)
-    n = ctypes.windll.kernel32.GetWindowsDirectoryW(buf, 260)
-    return buf.value if n else r"C:\Windows"
+    from .winapi import windows_dir
+    return windows_dir()
+
+
+def _explorer():
+    from .winapi import system_exe
+    return system_exe("explorer.exe")                  # full path, never the search order (review L3)
 
 
 def system32():
@@ -145,15 +149,15 @@ def target(link):
     """A Control Panel deep link -> an argument list to start, or None when it isn't one we open."""
     link = (link or "").strip()
     if link in DEFENDER:
-        return ["explorer.exe", DEFENDER[link]]
+        return [_explorer(), DEFENDER[link]]
     if link in DEFENDER_OTHER:
-        return ["explorer.exe", "windowsdefender:"]
+        return [_explorer(), "windowsdefender:"]
     m = _CANONICAL.match(link)
     if m:
         argv = [os.path.join(system32(), "control.exe"), "/name", m.group(1)]
         return argv + ["/page", m.group(2)] if m.group(2) else argv
     if _SHELL.match(link):
-        return ["explorer.exe", link]
+        return [_explorer(), link]
     parts = link.split()
     if not parts:
         return None

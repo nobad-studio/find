@@ -43,6 +43,9 @@
 - The window now checks that it is talking to NOBAD Find's own engine (NobadFind.exe next to it, a normal user
   process, not a sandboxed or low-rights one) before it sends a single search. If another program got there first,
   the window says so instead of connecting. The engine checks the window the same way.
+- Windows' own programs that NOBAD Find starts (File Explorer, Task Manager, Control Panel tools, PowerShell for the
+  Start menu list) now always come from the Windows folder by full path, never from a same-named file elsewhere.
+- Messages to the engine nested absurdly deep get an error back instead of no answer.
 
 ## 1.0.1 · 2026-11-22
 

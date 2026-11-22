@@ -1,7 +1,9 @@
 """0.9.1: every setting in Windows' own Settings search catalog, opened only through the allowlisted forms."""
 import os
 
-from nobadfind import launcher, wsettings
+from nobadfind import launcher, winapi, wsettings
+
+EXPLORER = winapi.system_exe("explorer.exe")   # by full path (review L3)
 
 XML = """<?xml version="1.0" encoding="utf-8"?>
 <PCSettings>
@@ -88,7 +90,7 @@ def test_deep_links_become_fixed_argument_lists():
     assert wsettings.target("%windir%\\system32\\rundll32.exe sysdm.cpl,EditEnvironmentVariables") == [
         os.path.join(s32, "rundll32.exe"), "sysdm.cpl,EditEnvironmentVariables"]
     assert wsettings.target("%windir%\\system32\\mmc.exe %windir%\\system32\\diskmgmt.msc")[1].endswith("diskmgmt.msc")
-    assert wsettings.target("Threat") == ["explorer.exe", "windowsdefender://threat"]
+    assert wsettings.target("Threat") == [EXPLORER, "windowsdefender://threat"]
     for bad in ("%windir%\\system32\\cmd.exe /c del x", "%windir%\\system32\\mmc.exe C:\\Users\\me\\x.msc",
                 "%windir%\\system32\\rundll32.exe a.dll,B & calc", "C:\\Temp\\control.exe", "Microsoft.X; calc",
                 "ms-contact-support://?x=1", "", None):
@@ -120,7 +122,7 @@ def test_search_box_finds_and_opens_catalog_settings(tmp_path):
     assert L.run(a["id"])["ok"] and ran[-1][0].lower().endswith("rundll32.exe")
     b = L.actions("battery percentage")[0]
     assert b["title"] == "Battery percentage" and b["subtitle"] == "Windows Settings"
-    assert L.run(b["id"])["ok"] and ran[-1] == ["explorer.exe", "ms-settings:powersleep"]
+    assert L.run(b["id"])["ok"] and ran[-1] == [EXPLORER, "ms-settings:powersleep"]
     assert L.actions("open bluetooth")[0]["title"] == "Bluetooth & devices"   # the usual name still first
     assert L.actions("tax pdf") == []
     n = len(ran)

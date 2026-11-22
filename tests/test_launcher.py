@@ -1,7 +1,9 @@
 """0.9.1: Windows settings and apps from the search box; only ids from the table or the Start list are ever run."""
 import json
 
-from nobadfind import launcher
+from nobadfind import launcher, winapi
+
+EXPLORER = winapi.system_exe("explorer.exe")   # by full path (review L3)
 
 
 def make(tmp_path):
@@ -47,9 +49,9 @@ def test_file_questions_offer_nothing(tmp_path):
 
 def test_only_known_ids_run(tmp_path):
     L, ran = make(tmp_path)
-    assert L.run("set:bluetooth")["ok"] and ran[-1] == ["explorer.exe", "ms-settings:bluetooth"]
-    assert L.run("set:device-manager")["ok"] and ran[-1] == ["explorer.exe", "devmgmt.msc"]
-    assert L.run("set:task-manager")["ok"] and ran[-1] == ["taskmgr.exe"]
+    assert L.run("set:bluetooth")["ok"] and ran[-1] == [EXPLORER, "ms-settings:bluetooth"]
+    assert L.run("set:device-manager")["ok"] and ran[-1] == [EXPLORER, "devmgmt.msc"]
+    assert L.run("set:task-manager")["ok"] and ran[-1] == [winapi.system_exe("taskmgr.exe")]
     assert L.run("app:1:spotify")["ok"] and ran[-1][1].startswith("shell:AppsFolder\\SpotifyAB.")
     n = len(ran)
     for bad in ("C:\\Windows\\evil.exe", "set:nope", "app:9:gone", "ms-settings:bluetooth", "x" * 300, None):
@@ -124,7 +126,7 @@ def test_the_pipe_answer_carries_the_actions_and_opens_the_page(tmp_path):
     assert r["actions"][0] == {"id": "set:windows-update", "kind": "setting", "title": "Windows Update",
                                "subtitle": "Windows Settings"}
     assert call("run_action", {"id": r["actions"][0]["id"]})["result"]["ok"] is True
-    assert ran == [["explorer.exe", "ms-settings:windowsupdate"]]           # the page, not Settings home
+    assert ran == [[EXPLORER, "ms-settings:windowsupdate"]]           # the page, not Settings home
     assert "actions" not in call("search", {"text": "tax pdf"})["result"]
     s.close()
 
@@ -173,7 +175,7 @@ def test_typos_in_the_question_still_find_the_page(tmp_path):
     assert titles(L, "open blutooth setings")[0] == "Bluetooth & devices"
     assert L.wants("opn windws update") and L.wants("lanch contrl pannle") and not L.wants("pen tablet")
     assert L.run(L.actions("opn windws update")[0]["id"])["ok"]
-    assert ran == [["explorer.exe", "ms-settings:windowsupdate"]]
+    assert ran == [[EXPLORER, "ms-settings:windowsupdate"]]
     for q in ("tax pdf", "invoice march", "a83kd92Qz7"):                    # files are still not settings
         assert L.actions(q) == [], q
 

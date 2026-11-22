@@ -450,10 +450,11 @@ class Launcher:
                 tool = target[5:]
                 if tool not in _TOOLS:
                     return {"ok": False, "error": "That tool isn't known."}
-                return self._start(["explorer.exe", tool] if tool.endswith((".msc", ".cpl")) else [tool], hit[1])
+                return self._start([_exe("explorer.exe"), tool] if tool.endswith((".msc", ".cpl")) else [_exe(tool)],
+                                   hit[1])
             if not _SAFE_URI.match(target):
                 return {"ok": False, "error": "That setting isn't known."}
-            return self._start(["explorer.exe", target], hit[1])
+            return self._start([_exe("explorer.exe"), target], hit[1])
         if action_id.startswith("ws:"):
             with self._lock:
                 item = next((x for x in self.catalog.items if x["id"] == action_id), None)
@@ -462,7 +463,7 @@ class Launcher:
             if "uri" in item:
                 if not wsettings._PAGE_URI.match(item["uri"]):
                     return {"ok": False, "error": "That setting isn't known."}
-                return self._start(["explorer.exe", item["uri"]], item["title"])
+                return self._start([_exe("explorer.exe"), item["uri"]], item["title"])
             argv = wsettings.target(item.get("link"))
             if argv is None:
                 return {"ok": False, "error": "That setting isn't known."}
@@ -472,7 +473,7 @@ class Launcher:
                 a = next((x for x in self.apps if x["id"] == action_id), None)
             if a is None:
                 return {"ok": False, "error": "That app isn't in the Start list any more."}
-            return self._start(["explorer.exe", "shell:AppsFolder\\" + a["app_id"]], a["name"])
+            return self._start([_exe("explorer.exe"), "shell:AppsFolder\\" + a["app_id"]], a["name"])
         return {"ok": False, "error": "That isn't something NOBAD Find can open."}
 
     def _start(self, argv, what):
@@ -488,6 +489,12 @@ class Launcher:
             return {"ok": False, "error": f"Couldn't open {what}."}
 
 
+def _exe(name):
+    """Windows' own program by full path (winapi.system_exe), never by the search order."""
+    from .winapi import system_exe
+    return system_exe(name)
+
+
 def _norm(name):
     return " ".join(words(name))
 
@@ -500,7 +507,7 @@ def _start_apps():
     """[(name, AppID)] from Get-StartApps (programs and Store apps), UTF-8, no window, a fixed command."""
     cmd = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
            "Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress")
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True,
+    r = subprocess.run([_exe("powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True,
                        timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     data = json.loads(r.stdout.decode("utf-8", "replace") or "[]")
     if isinstance(data, dict):

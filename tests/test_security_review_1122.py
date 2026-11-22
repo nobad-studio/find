@@ -111,3 +111,54 @@ def test_a_recursion_error_from_the_parser_is_a_parse_error(monkeypatch):
         protocol.PARSE_ERROR
 
 
+# ---------- L3: Windows' own programs by full path, never the search order ----------
+def test_system_programs_come_from_windows_own_folders(monkeypatch):
+    from nobadfind import winapi
+    monkeypatch.setenv("WINDIR", r"C:\Planted")
+    monkeypatch.setenv("SystemRoot", r"C:\Planted")
+    monkeypatch.setattr(winapi, "windows_dir", lambda: r"C:\Win")
+    monkeypatch.setattr(winapi, "system_dir", lambda: r"C:\Win\System32")
+    assert winapi.system_exe("explorer.exe") == r"C:\Win\explorer.exe"
+    assert winapi.system_exe("cmd.exe") == r"C:\Win\System32\cmd.exe"
+    assert winapi.system_exe("taskmgr.exe") == r"C:\Win\System32\taskmgr.exe"
+    assert winapi.system_exe("powershell.exe") == r"C:\Win\System32\WindowsPowerShell\v1.0\powershell.exe"
+    for bad in ("", r"..\explorer.exe", r"C:\Temp\explorer.exe", "x/explorer.exe", "c:explorer.exe"):
+        try:
+            winapi.system_exe(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_the_real_folders_are_absolute_and_hold_explorer():
+    from nobadfind import winapi
+    if not winapi.WIN:
+        return
+    assert os.path.isfile(winapi.system_exe("explorer.exe"))
+    assert os.path.isfile(winapi.system_exe("cmd.exe"))
+    assert os.path.isfile(winapi.system_exe("powershell.exe"))
+
+
+def test_every_launch_uses_a_full_path(tmp_path, monkeypatch):
+    """The launcher, the Settings catalog and Open: argv[0] is always absolute; a bare name never starts."""
+    from nobadfind import launcher, winapi, wsettings
+    ran = []
+    L = launcher.Launcher(str(tmp_path), run=ran.append)
+    for action in ("set:bluetooth", "set:device-manager", "set:task-manager"):
+        assert L.run(action)["ok"], action
+    assert wsettings.target("Threat")[0] == winapi.system_exe("explorer.exe")
+    assert all(os.path.isabs(argv[0]) for argv in ran), ran
+    started = []
+    monkeypatch.setattr(winapi.subprocess, "Popen", lambda argv, **kw: started.append(argv))
+    try:
+        winapi.start_outside_job(["explorer.exe", "x"])
+    except OSError:
+        pass
+    else:
+        raise AssertionError("a bare name was started")
+    assert started == []
+    import inspect
+    src = inspect.getsource(launcher._start_apps)
+    assert '"powershell.exe"' not in src.replace('_exe("powershell.exe")', "")
+
+
