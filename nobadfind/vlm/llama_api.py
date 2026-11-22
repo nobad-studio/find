@@ -164,6 +164,11 @@ class MtmdInputText(ctypes.Structure):
     ]
 
 
+class ChatMessage(ctypes.Structure):
+    """struct llama_chat_message, llama.h:481-484 (b12602)."""
+    _fields_ = [("role", c_char_p), ("content", c_char_p)]
+
+
 P = c_void_p                                            # opaque handles: model, context, vocab, sampler, ...
 
 # name: (restype, [argtypes])
@@ -186,6 +191,8 @@ LLAMA_FUNCS = {
     "llama_get_memory": (P, [P]),                                      # llama.h:584
     "llama_memory_clear": (None, [P, c_bool]),                         # llama.h:773
     "llama_model_get_vocab": (P, [P]),                                 # llama.h:587
+    "llama_model_chat_template": (c_char_p, [P, c_char_p]),            # llama.h:657 (NULL name: the default)
+    "llama_chat_apply_template": (c_int32, [c_char_p, POINTER(ChatMessage), c_size_t, c_bool, c_char_p, c_int32]),
     "llama_batch_get_one": (Batch, [POINTER(llama_token), c_int32]),   # llama.h:960 (deprecated, still exported)
     "llama_decode": (c_int32, [P, Batch]),                             # llama.h:1005 (deprecated, still exported)
     "llama_vocab_is_eog": (c_bool, [P, llama_token]),                  # llama.h:1263
@@ -209,6 +216,7 @@ MTMD_FUNCS = {
     "mtmd_input_chunks_init": (P, []),                                 # mtmd.h:257
     "mtmd_input_chunks_size": (c_size_t, [P]),                         # mtmd.h:258
     "mtmd_input_chunks_free": (None, [P]),                             # mtmd.h:260
+    "mtmd_helper_get_n_tokens": (c_size_t, [P]),                       # mtmd-helper.h:150
     "mtmd_tokenize": (c_int32, [P, P, POINTER(MtmdInputText), POINTER(c_void_p), c_size_t]),  # mtmd.h:336
     # mtmd-helper.h:166 (exported by mtmd.dll in b12602)
     "mtmd_helper_eval_chunks": (c_int32, [P, P, P, llama_pos, llama_seq_id, c_int32, c_bool, POINTER(llama_pos)]),

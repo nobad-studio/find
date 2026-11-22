@@ -19,8 +19,12 @@ def describe():
 
 
 def ask(question):
+    """ValueError when nothing is left of the question once cleaned (only spaces or control characters)."""
+    q = clean_question(question)
+    if not q:
+        raise ValueError("empty question")
     return ("Answer the question about this photo briefly, using only what you can see. "
-            "If the photo does not show the answer, say so.\nQuestion: " + clean_question(question))
+            "If the photo does not show the answer, say so.\nQuestion: " + q)
 
 
 def compare(question):

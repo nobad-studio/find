@@ -28,6 +28,7 @@ STRUCTS = [
     (L.Batch, "llama.h", "llama_batch"),
     (L.MtmdContextParams, "mtmd.h", "mtmd_context_params"),
     (L.MtmdInputText, "mtmd.h", "mtmd_input_text"),
+    (L.ChatMessage, "llama.h", "llama_chat_message"),
 ]
 
 Field = namedtuple("Field", "name ctype line")

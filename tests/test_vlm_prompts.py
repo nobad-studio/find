@@ -33,6 +33,13 @@ def test_templates_and_limits():
     assert [prompts.max_tokens(k) for k in ("describe", "ask", "compare")] == [200, 120, 160]
 
 
+def test_an_empty_question_is_refused():
+    for q in ("", "   ", "\x00\x1b[31m\t", None):
+        with pytest.raises(ValueError):
+            prompts.ask(q)
+    assert "Question:" not in prompts.compare("  \x00 ")         # compare without a question is allowed
+
+
 needs_winrt = pytest.mark.skipif(not ocr.available(), reason="needs Windows' imaging (winrt)")
 
 
