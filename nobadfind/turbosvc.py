@@ -17,7 +17,8 @@ Setting it up (`NobadFindTurbo.exe --turbo install`, elevated, one UAC prompt; n
   copied from ONE handle (opened without write or delete sharing, never through a reparse point) while its bytes
   are hashed, and must match the manifest; after the copy every file in the destination is hashed again and the
   tree must be exactly the manifest (nothing missing, nothing extra). A file swapped in between fails the step.
-  The copy goes to `bin.new` and replaces `bin` only when it is complete and verified.
+  The copy goes to `bin.new` and replaces `bin` only when it is complete and verified; a step that fails deletes
+  `bin.new` again (no half copy is left in Program Files).
 - The record (`install.json` in the protected folder, written by the elevated step): the user's SID (from Windows:
   the elevated process's parent, the engine that asked, and for an administrator's split token also the linked
   token; never from the command line), the engine's own exe path (the only program allowed to connect) and the
@@ -27,7 +28,11 @@ Setting it up (`NobadFindTurbo.exe --turbo install`, elevated, one UAC prompt; n
   copy, quoted, with the fixed words `--turbo service`, account LocalSystem with its privileges cut down to
   REQUIRED_PRIVILEGES (SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO: no SeDebug, SeTcb, SeImpersonate, SeBackup...).
   Its DACL (service_sddl): SYSTEM and Administrators as Windows sets them, and the installing user may only query,
-  start and stop it (no config change, no DACL change, no delete). Nobody else may even start it.
+  start and stop it (no config change, no DACL change, no delete). Nobody else may even start it. After setting it
+  up the step reads all of it back (binary path, demand start, LocalSystem, own process, exactly REQUIRED_PRIVILEGES,
+  the DACL) and fails otherwise. The service itself checks again each run (ntfs._service): its exe and all its code
+  (sys._MEIPASS, sys.path: a one-folder build, never one that unpacks into a temp folder) in `bin`, both folders
+  still protected, LocalSystem, and none of POWERFUL_PRIVILEGES in its token.
   Why LocalSystem: reading the volume (CreateFile on \\\\.\\C: and FSCTL_ENUM_USN_DATA / READ_USN_JOURNAL /
   GET_NTFS_FILE_RECORD) needs a token in the volume's DACL (Administrators or SYSTEM). LocalService/NetworkService
   are in neither; a virtual service account with only SeManageVolumePrivilege might be enough but could not be
@@ -75,6 +80,15 @@ IDLE_S = 60                        # the service ends when no client connects th
 MAX_FILES = 5000
 MAX_BYTES = 512 * 1024 * 1024
 REQUIRED_PRIVILEGES = ("SeChangeNotifyPrivilege", "SeManageVolumePrivilege")
+# LocalSystem's privileges that lead to more (any token, any file, kernel code, other processes' memory):
+# REQUIRED_PRIVILEGES takes them out of the service's token, and the service ends when it finds one of them anyway
+# (ntfs._service: an administrator's `sc privs`, or a list that didn't take).
+POWERFUL_PRIVILEGES = frozenset({
+    "SeAssignPrimaryTokenPrivilege", "SeBackupPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege",
+    "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege",
+    "SeImpersonatePrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege", "SeRelabelPrivilege",
+    "SeRestorePrivilege", "SeSecurityPrivilege", "SeSystemEnvironmentPrivilege", "SeTakeOwnershipPrivilege",
+    "SeTcbPrivilege", "SeTrustedCredManAccessPrivilege"})
 
 SY, BA, BU = "S-1-5-18", "S-1-5-32-544", "S-1-5-32-545"
 TI = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"      # NT SERVICE\TrustedInstaller
@@ -198,6 +212,11 @@ def dacl_is_strong(sddl):
         if sid not in TRUSTED and mask & WRITE_BITS:
             return False
     return True
+
+
+def privileges_ok(names):
+    """The service's token holds none of POWERFUL_PRIVILEGES (enabled or not)."""
+    return not (set(names) & POWERFUL_PRIVILEGES)
 
 
 def service_dacl_ok(sddl, sid):
@@ -511,6 +530,7 @@ def _adv():
                 ("ChangeServiceConfigW", B, [H, D, D, D, w.LPCWSTR, w.LPCWSTR, PD, w.LPCWSTR, w.LPCWSTR, w.LPCWSTR,
                                              w.LPCWSTR]),
                 ("ChangeServiceConfig2W", B, [H, D, P]),
+                ("QueryServiceConfig2W", B, [H, D, P, D, PD]),
                 ("QueryServiceConfigW", B, [H, P, D, PD]),
                 ("QueryServiceStatusEx", B, [H, ctypes.c_int, P, D, PD]),
                 ("StartServiceW", B, [H, D, P]),
@@ -638,14 +658,18 @@ ServiceConfig = namedtuple("ServiceConfig", "command start account type")
 
 
 class Scm:
-    """A thin wrapper over the service manager (tests use a fake with the same methods)."""
+    """A thin wrapper over the service manager (tests use a fake with the same methods; name: tests read another
+    service's configuration, never change it)."""
+
+    def __init__(self, name=SERVICE):
+        self.name = name
 
     def _open(self, access, scm_access=0x1):
         a = _adv()
         m = a.OpenSCManagerW(None, None, scm_access)
         if not m:
             raise ctypes.WinError(ctypes.get_last_error())
-        h = a.OpenServiceW(m, SERVICE, access)
+        h = a.OpenServiceW(m, self.name, access)
         err = ctypes.get_last_error()
         a.CloseServiceHandle(m)
         if not h:
@@ -764,6 +788,38 @@ class Scm:
         finally:
             self._close(h)
 
+    def privileges(self):
+        """The service's required privileges (SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO) as a set of names, empty
+        when it has no list (all of its account's), None when there is no such service."""
+        from ctypes import wintypes
+        h = self._open(0x1)                                        # SERVICE_QUERY_CONFIG
+        if h is None:
+            return None
+        try:
+            need = wintypes.DWORD()
+            _adv().QueryServiceConfig2W(h, 6, None, 0, ctypes.byref(need))
+            size = max(need.value, ctypes.sizeof(ctypes.c_void_p))
+            if size > 65536:
+                raise OSError(0, "the service's privilege list is too long")
+            buf = ctypes.create_string_buffer(size)
+            if not _adv().QueryServiceConfig2W(h, 6, buf, size, ctypes.byref(need)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            p = ctypes.c_void_p.from_buffer(buf).value             # LPWSTR pmszRequiredPrivileges (inside buf)
+            out = set()
+            if not p:
+                return out
+            base = ctypes.addressof(buf)
+            if not base <= p < base + size:
+                raise OSError(0, "the service's privilege list isn't where it should be")
+            text = ctypes.wstring_at(p, (base + size - p) // 2)
+            for name in text.split("\0"):
+                if not name:
+                    break
+                out.add(name)
+            return out
+        finally:
+            self._close(h)
+
     def set_sddl(self, sddl):
         h = self._open(0x40000)                                    # WRITE_DAC
         try:
@@ -819,8 +875,11 @@ def register(scm, root, sid):
     scm.describe(REQUIRED_PRIVILEGES)
     scm.set_sddl(service_sddl(sid))
     cfg = scm.config()
-    if not (_ours(cfg, root) and cfg.start == SERVICE_DEMAND_START and cfg.account.lower() == "localsystem"):
+    if not (_ours(cfg, root) and cfg.start == SERVICE_DEMAND_START and cfg.account.lower() == "localsystem"
+            and cfg.type == SERVICE_WIN32_OWN_PROCESS):
         raise Unsafe("the service wasn't set up as asked")
+    if scm.privileges() != set(REQUIRED_PRIVILEGES):
+        raise Unsafe("the service's privileges weren't cut as asked")
     if not service_dacl_ok(scm.get_sddl(), sid):
         raise Unsafe("the service's permissions weren't set as asked")
 
@@ -857,10 +916,17 @@ def install(src, root, sid, client_image, scm, fs, opener=open_locked, hook=None
     stage, final = os.path.join(root, BIN + ".new"), os.path.join(root, BIN)
     rmtree_safe(stage)
     os.mkdir(stage)
-    copy_verified(src, stage, m, opener, hook)
-    verify_tree(stage, m, opener)
-    _rmtree_retry(final)
-    os.rename(stage, final)
+    try:
+        copy_verified(src, stage, m, opener, hook)
+        verify_tree(stage, m, opener)
+        _rmtree_retry(final)
+        os.rename(stage, final)
+    except BaseException:
+        try:
+            rmtree_safe(stage)                                     # never leave a half copy behind
+        except OSError:
+            pass
+        raise
     if fs.is_reparse(final) or not dacl_is_strong(fs.sddl_of(final)):
         raise Unsafe("the helper's folder didn't get its permissions")
     verify_tree(final, m, opener)

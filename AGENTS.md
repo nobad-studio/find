@@ -61,7 +61,9 @@ Specific to this app:
     `install.json` there, and registers the demand-start service `NOBADFindTurbo` (LocalSystem with its privileges
     cut to SeChangeNotify + SeManageVolume; only that user may start/stop/query it). The engine starts it with no
     prompt and is the pipe's CLIENT; the service trusts nothing the engine claims: it checks the client's token SID,
-    session, integrity, elevation and image against the record and fails closed. The protected copy is only
+    session, integrity, elevation and image against the record (and that the client's pid wasn't reused) and fails
+    closed; it also checks itself each run (code only from its protected `bin`, a one-folder build; none of
+    `turbosvc.POWERFUL_PRIVILEGES` in its token). The protected copy is only
     changed by an elevated step: a changed helper shows "needs update" and the normal walk until the user OKs it;
     turning turbo off, Remove and `--uninstall` delete the service and folder (one prompt).
   Tests never trigger UAC or install a service: fakes for the service manager and the folder DACL steps, synthetic
