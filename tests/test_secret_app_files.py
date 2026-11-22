@@ -375,6 +375,69 @@ def test_on_again_after_a_flip_reads_them_normally(tmp_path, monkeypatch):
     s.close()
 
 
+# ---------- fix round 2 (I1, meaning vectors): purged while being encoded, no vector survives ----------
+def _chunks(s, texts):
+    d = os.path.join(PROF, "Docs")
+    s.upsert_files([(os.path.join(d, n), n, d, ".txt", "text", 1, 1.0, 1.0, 1) for n in texts])
+    for fid, name in s.q("SELECT id, name FROM files"):
+        s.set_text(fid, 1.0, [texts[name]])
+    return {r[1]: r[0] for r in s.q("SELECT c.id, f.name FROM chunks c JOIN files f ON f.id = c.file_id")}
+
+
+@pytest.mark.parametrize("next_", [False, True])
+def test_vectors_go_only_to_chunks_still_there(tmp_path, next_):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    c = _chunks(s, {"a.txt": "alpha", "b.txt": "token=abc", "c.txt": "gamma"})
+    t = "vecs_next" if next_ else "vecs"
+    s.drop_content([s.one("SELECT id FROM files WHERE name='b.txt'")], indexer.NAMES_ONLY)   # the purge
+    rows = [(c[n], b"\x00" * 8) for n in ("a.txt", "b.txt", "c.txt")]
+    assert s.add_vectors(rows, next=next_) == [c["a.txt"], c["c.txt"]]
+    assert {r[0] for r in s.q(f"SELECT chunk_id FROM {t}")} == {c["a.txt"], c["c.txt"]}
+    assert s.one(f"SELECT count(*) FROM {t} WHERE chunk_id NOT IN (SELECT id FROM chunks)") == 0
+    s.close()
+
+
+def test_a_normal_add_writes_every_vector(tmp_path):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    c = _chunks(s, {"a.txt": "alpha", "b.txt": "beta"})
+    bodies = {c["a.txt"]: "alpha", c["b.txt"]: "beta"}
+    assert s.add_vectors([(i, b"\x01" * 8) for i in bodies], bodies=bodies) == list(bodies)
+    assert s.one("SELECT count(*) FROM vecs") == 2
+    s.close()
+
+
+def test_a_reused_chunk_id_gets_no_vector_of_the_old_text(tmp_path):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    c = _chunks(s, {"a.txt": "alpha"})
+    assert s.add_vectors([(c["a.txt"], b"\x01" * 8)], bodies={c["a.txt"]: "a secret that was purged"}) == []
+    assert s.one("SELECT count(*) FROM vecs") == 0
+    s.close()
+
+
+def test_a_purge_while_the_chunks_are_encoded_leaves_nothing_on_disk_or_in_memory(tmp_path):
+    import numpy as np
+    from nobadfind import embed
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    c = _chunks(s, {"notes.txt": "the garden", ".bash_history": "export TOKEN=abc"})
+    vi = embed.VectorIndex(dim=8)
+    ix = indexer.Indexer(s, S(), vi)
+    ix._meaning_pause = lambda: True
+    ix._round_over = lambda: False
+    ix._breathe = lambda: None
+    secret = s.one("SELECT id FROM files WHERE name='.bash_history'")
+
+    def encode(texts, mid=None):
+        if not getattr(encode, "done", False):
+            encode.done = True
+            s.drop_content([secret], indexer.NAMES_ONLY)          # secret_app_files off, mid-encode
+        return np.ones((len(texts), 8), np.float32)
+    ix._encode = encode
+    ix._chunk_vectors()
+    assert {r[0] for r in s.q("SELECT chunk_id FROM vecs")} == {c["notes.txt"]}
+    assert set(vi.ids.tolist()) == {c["notes.txt"]}
+    s.close()
+
+
 # ---------- (a) and (c): the protected list of forgotten files can't be read or written ----------
 def _forget_one(a, s, name="f0.txt"):
     d = os.path.join(PROF, "Docs")

@@ -866,9 +866,14 @@ class Indexer:
             vecs = self._encode([embed.chunk_text(titles.get(r[0], ""), r[1]) for r in rows], next)
             if vecs is None:
                 return
-            self.store.add_vectors([(r[0], embed.to_blob(v)) for r, v in zip(rows, vecs)], next=bool(next))
-            if self.vindex is not None and not next:
-                self.vindex.add([r[0] for r in rows], vecs)
+            # under the write lock, and only for the chunks still there: a purge while they were being encoded
+            # (secret_app_files off) leaves no vector behind, on disk or in memory (fix round 2)
+            with self.store.wlock:
+                wrote = set(self.store.add_vectors([(r[0], embed.to_blob(v)) for r, v in zip(rows, vecs)],
+                                                   next=bool(next), bodies={r[0]: r[1] for r in rows}))
+                if self.vindex is not None and not next and wrote:
+                    pick = [i for i, r in enumerate(rows) if r[0] in wrote]
+                    self.vindex.add([rows[i][0] for i in pick], np.asarray(vecs)[pick])
             self.status["rebuilt" if next else "vectors"] = self.status.get("rebuilt" if next else "vectors", 0) + len(rows)
             self._breathe()
 

@@ -110,9 +110,9 @@ def test_switching_rebuilds_beside_the_old_vectors_then_swaps(tmp_path, monkeypa
     seen = []
     real = s.add_vectors
 
-    def watch(rows, next=False):
+    def watch(rows, next=False, **kw):
         seen.append((next, vi.model, s.meta("vec_model")))        # while rebuilding, search keeps the old set
-        return real(rows, next=next)
+        return real(rows, next=next, **kw)
     s.add_vectors = watch
     ix._make_vectors()
     assert (True, "minilm-l6-v2", "minilm-l6-v2") in seen
@@ -134,7 +134,7 @@ def test_a_switch_away_from_an_empty_set_uses_the_new_model_at_once(tmp_path, mo
     s.add_name_vectors([(1, blob(1, 768))], next=True)     # part of the rebuild was done
     to_next = []
     real = s.add_vectors
-    s.add_vectors = lambda rows, next=False: (to_next.append(next), real(rows, next=next))[1]
+    s.add_vectors = lambda rows, next=False, **kw: (to_next.append(next), real(rows, next=next, **kw))[1]
     ix._load_embedder()
     ix._make_vectors()
     assert True not in to_next                             # nothing waits beside an empty set

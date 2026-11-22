@@ -35,10 +35,10 @@ def test_a_rebuild_for_a_model_no_longer_chosen_is_not_swapped_in(tmp_path, monk
     st["text_model"] = "bge-base-en-v1.5"
     real = s.add_vectors
 
-    def switch_again(rows, next=False):
+    def switch_again(rows, next=False, **kw):
         if next:
             st["text_model"] = "gte-small"                # the user changed their mind mid-rebuild
-        return real(rows, next=next)
+        return real(rows, next=next, **kw)
     s.add_vectors = switch_again
     ix._make_vectors()
     assert s.meta("vec_model") in ("minilm-l6-v2", "gte-small")

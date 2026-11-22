@@ -523,11 +523,23 @@ class Store:
         return dict(self.q(f"SELECT c.id, f.name FROM chunks c JOIN files f ON f.id=c.file_id WHERE c.id IN ({marks})",
                            chunk_ids)) if chunk_ids else {}
 
-    def add_vectors(self, rows, next=False):
+    def add_vectors(self, rows, next=False, bodies=None):
+        """Meaning vectors (chunk_id, blob) into vecs (vecs_next: a model switch's). Only for chunks that are still
+        there when the write lock is held (and, with bodies {chunk_id: text}, still hold the text the vector was
+        made from: a chunk id can be used again): a purge between reading the text and this write (secret_app_files
+        off, fix round 2) leaves no vector of it behind. Returns the chunk ids written, in order."""
         t = "vecs_next" if next else "vecs"
+        rows = list(rows)
         with self.wlock:
-            self.db.executemany(f"INSERT OR REPLACE INTO {t}(chunk_id, v) VALUES(?,?)", rows)
+            live = {}
+            ids = [r[0] for r in rows]
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                live.update(self.q(f"SELECT id, body FROM chunks WHERE id IN ({','.join('?' * len(part))})", part))
+            keep = [r for r in rows if r[0] in live and (bodies is None or bodies.get(r[0]) == live[r[0]])]
+            self.db.executemany(f"INSERT OR REPLACE INTO {t}(chunk_id, v) VALUES(?,?)", keep)
             self.db.commit()
+        return [r[0] for r in keep]
 
     # ---------- talk about a photo: what was read from it, and the description the user kept ----------
     def read_text(self, file_id):
