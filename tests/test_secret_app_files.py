@@ -487,9 +487,11 @@ def test_a_locked_forgotten_list_is_tried_again_and_settings_still_save(tmp_path
     a._settings._retry_thread.join(5)
     assert len(tries) == settings_mod.Settings.FORGOT_TRIES                       # once now, then in the background
     assert a._settings.update({"theme": "light"}) == ["theme"]                    # (c) other settings still save
+    a._settings._retry_thread.join(5)                    # that save failed again and started retries: let them end
+    assert not a._settings._retry_thread.is_alive() and len(tries) == 2 * settings_mod.Settings.FORGOT_TRIES
     plain = (tmp_path / "s.json").read_text(encoding="utf-8")
     assert '"light"' in plain and "f0.txt" not in plain
-    assert not (tmp_path / (settings_mod.FORGOTTEN_FILE + ".tmp")).exists()
+    assert not (tmp_path / (settings_mod.FORGOTTEN_FILE + ".tmp")).exists()        # no failed attempt left one
     monkeypatch.setattr(settings_mod.os, "replace", real)                          # the lock is gone
     assert a._settings.update({"theme": "dark"}) == ["theme"] and a._settings.note == ""
     assert settings_mod.Settings(str(tmp_path / "s.json")).forgotten() == [path]
@@ -500,7 +502,7 @@ def test_a_locked_forgotten_list_never_holds_the_settings_lock_while_it_waits(tm
     """Fix round 1 (M3): the save tries once; the waits between retries are on a thread, without the lock."""
     import time
     a, s = make_api(tmp_path)
-    monkeypatch.setattr(settings_mod.Settings, "FORGOT_WAIT_S", 0.5)
+    monkeypatch.setattr(settings_mod.Settings, "FORGOT_WAIT_S", 600.0)    # the retry waits (cut short below)
     real = os.replace
 
     def locked(src, dst):
@@ -510,16 +512,34 @@ def test_a_locked_forgotten_list_never_holds_the_settings_lock_while_it_waits(tm
     monkeypatch.setattr(settings_mod.os, "replace", locked)
     t0 = time.monotonic()
     r, _path = _forget_one(a, s)
-    assert r["ok"] is True and r["error"] and time.monotonic() - t0 < 0.4
+    assert r["ok"] is True and r["error"] and time.monotonic() - t0 < 30              # not a 600 s wait
     assert a._settings._retry_thread.is_alive()                                     # waiting to try again
-    assert a._settings._lock.acquire(timeout=0.2)                                   # ... without the lock
+    assert a._settings._lock.acquire(timeout=30)                                    # ... without the lock
     a._settings._lock.release()
     t0 = time.monotonic()
-    assert a._settings.update({"theme": "light"}) == ["theme"] and time.monotonic() - t0 < 0.4
+    assert a._settings.update({"theme": "light"}) == ["theme"] and time.monotonic() - t0 < 30
+    assert not (tmp_path / (settings_mod.FORGOTTEN_FILE + ".tmp")).exists()
     monkeypatch.setattr(settings_mod.os, "replace", real)                          # the lock is gone
-    a._settings._retry_thread.join(5)
+    a._settings._retry_now.set()                                                   # try now, not in 600 s
+    a._settings._retry_thread.join(30)
+    assert not a._settings._retry_thread.is_alive()
     assert a._settings.note == "" and a._settings.forgotten_saved()                # the retry saved it
     s.close()
+
+
+@pytest.mark.parametrize("boom", [PermissionError(13, "locked"), RuntimeError("unexpected")])
+def test_a_failed_protected_write_never_leaves_a_tmp_file(tmp_path, monkeypatch, boom):
+    st = settings_mod.Settings(str(tmp_path / "s.json"))
+    real = os.replace
+
+    def fail(src, dst):
+        if str(dst).endswith(settings_mod.FORGOTTEN_FILE):
+            assert os.path.exists(src)                                              # it was written ...
+            raise boom
+        return real(src, dst)
+    monkeypatch.setattr(settings_mod.os, "replace", fail)
+    assert st._write_forgotten_once([str(tmp_path / "x.txt")]) is False
+    assert not (tmp_path / (settings_mod.FORGOTTEN_FILE + ".tmp")).exists()        # ... and removed again
 
 
 def test_a_forget_that_works_says_nothing_more(tmp_path):

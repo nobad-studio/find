@@ -107,6 +107,7 @@ class Settings:
         self._plain = set()                             # exclude entries read from settings.json
         self.note = ""                                  # FORGOT_NOTE while some are kept in memory only
         self._retry_thread = None                       # _retry_later
+        self._retry_now = threading.Event()             # set: the waiting retry tries at once (tests, quit)
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
         try:
             with open(path, encoding="utf-8") as f:
@@ -230,7 +231,7 @@ class Settings:
         try:
             if self._write_forgotten(paths):
                 return True
-        except OSError:
+        except Exception:                               # whatever went wrong, no half-written .tmp stays behind
             pass
         try:
             os.remove(self._fpath + ".tmp")
@@ -241,14 +242,15 @@ class Settings:
     def _retry_later(self):
         """Try the protected list again FORGOT_TRIES - 1 times, waiting FORGOT_WAIT_S, 2x, ... in between, on a
         thread that waits WITHOUT the settings lock (fix round 1, M3: a locked file never makes a save slow). One
-        such thread at a time; a save after it gave up starts another."""
+        such thread at a time; a save after it gave up starts another. Each attempt runs under the lock, so a
+        .tmp of it exists only while the lock is held. _retry_now cuts a wait short."""
         if self._retry_thread is not None and self._retry_thread.is_alive():
             return
-        import time
 
         def run():
             for i in range(self.FORGOT_TRIES - 1):
-                time.sleep(self.FORGOT_WAIT_S * (i + 1))
+                self._retry_now.wait(self.FORGOT_WAIT_S * (i + 1))
+                self._retry_now.clear()
                 if self.retry_forgotten():
                     return
         self._retry_thread = threading.Thread(target=run, daemon=True, name="forgotten-retry")
