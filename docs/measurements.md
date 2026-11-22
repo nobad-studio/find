@@ -4,6 +4,77 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22 (1.1.0): talk about a photo under the real limits (Full, Gentle, Very light)
+
+The talk worker runs in Find's worker group, so it gets the governor's CPU hard cap on that group (Full none,
+Gentle 35 %, Very light 15 % of all 16 threads, `governor.CPU_CAP`), efficiency mode (EcoQoS) at Very light
+(`governor._eco_workers`), and its own idle CPU / low memory / very low I/O priority (`winapi.worker_priority`).
+The rows below were measured with all of that in force (the row under this one was not: no cap, no EcoQoS).
+Script: `tools/measure_talk.py` (dev only): the real `vlm.worker.Talker` and its spawned worker, inside this run's
+own worker group (`jobs.setup`, never a running Find's), the level's cap set on the group and checked
+(`Job.cpu_cap`), EcoQoS on the worker at Very light (checked inside the group, like the governor), the group's
+memory limit raised by the model's need (`jobs.set_talk_allowance`). Only the talk worker was in the group; in
+the app, indexing workers would share the cap. Same PC, settings, photos and jobs as the row under this one;
+runtime folders with only the pinned DLLs (I2). Times are first word / finished answer, in seconds; "longest wait"
+is the longest gap between two pieces of progress in the run (the app ends a worker after `vlm.worker.LOAD_S` /
+`ANSWER_S`, 120 s, without any). The reference PC was in normal use (NOBAD Find and other programs running,
+3.6-5.4 GB free), so the processor rows were run two to four times; every run is listed.
+
+| model, runtime, level (run) | Describe (cold) | Ask | Compare | Describe (warm) | longest wait | peak private | graphics |
+|---|---|---|---|---|---|---|---|
+| SmolVLM2 500M, CPU, Full (1) | 7.4 / 7.8 | 3.7 / 3.7 | 6.8 / 7.1 | 3.6 / 3.7 | 6.7 s | 533 MB | - |
+| SmolVLM2 500M, CPU, Full (2) | 5.8 / 6.2 | 3.3 / 3.4 | 10.0 / 10.4 | 3.6 / 3.7 | 10.0 s | 533 MB | - |
+| SmolVLM2 500M, CPU, Gentle (1) | 4.6 / 5.0 | 3.9 / 3.9 | 7.3 / 7.7 | 3.8 / 3.9 | 7.2 s | 533 MB | - |
+| SmolVLM2 500M, CPU, Gentle (2) | 5.8 / 6.2 | 3.8 / 3.9 | 9.9 / 10.3 | 4.1 / 4.2 | 9.9 s | 533 MB | - |
+| SmolVLM2 500M, CPU, Very light (1) | 9.1 / 9.8 | 8.9 / 8.9 | 12.6 / 14.2 | 7.7 / 7.9 | 12.5 s | 533 MB | - |
+| SmolVLM2 500M, CPU, Very light (2) | 6.7 / 7.3 | 8.9 / 8.9 | 13.0 / 14.1 | 5.8 / 5.9 | 12.7 s | 533 MB | - |
+| SmolVLM2 500M, Vulkan, Full | 2.1 / 2.5 | 1.3 / 1.3 | 2.4 / 2.9 | 1.3 / 1.4 | 2.4 s | 1,032 MB | 665 MB shared |
+| SmolVLM2 500M, Vulkan, Gentle | 2.1 / 2.5 | 1.3 / 1.3 | 2.4 / 2.9 | 1.3 / 1.4 | 2.4 s | 1,031 MB | 665 MB shared |
+| SmolVLM2 500M, Vulkan, Very light | 2.2 / 2.6 | 1.3 / 1.3 | 2.4 / 2.9 | 1.3 / 1.4 | 2.4 s | 1,031 MB | 665 MB shared |
+| Qwen3-VL 2B, CPU, Full (1) | 20.1 / 26.3 | 5.4 / 5.5 | 14.5 / 21.6 | 7.3 / 10.5 | 14.4 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Full (2) | 17.2 / 20.5 | 5.1 / 5.1 | 12.0 / 20.0 | 7.0 / 9.5 | 11.9 s | 1,735 MB | - |
+| Qwen3-VL 2B, CPU, Full (3) | 16.3 / 19.5 | 4.4 / 4.5 | 8.7 / 15.7 | 4.7 / 7.3 | 10.6 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Gentle (1) | 17.9 / 23.2 | 4.5 / 4.6 | 9.1 / 16.3 | 4.8 / 7.3 | 11.3 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Gentle (2) | 146.6 / 149.9 | 4.7 / 4.7 | 8.5 / 16.0 | 4.8 / 7.2 | 127.2 s | 1,735 MB | - |
+| Qwen3-VL 2B, CPU, Gentle (3) | 50.3 / 56.6 | 6.6 / 6.7 | 12.9 / 25.5 | 7.8 / 11.5 | 38.6 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Gentle (4) | 6.4 / 9.7 | 7.3 / 7.4 | 15.9 / 28.9 | 8.7 / 13.9 | 15.8 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Very light (1) | 20.9 / 29.5 | 7.7 / 7.8 | 18.1 / 30.6 | 10.2 / 14.4 | 17.8 s | 1,736 MB | - |
+| Qwen3-VL 2B, CPU, Very light (2) | 20.1 / 25.3 | 7.4 / 7.4 | 16.9 / 31.6 | 10.8 / 14.9 | 16.8 s | 1,735 MB | - |
+| Qwen3-VL 2B, Vulkan, Full | 14.6 / 18.0 | 1.7 / 1.7 | 3.2 / 11.5 | 1.8 / 4.9 | 11.2 s | 2,482 MB | 2,062 MB shared |
+| Qwen3-VL 2B, Vulkan, Gentle | 13.0 / 16.2 | 1.7 / 1.7 | 3.1 / 10.2 | 1.8 / 4.8 | 11.0 s | 2,482 MB | 2,062 MB shared |
+| Qwen3-VL 2B, Vulkan, Very light | 13.1 / 16.5 | 1.7 / 1.7 | 3.1 / 10.3 | 1.8 / 4.8 | 11.2 s | 2,482 MB | 2,062 MB shared |
+
+- **Very light slows the processor runtime, nothing else does.** 15 % of 16 threads is about 2.4 threads for
+  llama.cpp's 4, plus efficiency cores: SmolVLM2's Ask took 8.9 s instead of 3.3-3.9 s, Qwen's Compare about 31 s
+  instead of 16-22 s. Gentle (35 %, about 5.6 threads) leaves room for the 4 threads and measured the same as
+  Full within this PC's noise. On Vulkan the graphics do the work and no level changed the times.
+- **No answer was ended or slow enough to be.** Every job finished; the longest gap in an answer was 17.8 s
+  (Qwen, CPU, Very light, a Compare's first word). The one long wait was a cold load: Qwen on the CPU at Gentle,
+  run 2, took 146.6 s to its first word with 127.2 s without progress, over `LOAD_S` (in the app the worker
+  would have been ended as "stopped responding"); run 3, 50 s. Both came while this PC's free memory was low
+  (run 3 started at 3.6 GB free); runs 1 and 4 at Gentle, every Full and every Very light run loaded in 6-21 s.
+  It looks like reading the 1.1 GB model at very low I/O and memory priority while memory is short, not the CPU
+  cap (the same cap at Very light never did it), but that wasn't proven: an open question, see below.
+- **Catalog** (`models.CATALOG` `timing[runtime][level]`, `models.talk_timing`): `load_s` = the median over the
+  runs of (cold first word - warm Describe's first word); `answer_s` = (fastest, slowest) finished Ask, Compare or
+  warm Describe over all runs. SmolVLM2 CPU: Full 3 / 3-11, Gentle 1 / 3-11, Very light 1 / 5-15; Vulkan 1 / 1-3
+  at every level. Qwen CPU: Full 12 / 4-22, Gentle 28 / 4-29, Very light 10 / 7-32; Vulkan: Full 13 / 1-12,
+  Gentle and Very light 11 / 1-11. `vision_state` sends the figures for the level now and the runtime this PC
+  would use; the UI's "Loading … about N s" and the Deeper line's "about N-M s" are these.
+- **"Slower now"**: `vision_state`'s `slow_note` ("Slower now: NOBAD Find is in Very light mode.") when the
+  middle of a level's answer range is at least 1.4 times Full's (`models.SLOW_FACTOR`): the processor at Very
+  light (SmolVLM2 1.43x, Qwen 1.5x), never Gentle or Vulkan. The UI shows it on the Deeper line and under a
+  running answer.
+- Memory and answers as in the row under this one (SmolVLM2 533 / 1,031-1,032 MB, Qwen 1,735-1,736 / 2,482 MB; the
+  sign read as "EXIT" in every run).
+- Runtime on disk (I2, `llama_pins.py`): only the DLLs Find loads are pinned and unpacked: CPU 19 DLLs,
+  30,034,944 bytes (29 MB); Vulkan 20 DLLs, 74,901,504 bytes (71 MB). The 9 dropped (llama-server-impl,
+  llama-cli-impl, llama-common and the other tools' DLLs) were 21.8 MB per runtime; the PE import tables (pefile)
+  of the kept DLLs name nothing outside the kept set, and the real-runtime tests pass on folders with only these.
+  The downloads (the zips, 24 / 37 MB) are unchanged.
+- Open: whether a cold load can stall past `LOAD_S` for a reason Find controls (worker I/O priority while memory
+  is short); a discrete graphics card; a PC with less memory.
+
 ## 2026-11-22 (1.1.0): talk about a photo through the real worker
 
 Describe, Ask and Compare through `vlm.worker.Talker` and its spawned talk worker process (not the llama.cpp
@@ -28,8 +99,9 @@ the PDH counters `\GPU Process Memory(pid_*)\Dedicated Usage` + `Shared Usage`, 
   cat walking on the snow."; it called both dog-park signs "a sign with a dog on it"); Qwen's are long and
   specific (it named the park on the sign, slightly misspelled, the flag and the silos).
 - Loading: Qwen's first word comes 13-15 s after the first question (start + load + the first picture), 2-5 s after
-  later ones; SmolVLM2's 2.4 s (Vulkan) / 6.5 s (CPU) and then 1-4 s. The UI's "Loading … about N s" is 2 s for
-  SmolVLM2 and 13 s for Qwen (`talk_controller.loadSeconds`).
+  later ones; SmolVLM2's 2.4 s (Vulkan) / 6.5 s (CPU) and then 1-4 s. (These runs had no CPU cap; the UI's
+  "Loading … about N s" now comes from the catalog's per-level figures in the section above, sent by
+  `vision_state` as `load_s`.)
 - Memory: on Vulkan with shared-memory graphics the worker commits MORE system RAM than its graphics memory (Qwen
   2,483 vs 2,062 MB), so the need passed to the worker on Vulkan is `max(ram_mb, vram_mb)` (`models.talk_need_mb`,
   on every graphics card: shared and dedicated memory can't be told apart reliably). Catalog, from these rows: `ram_mb` = the biggest

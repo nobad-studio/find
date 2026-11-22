@@ -22,8 +22,8 @@ they're about, and tells you why each result matched.
 - **Talk about a photo (optional, 1.1).** Describe a photo, ask about it ("what's written here?") or compare
   two, with a small vision model that runs on your PC (SmolVLM2 500M, 520 MB; Qwen3-VL 2B, 1,481 MB, for deeper
   answers). One consent covers the model and the llama.cpp runtime it runs on. On the reference PC (i5-12500H,
-  Iris Xe) SmolVLM2 answers in about 1-3 s on the graphics and 3-7 s on the processor, with about 1 GB of
-  memory ([measurements](docs/measurements.md)).
+  Iris Xe) SmolVLM2 answers in about 1-3 s on the graphics and 3-11 s on the processor (5-15 s while NOBAD Find
+  runs very light), with about 1 GB of memory ([measurements](docs/measurements.md)).
 - **Words in photos and scans.** Screenshots, photos of documents and scanned PDFs are read with the OCR built
   into Windows. Offline; it runs after everything else because it's slower.
 - **Plain-language filters.** Kinds ("pdf", "photos", "spreadsheet", "code"), times ("yesterday",
@@ -79,8 +79,9 @@ they're about, and tells you why each result matched.
   Google, Apache-2.0. The photo talk models (1.1) are SmolVLM2 500M (520 MB) and Qwen3-VL 2B (1,481 MB), both
   Apache-2.0, from Hugging Face. Talking about a photo also needs the llama.cpp runtime (MIT, about 24 MB for the
   CPU or 37 MB for the graphics card), downloaded once from llama.cpp's GitHub release only when you say
-  Download, pinned to release b12602 and checked against its SHA-256; only its pinned DLLs are unpacked, each
-  checked again, and the downloaded zip is deleted. (Network drives, if you turn them on, are read over your
+  Download, pinned to release b12602 and checked against its SHA-256; only the DLLs NOBAD Find loads are
+  unpacked (29 MB for the CPU, 71 MB for the graphics card; never llama.cpp's programs), each checked again, and
+  the downloaded zip is deleted. (Network drives, if you turn them on, are read over your
   own network like any other program opening files there.)
 
 ## Windows Search switch

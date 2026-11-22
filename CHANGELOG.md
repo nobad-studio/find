@@ -11,13 +11,19 @@
 - **Runs on this PC only,** with a small vision model (SmolVLM2 500M, 520 MB) and, for deeper answers, Qwen3-VL 2B
   (1,481 MB), on the llama.cpp runtime (24 MB for the processor, 37 MB for the graphics card). Nothing downloads
   until you say Download: one dialog names the model, the runtime it needs, both sizes and the total, and where
-  they come from (huggingface.co; github.com). Files are pinned and checked by size and SHA-256; only the
-  runtime's pinned DLLs are kept, never its programs or its network backend.
-- **Measured on the reference PC (i5-12500H, Iris Xe):** SmolVLM2 answers in about 1-3 s on the graphics,
-  3-7 s on the processor, using about 1 GB of memory; Qwen3-VL in about 2-12 s on the graphics and 7-20 s on the
-  processor once loaded (the first question also loads it, about 13 s), using about 2.5 GB.
+  they come from (huggingface.co; github.com). Files are pinned and checked by size and SHA-256; only the DLLs
+  NOBAD Find loads are kept (29 MB for the processor, 71 MB for the graphics card), never the llama.cpp programs,
+  their tool libraries or its network backend.
+- **Measured on the reference PC (i5-12500H, Iris Xe), with NOBAD Find's own CPU limits in force:** SmolVLM2
+  answers in about 1-3 s on the graphics and 3-11 s on the processor, using about 1 GB of memory; Qwen3-VL in about
+  1-12 s on the graphics and 4-22 s on the processor once loaded (the first question also loads it, about
+  10-13 s), using about 2.5 GB. Talking about a photo follows NOBAD Find's level like the rest of its work: while
+  it runs very light (a game, a call, a busy PC), answers on the processor take longer (SmolVLM2 5-15 s, Qwen3-VL
+  7-32 s) and the photo pane says so ("Slower now: NOBAD Find is in Very light mode."); on the graphics the
+  level makes no difference.
 - **Deeper analysis is only offered when it fits:** it says its memory cost, or why not now (too little free
-  memory, NOBAD Find paused). Qwen3-VL shows a warning on PCs below its tier (16 GB and 8 cores).
+  memory, NOBAD Find paused). Qwen3-VL shows a warning on PCs below its tier (16 GB and 8 cores, or a graphics
+  card with 2.1 GB of its own memory).
 - The model leaves memory 3 minutes after the last question, when memory runs short, or when NOBAD Find pauses.
 - Settings > Models has a "Talk about photos" group: both models and both runtimes, with sizes, memory, Download
   (with the same consent) and Remove.

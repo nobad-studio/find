@@ -117,6 +117,9 @@ Specific to this app:
   `worker.Talker` in the engine; it follows the same rules (released after `IDLE` = `embed.Lazy.IDLE` seconds, on
   a pause or memory pressure, before a runtime reinstall), and the WORKERS commit limit is raised by the model's
   measured need while it is loaded (`models.talk_need_mb`: `max(ram_mb, vram_mb)` on Vulkan, `ram_mb` on the CPU).
+  It stays under the governor's CPU cap and EcoQoS like every worker (maintainer ruling: the user's level wins), so
+  its seconds are measured per runtime and level (`tools/measure_talk.py`, catalog `timing`, `models.talk_timing`)
+  and the UI says only those. Talk models never use DirectML: `models.capable` has their own check.
   Photos reach it only by result id; it opens only the job's photos and the model / runtime files on disk.
 - Typed network paths (\\server\share) are never looked up on disk (`search.folder_checker`): only folders already
   in the index or the folder list count, so typing one can't make Windows contact a server.
