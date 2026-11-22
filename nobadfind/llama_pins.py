@@ -1,7 +1,10 @@
 """The pinned llama.cpp release (tag b12602, tools/vision_bench/models.json): each runtime zip and the DLLs kept from it.
 
-Every .dll in the zip except ggml-rpc.dll (a network backend; maintainer ruling: never kept. b12602's zips do ship
-it, with ggml-rpc-server.exe: neither is pinned, so neither is unpacked) and no .exe. name: (size, SHA-256).
+Only the DLLs Find loads: ggml, ggml-base, the ggml-cpu-* variants, ggml-vulkan (Vulkan zip), libomp, llama and
+mtmd (their PE import tables name nothing else from the zip; checked with pefile on b12602). Not kept: the llama.cpp
+programs' bodies (llama-server-impl, llama-cli-impl, llama-common and the other *-impl.dll tools), ggml-rpc.dll (a
+network backend; maintainer ruling: never kept. b12602's zips do ship it, with ggml-rpc-server.exe) and every .exe.
+What isn't pinned is never unpacked. name: (size, SHA-256).
 """
 
 TAG = 'b12602'
@@ -25,15 +28,6 @@ CPU_DLLS = {
     'ggml-cpu-zen4.dll': (1718272, 'c92291a836347e8cffdbf375dfbfc47cacdee648eb25643a376891173117ab1c'),
     'ggml.dll': (78848, 'bb62f894d04d5b8cd05db1a76d7f0d5c150002053a701ec8c024ec4a9fd3e931'),
     'libomp.dll': (856064, '1e4222f195d84e7355109d778e751dfe3c085e42c947f7fe3d7853181329dd40'),
-    'llama-batched-bench-impl.dll': (62464, '7dfb583aa84eb398999ecf175d3a38965504b151476d276ae92be11ccfd2a516'),
-    'llama-bench-impl.dll': (408576, '57ccf101c89d45b2f58f5769a8fcc8a74c79b97aa46d4b116c27945ffdd4f358'),
-    'llama-cli-impl.dll': (3417088, '69a3279b8531fbf1ee42d8516c80dad8b957f08516250935577686defe6fb9aa'),
-    'llama-common.dll': (8622592, 'c8df2bcd0805a0b8f3067a70b35f33749a712dc783c3ce0063e4c9f58e661584'),
-    'llama-completion-impl.dll': (140800, '55f0521fdde6adeedd5ed94a745ed32a66bfe6ef32c3f6561c5f4fedfa144693'),
-    'llama-fit-params-impl.dll': (48128, '275d3db2271e88138998808b68fef28f19c2459595900c63e35cd4e5baeff30f'),
-    'llama-perplexity-impl.dll': (198656, 'f131e06edd26e1eb609ca35a416fb178fc88095bf2a4d511832ed059a7c910cc'),
-    'llama-quantize-impl.dll': (141312, 'bd0d30df7237fb1dc115230badf799d5d0e24c5b377f8a3ee7f42b8fd11cb642'),
-    'llama-server-impl.dll': (9830400, '8c89c7ff93238cbecc5a6fa65ca356368ab4eda7000b786d3a9ea11644db503c'),
     'llama.dll': (3981824, '22ad70fd7e93eaef859b501674511480cfe8c9f004a3c85c57e66999f1d3e972'),
     'mtmd.dll': (3000320, 'a4d931582e6703f032840f1b7e61252401fb2c1fbe7b2e1831a8f140eda1d102'),
 }
@@ -58,15 +52,6 @@ VULKAN_DLLS = {
     'ggml-vulkan.dll': (44866560, '17713b2524b44deec39453805e3884c4f912a14d3640d6a264b482cf69eed11b'),
     'ggml.dll': (78848, 'bb62f894d04d5b8cd05db1a76d7f0d5c150002053a701ec8c024ec4a9fd3e931'),
     'libomp.dll': (856064, '1e4222f195d84e7355109d778e751dfe3c085e42c947f7fe3d7853181329dd40'),
-    'llama-batched-bench-impl.dll': (62464, '7dfb583aa84eb398999ecf175d3a38965504b151476d276ae92be11ccfd2a516'),
-    'llama-bench-impl.dll': (408576, '57ccf101c89d45b2f58f5769a8fcc8a74c79b97aa46d4b116c27945ffdd4f358'),
-    'llama-cli-impl.dll': (3417088, '69a3279b8531fbf1ee42d8516c80dad8b957f08516250935577686defe6fb9aa'),
-    'llama-common.dll': (8622592, 'c8df2bcd0805a0b8f3067a70b35f33749a712dc783c3ce0063e4c9f58e661584'),
-    'llama-completion-impl.dll': (140800, '55f0521fdde6adeedd5ed94a745ed32a66bfe6ef32c3f6561c5f4fedfa144693'),
-    'llama-fit-params-impl.dll': (48128, '275d3db2271e88138998808b68fef28f19c2459595900c63e35cd4e5baeff30f'),
-    'llama-perplexity-impl.dll': (198656, 'f131e06edd26e1eb609ca35a416fb178fc88095bf2a4d511832ed059a7c910cc'),
-    'llama-quantize-impl.dll': (141312, 'bd0d30df7237fb1dc115230badf799d5d0e24c5b377f8a3ee7f42b8fd11cb642'),
-    'llama-server-impl.dll': (9830400, '8c89c7ff93238cbecc5a6fa65ca356368ab4eda7000b786d3a9ea11644db503c'),
     'llama.dll': (3981824, '22ad70fd7e93eaef859b501674511480cfe8c9f004a3c85c57e66999f1d3e972'),
     'mtmd.dll': (3000320, 'a4d931582e6703f032840f1b7e61252401fb2c1fbe7b2e1831a8f140eda1d102'),
 }

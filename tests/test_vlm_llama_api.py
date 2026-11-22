@@ -103,6 +103,62 @@ def test_a_failed_bind_closes_the_dll_directory(tmp_path, monkeypatch):
     assert closed == [True] and os.path.normcase(str(tmp_path)) not in llama_api._loaded
 
 
+def test_a_cpu_variant_that_will_not_load_scores_0_and_is_skipped(tmp_path):
+    """T3-m1: a damaged or foreign CPU variant DLL is skipped (score 0), never an OSError out of load()."""
+    bad = tmp_path / "ggml-cpu-haswell.dll"
+    bad.write_bytes(b"not a DLL")
+    assert llama_api._cpu_score(str(bad)) == 0
+    (tmp_path / "ggml-cpu-x64.dll").write_bytes(b"")
+    scores = {"ggml-cpu-x64.dll": 1}
+    got = llama_api._backend_paths(str(tmp_path), lambda p: scores.get(os.path.basename(p))
+                                   if os.path.basename(p) in scores else llama_api._cpu_score(p))
+    assert [os.path.basename(p) for p in got] == ["ggml-cpu-x64.dll"]
+
+
+class _FakeGgml:
+    def __init__(self, regs):
+        self.regs, self.loaded = regs, []
+
+    def ggml_backend_load(self, path):
+        name = os.path.basename(os.fsdecode(path))
+        self.loaded.append(name)
+        return self.regs.get(name)
+
+
+def _fake_load(tmp_path, monkeypatch, ggml, backends):
+    for n in llama_api.DLLS:
+        (tmp_path / n).write_bytes(b"")
+    libs = iter([ggml, object(), object()])
+    monkeypatch.setattr(llama_api.ctypes, "CDLL", lambda p: next(libs))
+    monkeypatch.setattr(llama_api, "_bind", lambda *a: None)
+    monkeypatch.setattr(llama_api, "_backend_paths", lambda d: [os.path.join(d, n) for n in backends])
+
+
+@pytest.mark.parametrize("backends, regs", [
+    (["ggml-cpu-haswell.dll"], {}),                                      # the chosen CPU variant gives NULL
+    (["ggml-cpu-haswell.dll", "ggml-vulkan.dll"], {"ggml-vulkan.dll": 1}),
+    (["ggml-vulkan.dll"], {"ggml-vulkan.dll": 1}),                        # no CPU variant runs on this CPU
+    ([], {}),
+])
+def test_no_cpu_backend_is_a_runtime_error_not_a_memory_note(tmp_path, monkeypatch, backends, regs):
+    """T3-m2: when the CPU backend doesn't register, load() says so (RuntimeError) instead of carrying on to fail
+    later as an allocation error ("Not enough memory")."""
+    _fake_load(tmp_path, monkeypatch, _FakeGgml(regs), backends)
+    with pytest.raises(RuntimeError, match=llama_api.NO_CPU):
+        llama_api.load(str(tmp_path))
+    assert os.path.normcase(str(tmp_path)) not in llama_api._loaded
+
+
+def test_vulkan_without_a_device_is_fine_when_the_cpu_registers(tmp_path, monkeypatch):
+    ggml = _FakeGgml({"ggml-cpu-haswell.dll": 1})                        # ggml-vulkan.dll: NULL (no driver)
+    _fake_load(tmp_path, monkeypatch, ggml, ["ggml-cpu-haswell.dll", "ggml-vulkan.dll"])
+    try:
+        lib = llama_api.load(str(tmp_path))
+        assert lib.ggml is ggml and ggml.loaded == ["ggml-cpu-haswell.dll", "ggml-vulkan.dll"]
+    finally:
+        llama_api._loaded.pop(os.path.normcase(str(tmp_path)), None)
+
+
 def _values(struct):
     return {name: getattr(struct, name) for name, _ in struct._fields_}
 

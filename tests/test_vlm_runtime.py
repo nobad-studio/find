@@ -166,3 +166,14 @@ def test_the_real_pins_are_plain_dll_names():
         assert m["url"].startswith("https://github.com/ggml-org/llama.cpp/releases/download/")
         assert all(runtime._plain(n) and n.endswith(".dll") for n in m["files_in_zip"])
         assert "ggml-rpc.dll" not in m["files_in_zip"]
+
+
+def test_only_the_dlls_find_loads_are_pinned():
+    """I2: no llama.cpp program bodies (llama-server-impl, llama-cli-impl, llama-common, the other *-impl tools) are
+    kept on disk: only ggml, ggml-base, the CPU variants, ggml-vulkan (Vulkan zip), libomp, llama and mtmd."""
+    for rid, extra in (("llama-cpu", set()), ("llama-vulkan", {"ggml-vulkan.dll"})):
+        z = set(models.get(rid)["files_in_zip"])
+        cpu = {n for n in z if n.startswith("ggml-cpu-")}
+        assert len(cpu) >= 10, rid                              # every CPU variant of the release
+        assert z - cpu == {"ggml.dll", "ggml-base.dll", "libomp.dll", "llama.dll", "mtmd.dll"} | extra, rid
+        assert not any(n.endswith("-impl.dll") or n == "llama-common.dll" for n in z), rid

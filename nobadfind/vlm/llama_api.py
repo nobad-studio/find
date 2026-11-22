@@ -228,6 +228,7 @@ MTMD_FUNCS = {
 }
 
 INCOMPLETE = "llama.cpp runtime incomplete"
+NO_CPU = "llama.cpp runtime has no CPU backend"
 DLLS = ("ggml.dll", "llama.dll", "mtmd.dll")             # load order
 # the only backend DLLs ever loaded: the pinned CPU variants and Vulkan (never ggml-rpc.dll, never an unlisted name)
 BACKENDS = tuple(sorted(n for n in {**llama_pins.CPU_DLLS, **llama_pins.VULKAN_DLLS}
@@ -258,8 +259,12 @@ def _bind(dll, funcs, dll_name):
 
 
 def _cpu_score(path):
-    """ggml_backend_score() of one pinned CPU variant DLL: 0 when this CPU can't run it (ggml-cpu/ggml-cpu.cpp)."""
-    dll = ctypes.CDLL(path)
+    """ggml_backend_score() of one pinned CPU variant DLL: 0 when this CPU can't run it (ggml-cpu/ggml-cpu.cpp) or
+    the DLL can't be loaded here (then it is skipped, not the whole runtime)."""
+    try:
+        dll = ctypes.CDLL(path)
+    except OSError:
+        return 0
     try:
         fn = getattr(dll, "ggml_backend_score", None)
         if fn is None:
@@ -320,8 +325,14 @@ def load(runtime_dir, quiet=False):
             _bind(mtmd, MTMD_FUNCS, "mtmd.dll")
             if quiet:
                 silence_logs(Lib(runtime_dir, None, ggml, llama, mtmd))
-            for path in _backend_paths(runtime_dir):
-                ggml.ggml_backend_load(os.fsencode(path))      # NULL when it has no device here (e.g. no Vulkan)
+            paths = _backend_paths(runtime_dir)
+            if not any(os.path.basename(p).startswith("ggml-cpu-") for p in paths):
+                raise RuntimeError(f"{NO_CPU}: no pinned CPU variant runs on this processor")
+            for path in paths:
+                reg = ggml.ggml_backend_load(os.fsencode(path))
+                if not reg and os.path.basename(path).startswith("ggml-cpu-"):
+                    raise RuntimeError(f"{NO_CPU}: {os.path.basename(path)} did not register")
+                # ggml-vulkan.dll: NULL when it has no device here (no Vulkan driver); the CPU still runs it
         except BaseException:
             if dll_dir is not None:
                 dll_dir.close()
