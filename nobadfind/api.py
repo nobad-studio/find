@@ -86,15 +86,21 @@ class Api:
             return empty
         try:
             asks = {}
-            r = search(self._store, text, self._indexer.embedder, self._vindex, drives=self._indexer.drive_list,
-                       here=self.here, filters=filters, roots=self._indexer.roots(self._indexer.drive_list),
-                       photo_text=self._indexer.photo_text, pindex=self._indexer.pindex, cancelled=cancelled,
+            # the settings and apps first (a few ms): "open windows update" + Enter waits for this answer, so a
+            # question that asks to open one of them skips the meaning and photo models (seconds on a big index);
+            # its files are still found by name and words
+            acts = self.actions_for(text) if channel != "home" else []
+            quick = bool(acts) and self._launch_question(text)
+            r = search(self._store, text, None if quick else self._indexer.embedder, None if quick else self._vindex,
+                       drives=self._indexer.drive_list, here=self.here, filters=filters,
+                       roots=self._indexer.roots(self._indexer.drive_list),
+                       photo_text=None if quick else self._indexer.photo_text,
+                       pindex=None if quick else self._indexer.pindex, cancelled=cancelled,
                        romanized=self._romanized(), asks=asks)
             if not r.get("cancelled"):
-                needs = self._needs(asks, len(r.get("results") or ()))
+                needs = [] if quick else self._needs(asks, len(r.get("results") or ()))
                 if needs:
                     r["needs"] = needs
-                acts = self.actions_for(text) if channel != "home" else []
                 if acts:
                     r["actions"] = acts
             return r
@@ -112,6 +118,13 @@ class Api:
         except Exception as e:
             log(f"actions failed: {type(e).__name__}", "warn")
             return []
+
+    def _launch_question(self, text):
+        lch = getattr(self, "_launcher", None)
+        try:
+            return lch is not None and lch.wants(text)
+        except Exception:
+            return False
 
     def run_action(self, action_id):
         """Open a Windows Settings page, a Windows tool or an app, by the id search gave (never a path)."""

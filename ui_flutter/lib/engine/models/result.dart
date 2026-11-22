@@ -259,13 +259,30 @@ class SearchAction {
 }
 
 /// "open bluetooth", "turn off wifi", "display settings": the question asks to open something (Enter opens the
-/// first action instead of the first file).
+/// first action instead of the first file). A typo of one letter counts ("opn windws update"), as the engine's
+/// launcher.correct does: 3+ letters, the same first letter.
 bool wantsLaunch(String text) {
   final w = text.toLowerCase().trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
   if (w.isEmpty) return false;
-  return const {'open', 'launch', 'start', 'run', 'turn', 'switch', 'enable', 'disable'}.contains(w.first) ||
-      w.last == 'settings' ||
-      w.last == 'setting';
+  const verbs = {'open', 'launch', 'start', 'run', 'turn', 'switch', 'enable', 'disable'};
+  bool near(String x, Iterable<String> words) => words.contains(x) || words.any((v) => _oneEdit(x, v));
+  return near(w.first, verbs) || near(w.last, const {'settings', 'setting'});
+}
+
+/// x is one edit from v (a letter added, dropped, changed, or two neighbours swapped), 3+ letters, same first letter.
+bool _oneEdit(String x, String v) {
+  if (x.length < 3 || x[0] != v[0] || (x.length - v.length).abs() > 1) return false;
+  if (x.length == v.length) {
+    final diff = [for (var i = 0; i < x.length; i++) if (x[i] != v[i]) i];
+    return diff.length == 1 ||
+        (diff.length == 2 && diff[1] == diff[0] + 1 && x[diff[0]] == v[diff[1]] && x[diff[1]] == v[diff[0]]);
+  }
+  final (a, b) = x.length < v.length ? (x, v) : (v, x); // b is one letter longer
+  var i = 0;
+  while (i < a.length && a[i] == b[i]) {
+    i++;
+  }
+  return a.substring(i) == b.substring(i + 1);
 }
 
 /// One `needs` entry: [model] photo | meaning, [state] missing | off | analyzing ([done] of [total]),

@@ -43,7 +43,7 @@ SETTINGS = [
     ("usb", "USB", "ms-settings:usb", "usb ports"),
     ("camera", "Cameras", "ms-settings:camera", "camera webcam"),
     ("wifi", "Wi-Fi", "ms-settings:network-wifi", "wifi wi-fi wireless wlan internet network hotspot"),
-    ("network", "Network & internet", "ms-settings:network", "network internet connection ethernet status"),
+    ("network", "Network & internet", "ms-settings:network-status", "network internet connection ethernet status"),
     ("ethernet", "Ethernet", "ms-settings:network-ethernet", "ethernet cable lan wired"),
     ("vpn", "VPN", "ms-settings:network-vpn", "vpn virtual private network"),
     ("proxy", "Proxy", "ms-settings:network-proxy", "proxy"),
@@ -140,8 +140,62 @@ def words(text):
 
 def wants_launch(text):
     """The question starts with a launch word ("open ...", "turn off ..."), or ends with "settings"."""
-    w = words(text)
+    return _wants(words(text))
+
+
+def _wants(w):
     return bool(w) and (w[0] in LAUNCH_WORDS or w[-1] in ("settings", "setting"))
+
+
+def _osa(a, b, cap):
+    """Edit distance with swapped neighbours counting once (optimal string alignment); > cap stops early."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        if min(cur) > cap:
+            return cap + 1
+        prev2, prev = prev, cur
+    return prev[-1]
+
+
+# The words Find's own table knows: launch words, filler words and every entry's title and keywords. A typo is
+# corrected only to one of these (never to anything typed or read from the PC), so matching stays deterministic.
+_TABLE = {w for x in SETTINGS for w in words(x[1] + " " + x[3])}
+_FIXED = sorted(VERBS | LAUNCH_WORDS | _TABLE)
+_FIXED_SET = set(_FIXED)
+_FIRST = {}
+for _w in _FIXED:
+    _FIRST.setdefault(_w[0], []).append(_w)
+
+
+def correct(ws, known=()):
+    """ws with typos fixed against the fixed table's words: "opn windws update" -> open windows update.
+    Only a word of 3+ letters that no table, catalog or app knows; the first letter must match; 1 edit up to 5
+    letters, 2 from 6 ("pannle" -> panel). The nearest word wins; on a tie a launch word, then a word an entry
+    has over a filler word ("managr" -> manager, not manage), then the alphabet."""
+    out = []
+    for w in ws:
+        if len(w) < 3 or w in known or w.isdigit() or w in _FIXED_SET:
+            out.append(w)
+            continue
+        cap = 1 if len(w) <= 5 else 2
+        best = None
+        for c in _FIRST.get(w[0], ()):
+            if len(c) < 3 or (len(w) == 3 and c not in VERBS):
+                continue                                # 3 letters: only "opn" -> open, never "tax" -> tab
+            d = _osa(w, c, cap)
+            if d <= cap:
+                k = (d, c not in LAUNCH_WORDS, c not in _TABLE, c)
+                if best is None or k < best:
+                    best = k
+        out.append(best[-1] if best else w)
+    return out
 
 
 def _score(qwords, title, extra):
@@ -312,15 +366,33 @@ class Launcher:
             self._at = self._clock()                    # not again for a while
 
     # ---------- matching ----------
+    def _words(self, text):
+        """The question's words, typos corrected against the fixed table (correct()); words the settings catalog
+        or an app's name has are kept as typed."""
+        ws = words(text)
+        with self._lock:
+            index, apps = self.catalog.index, self.apps
+        if all(len(w) < 3 or w in _FIXED_SET or w in index for w in ws):
+            return ws
+        known = set(index)
+        for a in apps:
+            known.update(words(a.get("name", "")))
+        return correct(ws, known)
+
+    def wants(self, text):
+        """wants_launch with typos corrected: "opn windws update" asks to open something."""
+        return _wants(self._words(text))
+
     def actions(self, text, limit=4):
         """The best settings pages and apps for the question, best first; [] when nothing fits well."""
-        w = [x for x in words(text) if x not in VERBS] or [x for x in words(text) if x not in ("open", "launch")]
+        qw = self._words(text)
+        w = [x for x in qw if x not in VERBS] or [x for x in qw if x not in ("open", "launch")]
         if not w or len(" ".join(w)) < 2:
             return []
-        launch = wants_launch(text)
+        launch = _wants(qw)
         # 0.9.5: the question minus its launch word (and a trailing "app" / "page") naming an entry exactly wins:
         # "open windows update" is Windows Update, not Update history ("windows" alone is a filler word above)
-        full = [x for x in words(text) if x not in ("open", "launch", "start", "run", "go", "to", "please", "the", "my")]
+        full = [x for x in qw if x not in ("open", "launch", "start", "run", "go", "to", "please", "the", "my")]
         while len(full) > 1 and full[-1] in ("app", "page", "window"):
             full.pop()
         named = " ".join(full)
