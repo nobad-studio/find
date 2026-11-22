@@ -53,6 +53,10 @@
 - A file name can no longer hide what it is with invisible direction characters (a program named to look like
   `Invoice_exe.pdf`): those characters are shown as `[U+202E]`, the details show the real extension, and a
   disguised program says "opening it runs a program".
+- The files and folders you forget are no longer written in plain text: NOBAD Find keeps that list apart from
+  its settings file, protected for your Windows account, and moves an existing list there once after the
+  update. Two windows forgetting at the same moment no longer lose one of them.
+- Copy name copies the file's real name, even when the window shows hidden characters in it as `[U+...]`.
 - "Delete the whole index" now also removes the list of files you forgot from the settings file, empties NOBAD
   Find's log, and deletes old index copies kept after a sign-in key problem. Your settings and your own Never index
   folders stay.

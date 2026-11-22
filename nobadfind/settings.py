@@ -67,11 +67,32 @@ def coerce(key, value):
     return d
 
 
+FORGOTTEN_FILE = "forgotten.dat"
+
+
+def _protect(data):
+    from .winapi import dpapi_protect
+    return dpapi_protect(data)
+
+
+def _unprotect(data):
+    from .winapi import dpapi_unprotect
+    return dpapi_unprotect(data)
+
+
 class Settings:
+    """The settings file, plus the files and folders Forget added to `exclude` (fix round 1, I5): those are kept
+    apart in FORGOTTEN_FILE next to it, protected with DPAPI for this Windows account, never in settings.json.
+    In memory `exclude` holds both (the walk, the turbo filter and the Never index list see one list); _save
+    splits them again. If DPAPI can't protect them, they stay in settings.json rather than coming back."""
+
     def __init__(self, path):
         self.path = path
         self._lock = threading.Lock()
         self.data = dict(DEFAULTS)
+        self._forgot = set()
+        self._forgot_read = False                       # until the protected file is read, _save leaves it alone
+        self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
@@ -88,6 +109,88 @@ class Settings:
                 self._migrate()
         except (OSError, ValueError):
             pass
+        self._load_forgotten()
+
+    # ---------- what Forget added (DPAPI-protected, apart from settings.json) ----------
+    def _load_forgotten(self):
+        try:
+            with open(self._fpath, "rb") as f:
+                got = json.loads(_unprotect(f.read()).decode("utf-8"))
+        except FileNotFoundError:
+            self._forgot_read = True
+            return
+        except (OSError, ValueError, UnicodeDecodeError):
+            from .log import log
+            log("the forgotten list couldn't be read; it is left as it is", "warn")
+            return                                      # never overwritten: another account's or a broken copy
+        self._forgot_read = True
+        paths = _paths(got if isinstance(got, list) else [])
+        self._forgot = set(paths)
+        ex = list(self.data.get("exclude") or [])
+        self.data["exclude"] = _paths(ex + [p for p in paths if p not in ex])
+
+    def forgotten(self):
+        """The Never index entries Forget added (they also are in get("exclude"))."""
+        with self._lock:
+            return [e for e in self.data.get("exclude") or [] if e in self._forgot]
+
+    def forget(self, path):
+        """Add path to exclude as a forgotten entry and save, all under the lock (two windows forgetting at once
+        both stay). "ok", "full" (MAX_PATHS entries) or "known" (already there). Raises OSError when it can't be
+        saved; nothing changed then."""
+        path = os.path.normpath(path)
+        with self._lock:
+            ex = list(self.data.get("exclude") or [])
+            if path in ex:
+                return "known"
+            if len(ex) >= MAX_PATHS:
+                return "full"
+            old, old_forgot = dict(self.data), set(self._forgot)
+            self.data["exclude"] = ex + [path]
+            self._forgot.add(path)
+            try:
+                self._save()
+            except Exception:
+                self.data, self._forgot = old, old_forgot
+                raise
+        return "ok"
+
+    def mark_forgotten(self, paths):
+        """One-time move (fix round 1, I5): entries of exclude that Forget added before they were kept apart leave
+        settings.json for the protected file. Returns how many moved."""
+        with self._lock:
+            ex = set(self.data.get("exclude") or [])
+            new = {os.path.normpath(p) for p in paths if isinstance(p, str)} & ex - self._forgot
+            if not new:
+                return 0
+            old_forgot = set(self._forgot)
+            self._forgot |= new
+            try:
+                self._save()
+            except Exception:
+                self._forgot = old_forgot
+                raise
+        return len(new)
+
+    def _write_forgotten(self, paths):
+        """True when the protected file holds exactly paths (or is gone because there are none)."""
+        if not paths:
+            try:
+                os.remove(self._fpath)
+            except FileNotFoundError:
+                pass
+            return True
+        try:
+            blob = _protect(json.dumps(paths).encode("utf-8"))
+        except (OSError, AttributeError, NameError):
+            from .log import log
+            log("DPAPI couldn't protect the forgotten list; it stays in settings.json", "warn")
+            return False
+        tmp = self._fpath + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(blob)
+        os.replace(tmp, self._fpath)
+        return True
 
     def _migrate(self):
         """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
@@ -152,7 +255,13 @@ class Settings:
 
     def _save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        ex = list(self.data.get("exclude") or [])
+        self._forgot &= set(ex)                         # taken out of Never index: no longer forgotten
+        forgot = [e for e in ex if e in self._forgot]
+        plain = dict(self.data)
+        if self._forgot_read and self._write_forgotten(forgot):               # first: a crash in between leaves both copies, never none
+            plain["exclude"] = [e for e in ex if e not in self._forgot]
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=1)
+            json.dump(plain, f, indent=1)
         os.replace(tmp, self.path)

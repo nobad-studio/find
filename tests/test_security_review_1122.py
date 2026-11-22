@@ -41,12 +41,71 @@ def test_forget_that_cannot_save_says_so(tmp_path, monkeypatch):
     a, s = make_api(tmp_path)
     ids = _add(s, 1)
 
-    def broken(changes):
+    def broken():
         raise OSError("disk full")
-    monkeypatch.setattr(a._settings, "update", broken)
+    monkeypatch.setattr(a._settings, "_save", broken)
     r = a.forget(ids["f0.txt"])
     assert r["ok"] is False and r["error"]
     assert s.one("SELECT count(*) FROM files") == 1
+    assert os.path.join(PROF, "Docs", "f0.txt") not in a._settings.get("exclude")   # not changed in memory either
+    s.close()
+
+
+# ---------- fix round 1 (I5): forgotten paths are DPAPI-protected, never in settings.json ----------
+def test_a_forgotten_path_is_kept_protected_and_out_of_settings_json(tmp_path):
+    from nobadfind.settings import FORGOTTEN_FILE, Settings
+    a, s = make_api(tmp_path)
+    mine = str(tmp_path / "MyNeverFolder")
+    a._settings.update({"exclude": [mine]})
+    ids = _add(s, 1)
+    assert a.forget(ids["f0.txt"])["ok"]
+    secret = os.path.join(PROF, "Docs", "f0.txt")
+    plain = open(tmp_path / "s.json", encoding="utf-8").read()
+    assert secret.replace("\\", "\\\\") not in plain and "f0.txt" not in plain and "MyNeverFolder" in plain
+    blob = (tmp_path / FORGOTTEN_FILE).read_bytes()
+    assert b"f0.txt" not in blob and "f0.txt".encode("utf-16-le") not in blob     # DPAPI, not plain text
+    assert a._settings.get("exclude") == [mine, secret]               # one list for the walk and the UI
+    again = Settings(str(tmp_path / "s.json"))                          # read back at the next start
+    assert again.get("exclude") == [mine, secret] and again.forgotten() == [secret]
+    again.update({"exclude": [mine]})                                   # taken out of Never index in Settings
+    assert not (tmp_path / FORGOTTEN_FILE).exists() and Settings(str(tmp_path / "s.json")).get("exclude") == [mine]
+    s.close()
+
+
+def test_two_forgets_at_once_both_stay(tmp_path):
+    import threading
+    a, s = make_api(tmp_path)
+    ids = _add(s, 20)
+    ts = [threading.Thread(target=a.forget, args=(ids[f"f{i}.txt"],)) for i in range(20)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert len(a._settings.forgotten()) == 20 and s.one("SELECT count(*) FROM files") == 0
+    s.close()
+
+
+def test_forgotten_paths_already_in_settings_json_move_out_once(tmp_path):
+    import json
+    from nobadfind.settings import FORGOTTEN_FILE
+    from nobadfind.store import Store
+    from nobadfind.settings import Settings
+    from nobadfind import api as api_mod
+    from test_scope_indexer import Ix
+    mine = tmp_path / "MyNeverFolder"
+    mine.mkdir()
+    old_file = tmp_path / "medical.pdf"                                 # forgotten by 1.0: a file in exclude
+    old_file.write_text("x")
+    noted = os.path.join(PROF, "Gone", "noted.txt")                     # forgotten in 1.1 before this fix (meta)
+    (tmp_path / "s.json").write_text(json.dumps({"exclude": [str(mine), str(old_file), noted]}), encoding="utf-8")
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    s.set_meta("forgotten", json.dumps([noted]))
+    a = api_mod.Api(s, Settings(str(tmp_path / "s.json")), Ix(), None)
+    plain = open(tmp_path / "s.json", encoding="utf-8").read()
+    assert "medical.pdf" not in plain and "noted.txt" not in plain and "MyNeverFolder" in plain
+    assert (tmp_path / FORGOTTEN_FILE).exists()
+    assert set(a._settings.get("exclude")) == {str(mine), str(old_file), noted}
+    assert s.meta("forgotten_moved") == "1"
     s.close()
 
 

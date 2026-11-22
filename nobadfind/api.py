@@ -64,6 +64,7 @@ class Api:
         self._talk_lock = threading.Lock()
         self._on_vision = None            # engine.py: push one `vision` event to the UI
         self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
+        self._migrate_forgotten()         # once: forgotten paths out of settings.json (fix round 1, I5)
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -301,18 +302,15 @@ class Api:
             return {"ok": False}
         from .settings import MAX_PATHS
         keep = os.path.normpath(p)
-        old = list(self._settings.get("exclude") or [])
-        if keep not in old:
-            if len(old) >= MAX_PATHS:            # security review 2026-11-22 (M4): never ok without keeping it out
-                return {"ok": False, "error": f"The Never index list is full ({MAX_PATHS} entries). Remove some "
-                                              "in Settings > What to index, or forget the folder instead."}
-            try:
-                self._settings.update({"exclude": old + [keep]})
-            except OSError:
-                return {"ok": False, "error": "NOBAD Find couldn't save the Never index list."}
-            if keep not in (self._settings.get("exclude") or []):
-                return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
-            self._note_forgotten(keep)
+        try:                                     # review M4: never ok without keeping it out; fix round 1, I5: the
+            got = self._settings.forget(keep)    # entry is kept DPAPI-protected, apart from settings.json
+        except OSError:
+            return {"ok": False, "error": "NOBAD Find couldn't save the Never index list."}
+        if got == "full":
+            return {"ok": False, "error": f"The Never index list is full ({MAX_PATHS} entries). Remove some "
+                                          "in Settings > What to index, or forget the folder instead."}
+        if keep not in (self._settings.get("exclude") or []):
+            return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
         self._store.forget_path(p)
         return {"ok": True}
 
@@ -325,14 +323,23 @@ class Api:
             v = []
         return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
-    def _note_forgotten(self, path):
-        """Remember, inside the encrypted index, that Forget (not the user's folder list) added path to exclude."""
+    def _migrate_forgotten(self):
+        """Once (fix round 1, I5): the Never index entries Forget added before 1.1.0 kept them apart leave
+        settings.json for the DPAPI-protected list: the ones noted in the index (meta forgotten) and the ones that
+        are files (the folder picker adds folders only; network paths are never looked up)."""
+        if self._store is None or not hasattr(self._settings, "mark_forgotten"):
+            return                                       # (tests that make an Api without an index)
         try:
-            got = self._forgotten()
-            if path not in got:
-                self._store.set_meta(self.FORGOTTEN, json.dumps((got + [path])[-20000:]))
+            if self._store.meta("forgotten_moved") == "1":
+                return
+            cand = set(self._forgotten())
+            cand |= {e for e in self._settings.get("exclude") or [] if not e.startswith("\\\\") and os.path.isfile(e)}
+            n = self._settings.mark_forgotten(cand)
+            self._store.set_meta("forgotten_moved", "1")
+            if n:
+                log(f"{n} forgotten entries moved out of settings.json")
         except Exception as e:
-            log(f"forget: not noted for Wipe ({type(e).__name__})", "warn")
+            log(f"forgotten list move failed: {type(e).__name__}", "warn")
 
     # ---------- status and settings ----------
     def status(self):
@@ -803,12 +810,12 @@ class Api:
         user's own Never index folders, the index key, downloaded models."""
         if confirm != "DELETE":
             return {"ok": False}
-        forgot = set(self._forgotten())
+        forgot = set(self._forgotten()) | set(getattr(self._settings, "forgotten", list)())
         exclude = list(self._settings.get("exclude") or [])
-        keep = [e for e in exclude if e not in forgot and not os.path.isfile(e)]
-        if keep != exclude:
+        keep = [e for e in exclude if e not in forgot and (e.startswith("\\\\") or not os.path.isfile(e))]
+        self._store.wipe()                      # the index first: a crash after it can't leave forgotten files out
+        if keep != exclude:                     # of exclude with the old index still there (review N7)
             self._settings.update({"exclude": keep})
-        self._store.wipe()
         self._store.remove_aside_copies()
         thumbs.clear()
         from . import log as log_mod

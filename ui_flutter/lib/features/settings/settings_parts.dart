@@ -10,6 +10,7 @@ import '../../app/scope.dart';
 import '../../app/theme/colors.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
+import '../../engine/models/safe_text.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/panels.dart';
@@ -210,7 +211,7 @@ class FoldersSetting extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        Expanded(child: Text(list[i], style: NbType.data(12, c.muted))),
+                        Expanded(child: Text(visibleControls(list[i]), style: NbType.data(12, c.muted))), // review N10
                         Pressable(
                           onTap: () => s.removeFolder(k, i),
                           semanticLabel: 'Remove ${list[i]}',

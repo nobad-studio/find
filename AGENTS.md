@@ -92,7 +92,9 @@ Specific to this app:
   (`const.NAMES_ONLY_*`) are names only even with caches on, other people's files and
   `const.FIXED_NAMES` and `const.ALWAYS_OUT_PATHS` (Windows' and Office's Recent items and jump lists: their
   names are the activity history ruled out above) are always out. The walk, `Walker.excluded` (live changes) and the turbo helper's `ntfs.Filter`
-  all use `scope.Rules`; keep them in step.
+  all use `scope.Rules`; keep them in step. What Forget adds to `exclude` is never written in plain text: `Settings`
+  keeps it in `forgotten.dat` next to settings.json, DPAPI-protected for the user (fix round 1, I5); in memory
+  `exclude` holds both, so the walk, the turbo filter and the Never index list see one list.
 - OCR (`ocr.py`) uses only the Windows built-in `Windows.Media.Ocr` through the pinned `winrt-*` 3.2.1 packages
   (keep every winrt package on one version), inside the text worker processes. No OCR model downloads.
 - Call detection (`winapi.in_call`) reads the user's own CapabilityAccessManager records; stale records from

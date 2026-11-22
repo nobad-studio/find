@@ -8,12 +8,12 @@ library;
 
 /// The characters made visible: LRE RLE PDF LRO RLO (U+202A-U+202E), LRI RLI FSI PDI (U+2066-U+2069), LRM RLM
 /// (U+200E, U+200F), the Arabic letter mark (U+061C), and the invisible zero width space (U+200B), word joiner
-/// (U+2060) and byte order mark (U+FEFF).
+/// (U+2060), invisible operators (U+2061-U+2064), Mongolian vowel separator (U+180E) and byte order mark (U+FEFF).
 const hiddenControls = <int>{
   0x202A, 0x202B, 0x202C, 0x202D, 0x202E, //
   0x2066, 0x2067, 0x2068, 0x2069, //
   0x200E, 0x200F, 0x061C, //
-  0x200B, 0x2060, 0xFEFF,
+  0x200B, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x180E, 0xFEFF,
 };
 
 final _hidden = RegExp('[${hiddenControls.map((c) => String.fromCharCode(c)).join()}]');
