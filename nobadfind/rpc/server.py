@@ -358,6 +358,12 @@ class Server:
             self.drop(conn, linger or self._stop.is_set())    # stopping: what was written stays readable
 
     def _answer(self, conn, line):
+        try:
+            self._answer1(conn, line)
+        except Exception as e:                                 # in a pool thread nobody would see it
+            log(f"rpc answer failed: {type(e).__name__}", "warn")
+
+    def _answer1(self, conn, line):
         t0 = time.perf_counter()
         after = []
         reply = handle_line(line, self.methods, conn, after=after)

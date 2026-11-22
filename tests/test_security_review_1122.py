@@ -76,3 +76,38 @@ def test_a_long_never_index_list_is_checked_by_folder_level_not_one_by_one():
     assert not w.excluded(r"D:\Old\x5\inner\f.txt")               # a root inside an excluded folder is walked
 
 
+# ---------- L1: deep or odd JSON always gets a JSON-RPC error back ----------
+def _methods():
+    return {"ping": lambda params, conn: {"ok": True, "n": len(params)}}
+
+
+def test_the_reviewers_deep_json_gets_an_error_not_a_recursion_error():
+    from nobadfind.rpc import protocol
+    line = b"[" * 200_000 + b"]" * 200_000                          # 400 KB, under MAX_MESSAGE
+    assert len(line) < protocol.MAX_MESSAGE
+    r = protocol.handle_line(line, _methods())
+    assert r["error"]["code"] == protocol.INVALID_REQUEST and r["id"] is None
+    r = protocol.handle_line(b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"a":' + b"[" * 5000 + b"]" * 5000
+                             + b"}}", _methods())
+    assert r["error"]["code"] == protocol.INVALID_REQUEST
+
+
+def test_nesting_inside_strings_and_ordinary_requests_still_pass():
+    from nobadfind.rpc import protocol
+    deep_text = '"' + "[" * 5000 + '\\"{' * 100 + '"'
+    line = ('{"jsonrpc":"2.0","id":7,"method":"ping","params":{"text":' + deep_text + ',"f":{"a":[[1]]}}}').encode()
+    assert protocol.handle_line(line, _methods()) == {"jsonrpc": "2.0", "id": 7, "result": {"ok": True, "n": 2}}
+    ok_depth = b'{"jsonrpc":"2.0","id":2,"method":"ping","params":{"x":' + b"[" * 30 + b"]" * 30 + b"}}"
+    assert protocol.handle_line(ok_depth, _methods())["result"]["ok"] is True
+
+
+def test_a_recursion_error_from_the_parser_is_a_parse_error(monkeypatch):
+    from nobadfind.rpc import protocol
+
+    def deep(*a, **k):
+        raise RecursionError("maximum recursion depth exceeded")
+    monkeypatch.setattr(protocol.json, "loads", deep)
+    assert protocol.handle_line(b'{"jsonrpc":"2.0","id":1,"method":"ping"}', _methods())["error"]["code"] == \
+        protocol.PARSE_ERROR
+
+
