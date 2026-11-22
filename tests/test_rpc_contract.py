@@ -140,6 +140,14 @@ BAD = {
     "unsubscribe": [{"events": "status"}, {}],
     "ui_shown": [{"window": "desktop"}],
     "ui_hidden": [{"window": 3}],
+    "vision_describe": [{"file_id": "7"}, {"file_id": True}, {"file_id": 1.5}, {"file_id": None}, {}],
+    "vision_ask": [{"file_id": "7", "question": "x"}, {"file_id": 7}, {"file_id": 7, "question": 5},
+                   {"file_id": 7, "question": "x" * 2001}, {"file_id": 7, "question": "x", "deeper": "yes"},
+                   {"file_id": 7, "question": "x", "more": 1}],
+    "vision_compare": [{"a": 7, "b": "8"}, {"a": True, "b": 8}, {"a": 7}, {"a": 7, "b": 8, "question": 5},
+                       {"a": 7, "b": 8, "question": "x" * 2001}],
+    "vision_keep": [{"file_id": "7", "text": "x"}, {"file_id": 7}, {"file_id": 7, "text": None},
+                    {"file_id": 7, "text": "x" * 4001}],
 }
 
 
@@ -151,6 +159,32 @@ def test_bad_params_are_refused_by_the_handler_and_the_schema(name):
         r = call(e.methods, name, params, e.conn)
         assert r.get("error", {}).get("code") == protocol.INVALID_PARAMS, (name, params, r)
     assert not [c for c in e.api.calls if c[0] in ("open", "reveal", "forget", "wipe", "quit")]
+
+
+def test_vision_calls_name_photos_by_result_id_and_always_carry_a_job():
+    for m in ("vision_describe", "vision_ask", "vision_keep"):
+        spec = METHODS["methods"][m]["params"]
+        props = CHECK.resolve(spec["$ref"], "methods.schema.json")[0]["properties"] if "$ref" in spec else spec["properties"]
+        assert props["file_id"]["type"] == "integer"
+    assert set(METHODS["methods"]["vision_compare"]["params"]["properties"]) == {"a", "b", "question"}
+    e = engine()
+    for name, params in (("vision_describe", {"file_id": 999}), ("vision_cancel", {}),
+                         ("vision_keep", {"file_id": 7, "text": "x"}), ("vision_keep", {"file_id": 999, "text": "x"}),
+                         ("vision_describe", {"file_id": 7})):
+        r = call(e.methods, name, params, e.conn)["result"]
+        assert "job" in r, (name, r)
+    assert call(e.methods, "vision_describe", {"file_id": 999})["result"]["job"] is None      # 0 from the Api -> null
+    assert call(e.methods, "vision_cancel")["result"] == {"ok": True, "error": "", "job": None}
+    assert call(e.methods, "vision_describe", {"file_id": 7})["result"]["job"] == 2
+
+
+def test_bad_vision_params_never_reach_the_api():
+    e = engine()
+    for name, bad in BAD.items():
+        if name.startswith("vision_"):
+            for params in bad:
+                call(e.methods, name, params, e.conn)
+    assert not [c for c in e.api.calls if c[0].startswith("vision_")]
 
 
 def test_files_are_named_by_result_id_only():

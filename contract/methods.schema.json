@@ -992,6 +992,168 @@
       "result": {
         "$ref": "#/$defs/ok"
       }
+    },
+    "vision_state": {
+      "description": "Can the engine talk about photos now, which models and runtime are ready, what is loaded and whether a question is being answered.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_state"
+      }
+    },
+    "vision_describe": {
+      "description": "Describe one photo (by result id). Answers at once with a job number; the description streams as vision events.",
+      "params": {
+        "$ref": "#/$defs/vision_file_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_ask": {
+      "description": "Ask a question about one photo. deeper uses the bigger model when this PC can run it. A question about writing in the photo (\"what does the sign say?\") first gets the text already read from the photo as a finished vision event (note \"Text read from the photo\"); more true asks the model anyway. The question is at most 2000 characters before the engine cleans it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "deeper": {
+            "type": "boolean"
+          },
+          "more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_id",
+          "question"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "file_id": 7,
+            "question": "What colour is the car?"
+          },
+          {
+            "file_id": 7,
+            "question": "What does the sign say?",
+            "deeper": true,
+            "more": true
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_compare": {
+      "description": "Compare two different photos (by result id), optionally with a question. Same answer and events as vision_describe.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "integer"
+          },
+          "b": {
+            "type": "integer"
+          },
+          "question": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "a": 7,
+            "b": 8
+          },
+          {
+            "a": 7,
+            "b": 8,
+            "question": "Which one is brighter?"
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_cancel": {
+      "description": "Stop the answer that is streaming (a vision event with state cancelled and an empty note follows). Nothing running is fine.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_keep": {
+      "description": "Keep a description of a photo (at most 4000 characters) so searches find it; empty text forgets it. kept is whether a description is now kept.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        },
+        "required": [
+          "file_id",
+          "text"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "file_id": 7,
+            "text": "A red car in front of a white house."
+          },
+          {
+            "file_id": 7,
+            "text": ""
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "job": {
+            "type": "null"
+          },
+          "kept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error",
+          "job",
+          "kept"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "$defs": {
@@ -3330,6 +3492,190 @@
         "subtitle"
       ],
       "additionalProperties": false
+    },
+    "vision_answer": {
+      "description": "What every photo-talk call answers at once. job is the number the vision events of that question carry (null when no job was started: a refusal, a cancel, a keep). The answer itself comes as vision events. download lists what to fetch first when that is why it can't start (a model or the picture runtime).",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "job": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "download": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "size_mb": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "size_mb"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "job"
+      ],
+      "additionalProperties": false
+    },
+    "vision_model": {
+      "description": "One picture-talk model: the quick one (deeper false) or the deeper one. can_run is whether this PC can run it right now, why says what stops it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "deeper": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "missing_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ram_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vram_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "can_run": {
+          "type": "boolean"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "deeper",
+        "ready",
+        "missing_mb",
+        "ram_mb",
+        "vram_mb",
+        "can_run",
+        "why"
+      ],
+      "additionalProperties": false
+    },
+    "vision_state": {
+      "description": "Whether talking about photos can start now. not_now is a sentence when it can't (paused, the runtime downloading), else empty. models: the quick one first, then the deeper one. runtime: the llama runtime that would be used. loaded: id of the model in memory (empty: none); busy: a question is being answered; job: its number (null: none); running: the worker process exists.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "job": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "not_now": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vision_model"
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "ready": {
+              "type": "boolean"
+            },
+            "missing_mb": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "id",
+            "ready",
+            "missing_mb"
+          ],
+          "additionalProperties": false
+        },
+        "loaded": {
+          "type": "string"
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "job",
+        "not_now",
+        "models",
+        "runtime",
+        "loaded",
+        "busy",
+        "running"
+      ],
+      "additionalProperties": false
+    },
+    "vision_file_params": {
+      "description": "A result id from search. Never a path.",
+      "type": "object",
+      "properties": {
+        "file_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file_id"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "file_id": 7
+        }
+      ]
     }
   }
 }

@@ -317,7 +317,7 @@ def test_cancel_stops_the_stream_and_keeps_the_model(env):
     env["opts"].update(script=[f"t{i} " for i in range(400)], delay=0.005)
     r = a.vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
-    assert a.vision_cancel() == {"ok": True, "error": ""}
+    assert a.vision_cancel() == {"ok": True, "error": "", "job": None}
     n = len(ev)
     assert ev[-1] == {"job": r["job"], "state": "cancelled", "text": "", "model": SMOL, "note": ""}
     time.sleep(0.1)

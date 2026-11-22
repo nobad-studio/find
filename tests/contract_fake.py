@@ -359,6 +359,56 @@ class FakeApi:
                                "keeps using its normal folder walk.")
         return {"ok": False, "error": self.turbo["error"], "state": self.turbo_state()}
 
+    # talk about a photo: ids 7 and 8 are photos, the first job is number 1 (the answer streams as vision events)
+    PHOTOS = (7, 8)
+    GONE = "This photo is no longer there."
+
+    def _job(self, *call):
+        self._note(*call)
+        self._jobs = getattr(self, "_jobs", 0) + 1
+        return {"ok": True, "error": "", "job": self._jobs}
+
+    def vision_state(self):
+        return {"ok": True, "not_now": "", "loaded": "", "busy": False, "job": 0, "running": False,
+                "models": [{"id": "smolvlm2-500m", "name": "SmolVLM2 500M", "deeper": False, "ready": True,
+                            "missing_mb": 0, "ram_mb": 1000, "vram_mb": 1200, "can_run": True, "why": ""},
+                           {"id": "qwen3-vl-2b", "name": "Qwen3-VL 2B", "deeper": True, "ready": False,
+                            "missing_mb": 1800, "ram_mb": 3200, "vram_mb": 3500, "can_run": False,
+                            "why": "Not enough free memory for this one right now."}],
+                "runtime": {"id": "llama-vulkan", "ready": True, "missing_mb": 0}}
+
+    def vision_describe(self, file_id):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        return self._job("vision_describe", file_id)
+
+    def vision_ask(self, file_id, question, deeper=False, more=False):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        if not question.strip():
+            return {"ok": False, "error": "Type a question.", "job": 0}
+        if deeper:
+            return {"ok": False, "job": 0, "error": "To talk about photos, download Qwen3-VL 2B first (1800 MB, once).",
+                    "download": [{"id": "qwen3-vl-2b", "name": "Qwen3-VL 2B", "size_mb": 1800}]}
+        return self._job("vision_ask", file_id, question, more)
+
+    def vision_compare(self, a, b, question=None, deeper=False):
+        if a == b:
+            return {"ok": False, "error": "Pick a second, different photo to compare.", "job": 0}
+        if a not in self.PHOTOS or b not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        return self._job("vision_compare", a, b, question)
+
+    def vision_cancel(self):
+        self._note("vision_cancel")
+        return {"ok": True, "error": "", "job": None}
+
+    def vision_keep(self, file_id, text):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE}
+        self._note("vision_keep", file_id, text)
+        return {"ok": True, "error": "", "kept": bool(text.strip())}
+
     # window
     def ui_shown(self):
         self._note("ui_shown")
@@ -510,6 +560,8 @@ class Engine:
             if "volume" in t:
                 self.api.turbo["volumes"] = [dict(t["volume"])]
             self.events.turbo(self.api.turbo_state())
+        elif do == "vision":
+            self.events.push("vision", t["event"])
         elif do == "update":
             # a real update.Updater on a fake clock: the download's progress throttle and speed are the engine's own
             u = self._updater()

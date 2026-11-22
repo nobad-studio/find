@@ -1092,7 +1092,7 @@ class Api:
     def vision_cancel(self):
         if self._talk is not None:
             self._talk.cancel()
-        return {"ok": True, "error": ""}
+        return {"ok": True, "error": "", "job": None}
 
     def vision_keep(self, file_id, text):
         """Keep a description of a photo (the user's press): stored in vdesc and as one text chunk of that photo,
