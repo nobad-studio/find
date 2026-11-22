@@ -143,4 +143,8 @@ Specific to this app:
 - The UI ⇄ engine pipe (`nobadfind/rpc/`) follows `contract/`: a new or changed method or event updates the schema,
   `contract/README.md`, a transcript (`python tests/test_rpc_contract.py --record`) and the Dart side together.
   Handlers stay thin (check params, call the `Api` method, shape the result); files only by result id.
+  Both ends check the other (security review 2026-11-22, M1; keep the DACL too): the UI sends nothing until the
+  pipe's owner is this user and its server process is `NobadFind.exe` next to `nobad_find.exe` (from source:
+  Python) at medium integrity outside any AppContainer (`pipe_client.dart` `engineProblem`, `Link.untrusted`); the
+  engine drops a client whose token is below medium or in an AppContainer (`rpc/server.py` `client_problem`).
 - Tests: `python -m pytest -q tests`. Lint: `python -m pyflakes nobadfind tests`. Both clean before a commit.

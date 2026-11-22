@@ -500,3 +500,44 @@ def test_engine_flag_parses():
     from nobadfind.app import parse_args
     assert parse_args(["--engine"]).engine is True
     assert parse_args([]).engine is False
+
+
+# ---------- security review 2026-11-22 (M1): the engine checks the client's process too ----------
+def test_client_verdict_refuses_low_integrity_and_appcontainer():
+    from nobadfind.rpc.server import client_verdict
+    assert client_verdict(0x2000, 0) is None and client_verdict(0x2100, 0) is None
+    assert client_verdict(0x3000, 0) is None                       # an elevated UI may read; the engine never is
+    assert "low integrity" in client_verdict(0x1000, 0)
+    assert "low integrity" in client_verdict(0, 0)
+    assert "AppContainer" in client_verdict(0x1000, 1)
+    assert client_verdict(-1, 0) and client_verdict(0x2000, None)   # Windows can't say: refused
+
+
+@win_only
+def test_this_test_process_passes_the_real_client_check():
+    import os
+    from nobadfind.rpc.server import client_problem
+    assert client_problem(os.getpid()) is None
+    assert client_problem(0)
+
+
+@win_only
+def test_a_refused_client_is_dropped_before_anything_is_read():
+    from nobadfind.rpc.server import Server, pipe_name
+    name = pipe_name() + "-test-" + uuid.uuid4().hex[:8]
+    asked = []
+    s = Server(methods={"hello": lambda p, c: {"protocol": 1}}, name=name,
+               check_client=lambda pid: asked.append(pid) or "the client runs at low integrity")
+    assert s.start()
+    try:
+        c = Client(name)
+        try:
+            c.send({"jsonrpc": "2.0", "id": 1, "method": "hello"})
+        except OSError:
+            pass                                                    # already gone
+        with pytest.raises((EOFError, OSError)):
+            c.line()
+        c.close()
+        assert asked and asked[0] > 0 and s.clients() == []
+    finally:
+        s.stop()

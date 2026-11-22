@@ -40,6 +40,9 @@
   the index stays as it is.
 - Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The
   Never index list now holds 5000 entries; if it is ever full, Forget says so and leaves the file where it is.
+- The window now checks that it is talking to NOBAD Find's own engine (NobadFind.exe next to it, a normal user
+  process, not a sandboxed or low-rights one) before it sends a single search. If another program got there first,
+  the window says so instead of connecting. The engine checks the window the same way.
 
 ## 1.0.1 · 2026-11-22
 

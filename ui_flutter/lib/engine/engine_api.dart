@@ -24,7 +24,23 @@ import 'models/vision.dart';
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
 export 'models/vision.dart';
 
-enum Link { connecting, connected, offline, incompatible }
+/// untrusted: something answers on the engine's pipe that isn't NOBAD Find's engine (pipe_client.dart checks the
+/// process at the other end); this window sends it nothing and keeps trying for the real one.
+enum Link { connecting, connected, offline, incompatible, untrusted }
+
+/// What the window says while [Link.untrusted].
+const untrustedLine =
+    "Another program is answering in place of NOBAD Find's engine, so this window won't talk to it. "
+    'Quit NOBAD Find and start it again; if this stays, restart the PC.';
+
+/// The pipe is served by a process that isn't NOBAD Find's engine (another account, a sandboxed or low-integrity
+/// process, another program): nothing is sent to it. [reason] is for the log.
+class EngineUntrusted implements Exception {
+  const EngineUntrusted(this.reason);
+  final String reason;
+  @override
+  String toString() => "Not connecting: the pipe's server isn't NOBAD Find's engine ($reason).";
+}
 
 /// The engine answered with a JSON-RPC error; [message] is plain language for the user.
 class RpcException implements Exception {

@@ -196,6 +196,7 @@ class StatusController extends ChangeNotifier {
     Link.connecting => 'Connecting to the engine…',
     Link.offline => "The engine isn't running. Trying again…",
     Link.incompatible => 'This window and the engine are different versions. Update NOBAD Find.',
+    Link.untrusted => untrustedLine,
     Link.connected => _connectedLine(),
   };
 

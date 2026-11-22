@@ -19,7 +19,7 @@ import 'models/settings.dart';
 import 'models/status.dart';
 import 'models/update.dart';
 
-export 'engine_api.dart' show EngineOffline, Link, RpcException;
+export 'engine_api.dart' show EngineOffline, EngineUntrusted, Link, RpcException, untrustedLine;
 
 const protocolVersion = 1;
 const maxMessage = 1024 * 1024;
@@ -257,6 +257,13 @@ class EngineClient {
           unawaited(rpc.call('ui_shown', {'window': window}).then((_) {}, onError: (_) {}));
         }
         await rpc.done;
+      } on EngineUntrusted catch (e) {
+        // an impostor holds the pipe (security review 2026-11-22, M1): say so, send it nothing, look again later
+        log?.call('engine connection: $e');
+        if (_disposed) return;
+        _link.value = Link.untrusted;
+        await Future<void>.delayed(_backoff.last);
+        continue;
       } catch (e) {
         log?.call('engine connection: $e');
         await rpc?.close();
