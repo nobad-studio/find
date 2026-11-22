@@ -55,6 +55,7 @@ sys.path.insert(0, APP)
 JOBS = [("describe", ["dog-01.jpg"], ""), ("ask", ["sign-01.jpg"], "What's written here?"),
         ("compare", ["dog-01.jpg", "dog-02.jpg"], ""), ("describe", ["cat-01.jpg"], "")]
 FLOOR_MB = 1536
+MIN_FLOOR_MB = 1024             # --floor-mb below this is refused: the hog never pushes the PC under 1 GB free
 CHUNK_MB = 128
 
 
@@ -86,6 +87,7 @@ def gpu_mem(pid):
 def hog(target_mb, floor_mb, parent):
     """Hold memory until about target_mb is free; give it back below floor_mb; end with the parent."""
     import psutil
+    floor_mb = max(float(floor_mb), MIN_FLOOR_MB)
     held = []
     while psutil.pid_exists(parent):
         free = psutil.virtual_memory().available / 1048576
@@ -100,10 +102,15 @@ def hog(target_mb, floor_mb, parent):
         time.sleep(0.2)
 
 
-def start_hog(target_mb, floor_mb, wait_s=60):
+def start_hog(target_mb, floor_mb, held, wait_s=60):
+    """Start the hog and wait until free memory settles. The Popen goes into `held` BEFORE the wait, so a Ctrl+C
+    during it still leaves the caller's finally something to kill."""
     import psutil
+    if floor_mb < MIN_FLOOR_MB:
+        raise ValueError(f"floor {floor_mb} MB is under the hard minimum {MIN_FLOOR_MB} MB")
     p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--hog", str(target_mb), str(floor_mb),
                           str(os.getpid())])
+    held.append(p)
     end = time.monotonic() + wait_s
     last, steady = -1.0, 0
     while time.monotonic() < end:                             # until it stops growing
@@ -201,6 +208,8 @@ def main(argv=None):
     m = models.get(a.model)
     if not m or m.get("feature") != "talk":
         sys.exit(f"not a talk model: {a.model}")
+    if a.floor_mb < MIN_FLOOR_MB:
+        sys.exit(f"--floor-mb {a.floor_mb} is under the hard minimum {MIN_FLOOR_MB} MB")
     if a.leave_free_mb and a.leave_free_mb < a.floor_mb:
         sys.exit(f"--leave-free-mb {a.leave_free_mb} is under the floor {a.floor_mb}")
     rid = "llama-vulkan" if a.device == "vulkan" else "llama-cpu"
@@ -219,10 +228,10 @@ def main(argv=None):
 
     old = {p.pid: (p.info["name"], p.info["create_time"]) for p in psutil.process_iter(["name", "create_time"])
            if p.info["create_time"] and time.time() - p.info["create_time"] > 60}
-    hogp = None
+    held, hogp = [], None
     try:
         if a.leave_free_mb:
-            hogp = start_hog(a.leave_free_mb, a.floor_mb)
+            hogp = start_hog(a.leave_free_mb, a.floor_mb, held)
         free0 = psutil.virtual_memory().available / 1048576
         if a.assess_only:
             res = {"model": a.model, "device": a.device, "level": a.level, "hog": bool(hogp),
@@ -232,7 +241,8 @@ def main(argv=None):
         else:
             res = run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi, worker, hogp)
     finally:
-        stop_hog(hogp)
+        for p in held:                                    # also when Ctrl+C came while the hog was settling
+            stop_hog(p)
     gone = sorted({n for pid, (n, ct) in old.items()
                    if not (psutil.pid_exists(pid) and psutil.Process(pid).create_time() == ct)})
     res["old_processes_gone"] = gone

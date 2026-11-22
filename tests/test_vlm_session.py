@@ -298,6 +298,30 @@ def test_a_failing_hook_never_stops_the_work(files):
     s.close()
 
 
+@pytest.mark.parametrize("where", ["model", "vision", "image"])
+def test_a_base_exception_in_a_callback_is_a_stop_never_not_enough_memory(files, where, monkeypatch):
+    """Ctrl+C / SystemExit inside llama's or mtmd's call (review M3): Cancelled, not AllocFailed."""
+    monkeypatch.setattr(vs, "ASK_EVERY", 0.0)
+    lib = FakeLib(load_steps=4, mtmd_steps=4, eval_nodes=4 * vs.EVAL_EVERY)
+
+    def hook(phase, frac):
+        if phase == where and (frac is not None or where == "image") and hook.entered:
+            raise KeyboardInterrupt
+        hook.entered = hook.entered or phase == where
+        return True
+    hook.entered = False
+    if where == "image":
+        s = vs.Session(lib, *files, TALK, 0)
+        with pytest.raises(vs.Cancelled):
+            s.answer([IMG], "hi", 200, _no, _no, progress=hook)
+        assert s.answer([IMG], "again", 200, _no, _no) == "t5 t6 t7"
+        s.close()
+    else:
+        with pytest.raises(vs.Cancelled):
+            vs.Session(lib, *files, TALK, 0, progress=hook)
+        assert lib.live == set()
+
+
 @pytest.mark.parametrize("fail", ["load_fails", "ctx_fails", "mtmd_fails"])
 def test_alloc_failure_reports_and_unloads(files, fail):
     lib = FakeLib(**{fail: True})

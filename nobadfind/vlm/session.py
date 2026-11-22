@@ -20,10 +20,12 @@ told each phase as it starts (frac None) and what really moved in it, and return
 then raises `Cancelled`:
 - "model": llama's own load fraction (llama_model_params.progress_callback; False aborts llama's load).
 - "context": llama_init_from_model has no callback: a phase message only (its time is bounded by the worker).
-- "vision": mtmd's load fraction (mtmd_context_params.progress_callback), then its warmup encode as "still
-  computing" calls (frac None) from the eval callback below.
+- "vision": mtmd's load fraction (mtmd_context_params.progress_callback). Its warmup (after 1.0) made no eval
+  calls in the probes; any "still computing" it sends there doesn't count (the engine's "vision" bound is fixed).
 - "image": reading the photo (mtmd_helper_eval_chunks): the image encode on clip's graph through mtmd's cb_eval
-  (every EVAL_EVERY nodes clip's scheduler stops at a node, calls back, and False ends the encode) and the prompt
+  (every EVAL_EVERY nodes clip's scheduler stops at a node and calls back; False stops that split, every later
+  split stops after one node, and the answer then ends as Cancelled; on Vulkan the prompt eval that follows still
+  runs, as llama can't abort it there) and the prompt
   eval through llama's abort_callback (between graph nodes, CPU only: on Vulkan the prompt eval is not stoppable,
   and it is short). Both are frac None calls, never a fraction: "still computing", which the engine bounds.
 - "answer": no calls; the tokens are the progress, and `cancelled()` is asked before each one.
@@ -141,6 +143,8 @@ class Session:
             go = bool(self._hook(phase, frac))
         except Exception:
             go = True
+        except BaseException:                           # Ctrl+C / SystemExit inside llama's call: a stop, never
+            go = False                                  # "not enough memory" (ctypes would swallow it as 0)
         if not go:
             self._aborted = True
         return go
@@ -152,7 +156,11 @@ class Session:
 
     def _fraction(self, phase):
         def cb(frac, _user):                            # llama / mtmd: true = go on loading
-            return self._tell(phase, float(frac))
+            try:
+                return self._tell(phase, float(frac))
+            except BaseException:                       # never a silent 0 (read as "not enough memory")
+                self._aborted = True
+                return False
         return cb
 
     def _on_eval(self, _tensor, ask, _user):
@@ -165,6 +173,9 @@ class Session:
             return self._tell(self._phase, None)
         except Exception:
             return not ask
+        except BaseException:
+            self._aborted = True
+            return bool(ask)                            # split here, then stop after the node
 
     def _on_abort(self, _data):
         """llama's abort callback (CPU backend, between graph nodes): true ends this llama_decode."""
@@ -178,6 +189,9 @@ class Session:
             return not self._tell(self._phase, None)
         except Exception:
             return False
+        except BaseException:
+            self._aborted = True
+            return True
 
     # -- answering ------------------------------------------------------------------------------------------------
 

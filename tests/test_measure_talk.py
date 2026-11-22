@@ -32,6 +32,34 @@ def test_the_hog_never_targets_below_the_floor(tmp_path):
                            "--out", str(tmp_path / "x.json"), "--leave-free-mb", "1000"])
 
 
+@pytest.mark.parametrize("floor", ["0", "1000"])
+def test_the_floor_has_a_hard_minimum(tmp_path, floor):
+    with pytest.raises(SystemExit, match="hard minimum 1024"):
+        measure_talk.main(["--model", "qwen3vl-2b", "--model-dir", str(tmp_path), "--runtime-dir", str(tmp_path),
+                           "--device", "cpu", "--images", str(tmp_path), "--level", "gentle",
+                           "--out", str(tmp_path / "x.json"), "--leave-free-mb", "3800", "--floor-mb", floor])
+    with pytest.raises(ValueError, match="hard minimum"):
+        measure_talk.start_hog(3800, int(floor), [])
+
+
+def test_ctrl_c_while_the_hog_settles_still_leaves_it_to_the_finally(monkeypatch):
+    """Review M5: the Popen is handed out before the settle wait, so main's finally kills it."""
+    started = []
+
+    class FakePopen:
+        def __init__(self, args):
+            started.append(self)
+    monkeypatch.setattr(measure_talk.subprocess, "Popen", FakePopen)
+
+    def interrupt(s):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(measure_talk.time, "sleep", interrupt)
+    held = []
+    with pytest.raises(KeyboardInterrupt):
+        measure_talk.start_hog(3800, 1536, held)
+    assert held == started and len(held) == 1
+
+
 def test_phase_stats_count_progress_as_the_talker_does():
     tr = [(1.0, {"t": "state", "job": 1, "state": "loading"}), (1.5, {"t": "phase", "job": 1, "phase": "model"}),
           (2.0, {"t": "progress", "job": 1, "phase": "model", "frac": 0.2}),

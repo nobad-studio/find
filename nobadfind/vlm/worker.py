@@ -363,6 +363,7 @@ class Talker:
         self._work = None                       # what the worker is doing: {"job", "phase", "since", "deadline", ...}
         self._loaded = ""
         self._need = {}                         # model id -> its measured need (MB), from the jobs sent
+        self._jneed = {}                        # job number -> its model's need, until the worker ended that job
         self._budget = 0
         self._exiting = {}                      # id(process) -> MB it may still hold until it has really exited
         self._used = clock()
@@ -390,9 +391,14 @@ class Talker:
             return self._budget
 
     def _update_budget(self):
+        """The loaded model's need (until the worker says it unloaded it), the followed job's, and the need of the
+        job the WORKER is still in (a Stop or a newer question during a load: the worker may still be allocating
+        that model, in a step that can't be stopped, until it reports the job ended)."""
         b = self._need.get(self._loaded, 0) if self._loaded else 0
         if self._job is not None:
             b = max(b, self._job["need"])
+        if self._work is not None:
+            b = max(b, self._jneed.get(self._work["job"], 0))
         b = max([b, *self._exiting.values()])      # an ended worker keeps its allowance until it is gone
         if b != self._budget:
             self._budget = b
@@ -409,6 +415,7 @@ class Talker:
             self._cancel_current()
             need = int((job.get("settings") or {}).get("need_mb") or 0)
             self._need[job["model"]["id"]] = need
+            self._jneed[job["job"]] = need
             now = self._clock()
             self._job = {"job": job["job"], "model": job["model"]["id"], "name": name, "text": "",
                          "files": tuple(job.get("files") or ()), "op": job["op"], "need": need, "since": now,
@@ -466,6 +473,8 @@ class Talker:
         if t in ("done", "error") or (t == "state" and msg.get("state") == "cancelled"):
             cur = self._job
             self._work = self._fresh(cur["job"], "start", now) if cur is not None and cur["job"] != jid else None
+            self._jneed.pop(jid, None)
+            self._update_budget()               # the worker let go of that job: its allowance may go
             return None
         w = self._work
         if w is None or w["job"] != jid:
@@ -596,6 +605,7 @@ class Talker:
             self._exiting[id(self._proc)] = self._budget
         self._conn = self._proc = None
         self._work = None
+        self._jneed.clear()                     # what the gone worker held stays in _exiting until it exited
         self._loaded = ""
         self._update_budget()
 

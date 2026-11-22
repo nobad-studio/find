@@ -184,6 +184,29 @@ def test_a_stopped_job_keeps_its_bound_until_the_worker_says_it_ended():
     assert t.work()["phase"] == "photo"
 
 
+@pytest.mark.parametrize("how", ["stop", "newer smaller question"])
+def test_stop_mid_load_keeps_the_memory_allowance_until_the_worker_ended_the_job(how):
+    """Review I1: the worker may still be allocating the model (context: can't be stopped), so its need stays in
+    the budget (talk limit, Find's total, the WORKERS commit limit) until the worker reports the job ended."""
+    now = [0.0]
+    budgets = []
+    t, ev, conns, say = talker(now)
+    t._on_budget = budgets.append
+    t.submit({**job(1, "qwen3vl-2b"), "settings": {"need_mb": 3500}})
+    say(t="state", job=1, state="loading")
+    say(t="phase", job=1, phase="context")
+    assert t.budget_mb() == 3500
+    if how == "stop":
+        t.cancel()
+    else:
+        t.submit(job(2))                                                # SmolVLM2, need 900
+    assert ev[-1]["job"] == 1 and ev[-1]["state"] == "cancelled"        # the UI shows it stopped at once ...
+    assert t.budget_mb() == 3500 and budgets == [3500]                  # ... the allowance stays
+    say(t="state", job=1, state="cancelled")                            # the worker let go of job 1
+    assert t.budget_mb() == (0 if how == "stop" else 900)
+    assert budgets == [3500, 0 if how == "stop" else 900]
+
+
 def test_a_worker_stuck_in_a_job_nobody_follows_is_still_ended():
     now = [0.0]
     t, ev, conns, say = talker(now)
@@ -282,28 +305,36 @@ def test_engine_stop_during_a_load_ends_the_worker_without_terminating_it(tmp_pa
 
 
 def test_memory_and_io_priority_are_normal_only_while_a_job_runs():
-    calls = []
+    """Each priority change is read from a queue in the order the worker made it (review M4: no race between the
+    worker's end message and its finally)."""
+    import queue
+    calls = queue.Queue()
+
+    def nxt():
+        return calls.get(timeout=10)
     FakeSession.log = []
-    conn, th = _worker({"script": [f"t{i} " for i in range(200)], "delay": 0.005}, activity=calls.append)
-    conn.send(job(1))
+    conn, th = _worker({"script": [f"t{i} " for i in range(200)], "delay": 0.005}, activity=calls.put)
+    conn.send(job(1))                                   # (the pipe is read first: the worker must not block on it)
     _until(conn, lambda m: m.get("t") == "done")
-    assert calls == [True, False]                                       # raised for the job, low again after it
+    assert (nxt(), nxt()) == (True, False)                              # raised for the job, low again after it
     conn.send(job(2))
     _until(conn, lambda m: m.get("t") == "token")
-    assert calls[-1] is True
+    assert nxt() is True
     conn.send(job(3))                                                   # a newer question: stays raised
     _until(conn, lambda m: m.get("t") == "done" and m["job"] == 3)
-    assert calls == [True, False, True, True, False]
+    assert (nxt(), nxt()) == (True, False)                              # job 3 raises, and only its end lowers
     conn.send({**job(4), "paths": []})                                  # a refused job (an error) ...
     _until(conn, lambda m: m.get("t") == "error")
-    assert calls[-2:] == [True, False]                                  # ... restores it too
+    assert (nxt(), nxt()) == (True, False)                              # ... restores it too
     conn.send(job(5))
     _until(conn, lambda m: m.get("t") == "token")
+    assert nxt() is True
     conn.send({"op": "cancel", "job": 5})
     _until(conn, lambda m: m.get("state") == "cancelled")
-    assert calls[-1] is False
+    assert nxt() is False                                               # cancelled: low again
     conn.send({"op": "quit"})
     th.join(5)
+    assert calls.empty()
 
 
 def test_a_priority_windows_refuses_never_stops_a_job():
