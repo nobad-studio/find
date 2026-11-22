@@ -170,6 +170,29 @@ class Indexer:
                 keep.append(r)
         return keep
 
+    def _apply_new_rules(self):
+        """Once per scope.RULES_REV (meta scope_rules): an index made with older rules loses what was read from the
+        files the new rules make names only (their text, vectors and photo vectors; security review 2026-11-22, M2:
+        PowerShell's history, FileZilla's saved sites, gh tokens, ...), and, with secrets off, the rows of the files
+        they make secrets. Everything else in the index stays as it is: no rebuild, no new walk.
+        Returns (content dropped, rows removed)."""
+        if self.store.meta("scope_rules") == scope.RULES_REV:
+            return (0, 0)
+        from .search import secret_sql
+        rules = self.rules()
+        quiet = [fid for fid, path in self.store.with_content() if rules.names_only(path)]
+        dropped = self.store.drop_content(quiet, NAMES_ONLY)
+        gone = []
+        if not rules.secrets:
+            where, args = secret_sql("f")
+            gone = [r[0] for r in self.store.q(f"SELECT f.path FROM files f WHERE {where}", args)
+                    if rules.category(r[0]) == "secrets"]
+            self.store.remove_paths(gone)
+        self.store.set_meta("scope_rules", scope.RULES_REV)
+        if dropped or gone:
+            log(f"new names-only rules: content of {dropped} files dropped, {len(gone)} secrets out of the index")
+        return (dropped, len(gone))
+
     def known_drives(self):
         """Every drive the index has files from, with its kind and name, and whether it's plugged in now."""
         try:
@@ -348,6 +371,10 @@ class Indexer:
                     log("name word index built (fast one- and two-letter searches)")
             except Exception as e:
                 log(f"text index upgrade failed: {type(e).__name__}", "warn")
+            try:
+                self._apply_new_rules()
+            except Exception as e:
+                log(f"names-only clean-up failed: {type(e).__name__}", "warn")
             self.status["plan"] = plan(self.settings, self.roots())
             log(f"indexer plan {self.status['plan']}")
             self.store.prefer_roots = user_roots()         # your own folders first in every work queue (0.9.1)

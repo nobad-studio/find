@@ -6,7 +6,8 @@ Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and on
 import os
 import time
 
-from .const import BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
+from .const import (BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES,
+                    SECRET_PATHS)
 from .query import parse
 from .store import KEPT_ORD, OperationalError, fts_quote
 from .understand import best_guess, folder_finder, parts, place_bases
@@ -88,6 +89,9 @@ def secret_sql(alias="f"):
     for run in [(n,) for n in sorted(SECRET_NAMES)] + list(SECRET_PATHS):
         ors.append(f"{alias}.path LIKE ? ESCAPE '!'")
         args.append(like(*run))
+    for run in SECRET_FILES_IN:                      # settings.xml in .m2, hosts.yml in gh, ...
+        ors.append(f"(lower({alias}.name) = ? AND {alias}.path LIKE ? ESCAPE '!')")
+        args += [run[-1], like(*run[:-1])]
     browser = sorted(BROWSER_SECRET_FILES)
     inside = " OR ".join(f"{alias}.path LIKE ? ESCAPE '!'" for _ in NAMES_ONLY_PATHS)
     ors.append(f"(lower({alias}.name) IN ({','.join('?' * len(browser))}) AND ({inside}))")

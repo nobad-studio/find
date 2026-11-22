@@ -21,10 +21,15 @@ Rules is the one place the walker (walker.Walker), live changes (Walker.excluded
 import os
 
 from .const import (BROWSER_SECRET_FILES, CACHE_NAMES, DATA_DIR, DEFAULTS, FIXED_NAMES, NAMES_ONLY_EXT,
-                    NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS, SYSTEM_NAMES)
+                    NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS,
+                    SYSTEM_NAMES)
 
 SCOPES = ("whole_pc", "my_files", "custom")
 CATEGORIES = ("system", "caches", "secrets", "other_profiles", "removable", "network")
+# The revision of the rule lists in const (SECRET_*, NAMES_ONLY_*). Bump it when one grows: an index made with older
+# rules then loses, once, the content (text, vectors, photo vectors) of every file the new rules make names only, and
+# the rows they put out (indexer.Indexer._apply_new_rules); nothing else in the index is touched.
+RULES_REV = "2"
 SYSTEM_DIRS = ("Windows", "ProgramData", "Recovery", "PerfLogs", "Program Files", "Program Files (x86)")
 
 
@@ -170,6 +175,8 @@ class Rules:
         base = _base_name(low)
         if base in SECRET_FILES:
             return True
+        if any(base == run[-1] and tuple(parts[-len(run):-1]) == run[:-1] for run in SECRET_FILES_IN):
+            return True                                  # Maven's settings.xml in .m2, gh's hosts.yml, ...
         return base in BROWSER_SECRET_FILES and any(_has_run(parts[:-1], pat) for pat in NAMES_ONLY_PATHS)
 
     def _allowed(self, cat):
@@ -335,8 +342,10 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
                 "key4.db, logins.json, cookies.sqlite, places.sqlite, formhistory.sqlite); Windows Credentials, "
                 "Vault and Protect folders; password manager vaults (.kdbx, .1pux, 1Password, Bitwarden, KeePass); "
                 "Discord, Slack and Teams sign-in tokens; developer tokens (.npmrc, .pypirc, .netrc, "
-                ".git-credentials, .aws, .azure, gcloud); crypto wallet files. Off by default. When on, only their "
-                "names are indexed: NOBAD Find never reads what's inside them.",
+                ".git-credentials, .aws, .azure, .docker, .kube, gcloud, GitHub CLI); saved servers (FileZilla, "
+                "WinSCP); what other programs record (PowerShell and shell command histories, Windows' Recent "
+                "items); crypto wallet files. Off by default. When on, only their names are indexed: NOBAD Find "
+                "never reads what's inside them.",
          "examples": [os.path.join(prof, ".ssh"),
                       os.path.join(prof, "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data"),
                       os.path.join(prof, "AppData", "Roaming", "Mozilla", "Firefox", "Profiles", "...", "logins.json"),

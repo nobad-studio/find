@@ -226,3 +226,62 @@ def test_turning_secrets_off_removes_browser_credential_stores(tmp_path):
     a.set_settings({"include_secrets": False})
     assert {r[0] for r in s.q("SELECT name FROM files")} == {"Preferences", "History"}
     s.close()
+
+
+# ---------- security review 2026-11-22 (M2): the one-time clean-up after the rules grew ----------
+def _old_index(tmp_path):
+    """An index made with the rules before RULES_REV 2: program records were read like any file."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    psr = os.path.join(PROF, "AppData", "Roaming", "Microsoft", "Windows", "PowerShell", "PSReadLine")
+    fz = os.path.join(PROF, "AppData", "Roaming", "FileZilla")
+    docs = os.path.join(PROF, "Documents")
+    rows = [(os.path.join(psr, "ConsoleHost_history.txt"), "ConsoleHost_history.txt", psr, ".txt", "text"),
+            (os.path.join(fz, "sitemanager.xml"), "sitemanager.xml", fz, ".xml", "text"),
+            (os.path.join(docs, "notes.txt"), "notes.txt", docs, ".txt", "text"),
+            (os.path.join(docs, "beach.jpg"), "beach.jpg", docs, ".jpg", "photo")]
+    s.upsert_files([r + (10, 5.0, 5.0, 1) for r in rows])
+    ids = {r[0]: r[1] for r in s.q("SELECT name, id FROM files")}
+    for name in ("ConsoleHost_history.txt", "sitemanager.xml", "notes.txt"):
+        s.set_text(ids[name], 5.0, [f"token-{name}"])
+    chunk = {r[1]: r[0] for r in s.q("SELECT c.id, f.name FROM chunks c JOIN files f ON f.id=c.file_id")}
+    s.add_vectors([(chunk[n], b"\x00" * 8) for n in chunk])
+    s.set_photo_vector(ids["beach.jpg"], 5.0, b"\x01" * 8)
+    s.set_meta("scope_rules", "1")
+    return s, ids
+
+
+def test_new_rules_drop_program_records_once_and_keep_the_rest(tmp_path):
+    s, ids = _old_index(tmp_path)
+    ix = indexer.Indexer(s, S())                                      # defaults: secrets off
+    assert ix._apply_new_rules() == (2, 2)
+    names = {r[0] for r in s.q("SELECT name FROM files")}
+    assert names == {"notes.txt", "beach.jpg"}
+    assert [r[0] for r in s.q("SELECT body FROM chunks")] == ["token-notes.txt"]
+    assert s.one("SELECT count(*) FROM vecs") == 1                   # the rest of the index is untouched
+    assert s.one("SELECT count(*) FROM pvecs WHERE length(v) > 0") == 1
+    assert s.q("SELECT rowid FROM text WHERE text MATCH ?", ('"token"',)) != []
+    assert s.q("SELECT rowid FROM text WHERE text MATCH ?", ('"consolehost"',)) == []
+    assert s.meta("scope_rules") == scope.RULES_REV
+    s.set_text(ids["notes.txt"], 5.0, ["again"])
+    assert ix._apply_new_rules() == (0, 0)                           # once: the flag is set
+    assert [r[0] for r in s.q("SELECT body FROM chunks")] == ["again"]
+    s.close()
+
+
+def test_new_rules_with_secrets_on_keep_the_names_only(tmp_path):
+    s, ids = _old_index(tmp_path)
+    ix = indexer.Indexer(s, S(include_secrets=True))
+    assert ix._apply_new_rules() == (2, 0)
+    names = {r[0] for r in s.q("SELECT name FROM files")}
+    assert names == {"ConsoleHost_history.txt", "sitemanager.xml", "notes.txt", "beach.jpg"}
+    assert [r[0] for r in s.q("SELECT body FROM chunks")] == ["token-notes.txt"]
+    assert s.one("SELECT text_err FROM files WHERE name='sitemanager.xml'") == indexer.NAMES_ONLY
+    assert [r[1] for r in s.needs_text({".txt", ".xml"}, 1 << 20)] == []          # never read again
+    assert s.one("SELECT count(*) FROM vecs") == 1
+    s.close()
+
+
+def test_new_rules_run_at_the_start_of_the_indexer(tmp_path):
+    src = open(indexer.__file__, encoding="utf-8").read()
+    run = src[src.index("    def _run(self):"):]
+    assert run.index("self._apply_new_rules()") < run.index("self._load_embedder()")

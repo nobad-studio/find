@@ -662,10 +662,10 @@ class Api:
 
     def _remove_secrets(self):
         """Every secret (scope category) out of the index: key files by extension, secret folders by name."""
-        from .const import BROWSER_SECRET_FILES, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
+        from .const import BROWSER_SECRET_FILES, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS
         rules = scope.Rules.from_settings(self._settings)
         exts = sorted(SECRET_EXT)
-        names = sorted(SECRET_NAMES | SECRET_FILES | BROWSER_SECRET_FILES)
+        names = sorted(SECRET_NAMES | SECRET_FILES | BROWSER_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
         names += [n + t for n in sorted(SECRET_FILES | BROWSER_SECRET_FILES) for t in ("-journal", "-wal", "-shm")]
 
         def esc(t):

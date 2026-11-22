@@ -528,6 +528,34 @@ class Store:
         r = self.q("SELECT text, model, at FROM vdesc WHERE file_id=?", (file_id,))
         return {"text": r[0][0], "model": r[0][1] or "", "at": r[0][2] or 0.0} if r else None
 
+    def with_content(self):
+        """(id, path) of every file something was read from: text chunks, a photo vector or a kept description."""
+        return self.q("SELECT id, path FROM files WHERE id IN (SELECT file_id FROM chunks) OR id IN "
+                      "(SELECT file_id FROM pvecs WHERE length(v) > 0) OR id IN (SELECT file_id FROM vdesc)")
+
+    def drop_content(self, file_ids, mark):
+        """What was read from these files goes (text, its words and vectors, photo vectors, a kept description); the
+        rows, their names and name vectors stay, marked `mark` so nothing reads them again. One transaction."""
+        ids = list(file_ids)
+        if not ids:
+            return 0
+        with self.wlock:
+            self.db.execute("BEGIN")
+            try:
+                for i in range(0, len(ids), 500):
+                    part = ids[i:i + 500]
+                    marks = ",".join("?" * len(part))
+                    self.db.execute(f"DELETE FROM chunks WHERE file_id IN ({marks})", part)   # text, vecs: triggers
+                    self.db.execute(f"DELETE FROM vdesc WHERE file_id IN ({marks})", part)
+                    self.db.execute(f"UPDATE pvecs SET v = x'', err = ? WHERE file_id IN ({marks})", (mark, *part))
+                    self.db.execute(f"UPDATE files SET text_mtime = mtime, text_err = ? WHERE id IN ({marks})",
+                                    (mark, *part))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return len(ids)
+
     # ---------- forgetting ----------
     def forget_path(self, path):
         self.remove_paths([path])

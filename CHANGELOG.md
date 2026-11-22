@@ -32,6 +32,13 @@
 - Settings > Models has a "Talk about photos" group: both models and both runtimes, with sizes, memory, Download
   (with the same consent) and Remove.
 
+### Privacy and security (review of 2026-11-22)
+- **What other programs record is no longer read:** PowerShell's command history, shell and database-client
+  histories, Windows' Recent items, FileZilla and WinSCP saved servers, and sign-in files of the GitHub CLI, Maven,
+  Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
+  when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
+  the index stays as it is.
+
 ## 1.0.1 · 2026-11-22
 
 ### Opening Windows settings and apps

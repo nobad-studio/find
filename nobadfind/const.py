@@ -43,17 +43,48 @@ SECRET_EXT = set(ALWAYS_EXCLUDE_EXT) | {".1pux", ".1pif", ".wallet"}
 # passwords, cookies, history and form data (Chromium and Firefox), developer tokens, wallets. Security review of #79.
 SECRET_FILES = {"key3.db", "key4.db", "logins.json", "cookies.sqlite", "places.sqlite", "formhistory.sqlite",
                 "signons.sqlite", ".npmrc", ".pypirc", ".netrc", "_netrc", ".git-credentials", "wallet.dat"}
+# Security review 2026-11-22 (M2). What other programs record (AGENTS.md: never read it) and more saved sign-ins, by
+# exact file name. They are secrets: out by default, names only when the user turns secrets on. A change here bumps
+# scope.RULES_REV, so an index made with the old rules loses their content once (indexer.Indexer._apply_new_rules).
+SECRET_FILES |= {
+    # command histories other programs keep (shells, REPLs, database clients, editors)
+    "consolehost_history.txt", ".bash_history", ".zsh_history", ".sh_history", ".history", ".python_history",
+    ".node_repl_history", ".psql_history", ".mysql_history", ".sqlite_history", ".rediscli_history",
+    ".irb_history", ".lesshst", ".viminfo", "_viminfo", ".wget-hsts",
+    # saved servers and passwords: FileZilla, WinSCP, PostgreSQL, S3 tools, Terraform, Vault
+    "sitemanager.xml", "recentservers.xml", "filezilla.xml", "winscp.ini", ".pgpass", "pgpass.conf", ".s3cfg",
+    ".boto", "credentials.tfrc.json", ".vault-token",
+    # SSH keys and host lists outside .ssh (a copied key is still a key)
+    "known_hosts", "known_hosts.old", "authorized_keys", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    "id_ecdsa_sk", "id_ed25519_sk",
+    # cloud sign-ins outside their own folders (gcloud, .aws, .azure, .docker, .kube are folders, above)
+    "application_default_credentials.json",
+}
+# A file name that is a secret only inside a folder run (the last item is the file name, the rest the folders right
+# above it): "settings.xml" in .m2 holds Maven passwords, elsewhere it's just settings.
+SECRET_FILES_IN = ((".m2", "settings.xml"), (".m2", "settings-security.xml"), (".cargo", "credentials.toml"),
+                   (".cargo", "credentials"), ("github cli", "hosts.yml"), ("gh", "hosts.yml"))
 # Generic names that are secrets inside a browser profile (NAMES_ONLY_PATHS) only: "History" elsewhere is yours
 BROWSER_SECRET_FILES = {"login data", "login data for account", "cookies", "history", "web data", "local state"}
 # ... and by folder: these folder names one after the other anywhere in a path (lower case)
 SECRET_PATHS = (("microsoft", "credentials"), ("microsoft", "vault"), ("microsoft", "protect"),
-                ("discord", "local storage"), ("slack", "local storage"), ("teams", "local storage"))
+                ("discord", "local storage"), ("slack", "local storage"), ("teams", "local storage"),
+                # security review 2026-11-22 (M2): PowerShell's command history, Windows' Recent items and jump
+                # lists, FileZilla's saved sites, GitHub CLI tokens, GnuPG's keyrings on Windows
+                ("powershell", "psreadline"), ("windows", "recent"), ("roaming", "filezilla"),
+                ("roaming", "github cli"), (".config", "gh"), ("roaming", "gnupg"))
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
                     ("brave-browser", "user data"), ("vivaldi", "user data"), ("opera software",),
-                    ("firefox", "profiles"), ("thunderbird", "profiles"), ("leveldb",), ("indexeddb",))
+                    ("firefox", "profiles"), ("thunderbird", "profiles"), ("leveldb",), ("indexeddb",),
+                    # 2026-11-22: the other channels and forks of the same browsers
+                    ("chrome beta", "user data"), ("chrome dev", "user data"), ("chrome sxs", "user data"),
+                    ("edge beta", "user data"), ("edge dev", "user data"), ("edge sxs", "user data"),
+                    ("yandexbrowser", "user data"), ("thorium", "user data"), ("arc", "user data"),
+                    ("librewolf", "profiles"), ("waterfox", "profiles"), ("floorp", "profiles"),
+                    ("zen", "profiles"))
 NAMES_ONLY_EXT = {".sqlite", ".sqlite3", ".db", ".ldb", ".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm",
-                  ".db-journal", ".leveldb"}
+                  ".db-journal", ".leveldb", ".vscdb"}
 CACHE_NAMES = {"node_modules", "__pycache__", ".git", ".svn", ".hg", ".venv", "venv", ".cache", "cache", "cache2",
                "code cache", "gpucache", "temp", "tmp"}
 SYSTEM_NAMES = {"windowsapps", "winsxs", "$windows.~bt", "$windows.~ws"}

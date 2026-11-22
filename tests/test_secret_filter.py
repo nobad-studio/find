@@ -35,3 +35,19 @@ def test_the_filter_alone_lists_the_secrets_and_nothing_else(tmp_path):
 def test_the_filter_narrows_a_question(tmp_path):
     assert names(search(_store(tmp_path), "vault", filters={"kind": "secret"})) == ["vault.kdbx"]
     assert names(search(_store(tmp_path), "history", filters={"kind": "secret"})) == []
+
+
+def test_the_filter_lists_the_2026_11_22_rules_too(tmp_path):
+    """Program records and tokens (security review M2) by name, and a file that is a secret only in its folder."""
+    s = _store(tmp_path)
+    psr = H + "\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine"
+    more = [(H + "\\.m2\\settings.xml", "settings.xml", H + "\\.m2", ".xml", "text"),
+            (H + "\\Documents\\settings.xml", "settings.xml", H + "\\Documents", ".xml", "text"),
+            (H + "\\.config\\gh\\hosts.yml", "hosts.yml", H + "\\.config\\gh", ".yml", "text"),
+            (psr + "\\ConsoleHost_history.txt", "ConsoleHost_history.txt", psr, ".txt", "text")]
+    s.upsert_files([(p, n, d, e, k, 10, 1.0, 1.0, 1) for p, n, d, e, k in more])
+    r = search(s, "", filters={"kind": "secret"})
+    paths = {x["path"] for x in r["results"]}
+    assert H + "\\.m2\\settings.xml" in paths and H + "\\Documents\\settings.xml" not in paths
+    assert H + "\\.config\\gh\\hosts.yml" in paths
+    assert any(p.endswith("ConsoleHost_history.txt") for p in paths)
