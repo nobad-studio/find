@@ -116,6 +116,7 @@ class IndexDetails {
     this.phases = const [],
     this.models = const [],
     this.activity = const [],
+    this.limits,
   });
 
   final String version;
@@ -141,6 +142,9 @@ class IndexDetails {
   final List<PhaseRow> phases;
   final List<ModelCard> models;
   final List<ActivityEntry> activity;
+
+  /// How many of each operation may run at once now (2026-11-21 engines; null from older ones).
+  final OpLimits? limits;
 
   static IndexDetails fromJson(Map<String, Object?> m) {
     final ocr = m['ocr'];
@@ -169,6 +173,7 @@ class IndexDetails {
       phases: jList(m['phases'], PhaseRow.fromJson),
       models: jList(m['models'], ModelCard.fromJson),
       activity: jList(m['activity'], ActivityEntry.fromJson),
+      limits: OpLimits.fromJson(m['limits']),
     );
   }
 
@@ -180,6 +185,50 @@ class IndexDetails {
     final i = speed.indexOf(' (');
     if (i < 0) return 'Speed';
     return 'Speed: ${speed.substring(i + 2).replaceAll(')', '')}';
+  }
+}
+
+/// One operation's limit (`status_full.limits`): [effective] = the smallest of the user's setting, the processor,
+/// free memory and the governor's level (vision: and the graphics card); [by] = which one set it.
+class OpLimit {
+  const OpLimit(this.effective, this.by);
+  final int effective;
+  final String by;
+
+  static const _by = {
+    'user': 'your setting',
+    'cpu': 'the processor',
+    'memory': 'free memory',
+    'governor': 'the current level',
+    'gpu': 'the graphics card',
+  };
+
+  /// "set by free memory".
+  String get byLabel => 'set by ${_by[by] ?? by}';
+
+  static OpLimit fromJson(Object? v) {
+    final m = jMap(v);
+    return OpLimit(jInt(m['effective']), jStr(m['by']));
+  }
+}
+
+/// `status_full.limits`: the names walk, the text readers, the photo step and the (future) vision step.
+class OpLimits {
+  const OpLimits({required this.walk, required this.readers, required this.photo, required this.vision});
+  final OpLimit walk;
+  final OpLimit readers;
+  final OpLimit photo;
+  final OpLimit vision;
+
+  static OpLimits? fromJson(Object? v) {
+    if (v is! Map || v.isEmpty) return null;
+    final m = jMap(v);
+    return OpLimits(
+      walk: OpLimit.fromJson(m['walk']),
+      readers: OpLimit.fromJson(m['readers']),
+      photo: OpLimit.fromJson(m['photo']),
+      vision: OpLimit.fromJson(m['vision']),
+    );
   }
 }
 

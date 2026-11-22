@@ -11,7 +11,8 @@ import threading
 import time
 from collections import deque
 
-from . import embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import capability, embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import governor as governor_mod
 from . import hardware as hw
 from .const import APP_VER
 from .indexer import NAME_KINDS
@@ -335,6 +336,9 @@ class Api:
             st["history"] = gov.history
         else:
             st["level"], st["reason"], st["history"] = st.get("level", ""), st.get("reason", ""), []
+        limits = getattr(gov, "limits", None)
+        st["limits"] = limits if limits else governor_mod.op_limits(
+            st["level"] if st["level"] in governor_mod.ORDER else governor_mod.GENTLE, st.get("plan"))
         history = st["history"]
         st["resources"] = self._resources(now, history[-1].get("gpu") if history else None)
         st["phases"] = self._phases(now, st)
@@ -548,6 +552,12 @@ class Api:
     def hardware(self):
         return hw.scan()
 
+    def capability_state(self):
+        """Settings -> Models "Your PC, now": what this PC can run right now (capability.assess) from the
+        governor's last reading. measured: per-model numbers from this PC (an in-app benchmark, later)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}))
+
     def get_settings(self):
         return self._settings.all()
 
@@ -579,7 +589,7 @@ class Api:
             self._indexer.wake.set()
         if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
             self._indexer.replan()                     # 0.9.3: the new workers now, no restart
-        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call"}:
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call", "creative_apps"}:
             g = getattr(self._indexer, "governor", None)
             if g is not None and hasattr(g, "now"):
                 g.now()

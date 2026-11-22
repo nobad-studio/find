@@ -589,6 +589,9 @@ class FakeEngine implements EngineApi {
   final channels = <String>[];
   late ModelsInfo modelsInfo = demoModels();
 
+  /// `status_full.limits` (2026-11-21); null by default, as from an older engine (tests set it).
+  OpLimits? limits;
+
   /// Answer the 0.8 methods like an older engine: -32601 (tests of the "needs a newer engine" path).
   bool old = false;
 
@@ -600,6 +603,13 @@ class FakeEngine implements EngineApi {
 
   @override
   Future<ModelsInfo> models() => _new('models', () => modelsInfo);
+
+  /// The live capability (tests and the demo): 2.2 GB free on the 15.7 GB demo PC, so the bigger models are "not
+  /// now", as the contract transcript shows.
+  late CapabilityState capability = demoCapability();
+
+  @override
+  Future<CapabilityState> capabilityState() => _new('capability_state', () => capability);
 
   /// Settings → Models' language choice (`model_language`): only the recommendation changes.
   @override
@@ -915,6 +925,7 @@ class FakeEngine implements EngineApi {
         rate: 2140,
         dbBytes: 214 * 1048576,
         plan: const WorkPlan(cpu: 16, textWorkers: 2, textWorkersIdle: 6, ssd: true),
+        limits: limits,
         speed: "gentle (you're using the PC)",
         ocrOn: true,
         roots: const [r'C:\Users\me', r'D:\'],
@@ -1379,5 +1390,20 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       for (final m in all)
         m.withState(was[m.id] ?? m.state, recommended: m.id == text || m.id == 'siglip-base' || m.id == 'windows-ocr'),
     ],
+  );
+}
+
+/// The demo PC right now: 2.2 GB of its 15.7 GB free (contract transcript 06).
+CapabilityState demoCapability() {
+  const fits = 'Fits now: needs about 56 MB, 2.1 GB free';
+  const notNow = 'Not now: it needs about 544 MB plus 392 MB to spare, and 2.1 GB of memory is free (NOBAD Find '
+      'leaves 1.5 GB to Windows)';
+  return const CapabilityState(
+    canRun: {'minilm-l6-v2': true, 'gte-small': true, 'multilingual-e5-small': false, 'multilingual-e5-base': false,
+      'siglip-base': true, 'siglip2-base': false, 'windows-ocr': true},
+    why: {'minilm-l6-v2': fits, 'gte-small': fits, 'multilingual-e5-small': notNow, 'multilingual-e5-base': notNow,
+      'siglip-base': fits, 'siglip2-base': notNow, 'windows-ocr': 'Built into Windows'},
+    budget: CapabilityBudget(live: true, installedMb: 16076, freeMb: 2200, reserveMb: 1500, usableMb: 700,
+        commitPct: 62, commitFreeMb: 9000, gpuKind: 'shared', gpuFreeMb: 7300, gpuBudgetMb: 8000, cpu: 20, gpu: 3),
   );
 }

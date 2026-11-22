@@ -35,6 +35,7 @@ def methods(api, events=None):
     return {"download_model": lambda params, conn=None: ok(api.download_model()),
             "download_photo_model": lambda params, conn=None: ok(api.download_photo_model()),
             "models": lambda params, conn=None: api.models(),
+            "capability_state": lambda params, conn=None: api.capability_state(),
             "model_use": lambda params, conn=None: _use(api, params),
             "model_download": lambda params, conn=None: ok(api.model_download(_model_id(params), _consent(params))),
             "model_remove": lambda params, conn=None: ok(api.model_remove(_model_id(params))),

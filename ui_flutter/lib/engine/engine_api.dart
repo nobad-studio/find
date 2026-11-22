@@ -132,6 +132,10 @@ abstract class EngineApi {
   /// This PC, the recommended tier, and every model with its facts.
   Future<ModelsInfo> models();
 
+  /// Which models this PC can run RIGHT NOW (`capability_state`, 2026-11-21 engines): free memory, commit, graphics
+  /// memory, load and battery. An older engine answers -32601.
+  Future<CapabilityState> capabilityState();
+
   /// Use [id] for [feature] (it may need a download first).
   Future<ModelUse> modelUse(String feature, String id);
 

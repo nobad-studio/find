@@ -127,7 +127,9 @@ def worker_hooks(pieces):
     return {"release": on("indexer", lambda i: i.release_models()),
             "recycle": on("indexer", lambda i: i.recycle_workers()),
             "release_idle": on("indexer", lambda i: i.release_idle_models()),
-            "names": on("indexer", lambda i: i.worker_names(), {})}
+            "names": on("indexer", lambda i: i.worker_names(), {}),
+            "plan": on("indexer", lambda i: i.status.get("plan")),
+            "drives": on("indexer", lambda i: [d["root"] for d in i.drive_list if d.get("present")], [])}
 
 
 def show_requests(base, show, stop, make=winapi.show_event, wait=winapi.wait_any, spawn=None):
@@ -458,7 +460,8 @@ def run(stop=None, open_ui=None, lock=None):
     watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")},
                         keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
-    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
+    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"],
+                        release_models=hooks["release"], plan=hooks["plan"], drives=hooks["drives"])
     measure = measure_overrides(os.environ)
     if measure["level"]:
         governor.brain.fixed = measure["level"]
