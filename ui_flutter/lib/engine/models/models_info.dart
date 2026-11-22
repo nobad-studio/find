@@ -51,7 +51,13 @@ const _states = {
 };
 
 String featureLabel(String feature) =>
-    const {'text': 'Meaning search', 'photo': 'Photos by what is in them', 'ocr': 'Words in pictures'}[feature] ??
+    const {
+      'text': 'Meaning search',
+      'photo': 'Photos by what is in them',
+      'ocr': 'Words in pictures',
+      'talk': 'Talk about photos',
+      'runtime': 'Runs the photo talk models',
+    }[feature] ??
     feature;
 
 String tierLabel(String tier) =>
@@ -78,7 +84,15 @@ class ModelInfo {
     this.focusSent,
     this.quality,
     this.dir = '',
+    this.vramMb = 0,
+    this.runtime = '',
   });
+
+  /// 1.1, talk models: measured graphics memory on the Vulkan runtime (0 = not sent).
+  final double vramMb;
+
+  /// 1.1, talk models: the runtime id this PC uses for it ('' = not sent); offered in the same consent.
+  final String runtime;
 
   /// 0.9.0: the folder its files are (or will be) downloaded to; '' when built into Windows or an older engine.
   final String dir;
@@ -134,6 +148,8 @@ class ModelInfo {
     focusSent: focusSent,
     quality: quality,
     dir: dir,
+    vramMb: vramMb,
+    runtime: runtime,
   );
 
   bool get onDisk => builtin || state == ModelUseState.ready || state == ModelUseState.active;
@@ -161,6 +177,8 @@ class ModelInfo {
       focusSent: LanguageFocus.parse(m['focus']),
       quality: ModelQuality.fromJson(m['quality']),
       dir: jStr(m['dir']),
+      vramMb: jNum(m['vram_mb']),
+      runtime: jStr(m['runtime']),
     );
   }
 }
@@ -185,6 +203,14 @@ class ModelsInfo {
     for (final m in models)
       if (m.feature == feature) m,
   ];
+
+  ModelInfo? byId(String id) => models.where((m) => m.id == id).firstOrNull;
+
+  /// 1.1: the runtime a talk model still needs downloaded with it (null: on disk, on its way, or none named).
+  ModelInfo? runtimeToFetch(ModelInfo m) {
+    final rt = m.runtime.isEmpty ? null : byId(m.runtime);
+    return rt == null || rt.onDisk || rt.state == ModelUseState.downloading ? null : rt;
+  }
 
   static ModelsInfo fromJson(Object? v) {
     final m = jMap(v);

@@ -251,7 +251,7 @@ def test_missing_model_or_runtime_names_the_download(env):
 def test_not_enough_free_memory_refuses_smolvlm(env, monkeypatch):
     monkeypatch.setattr(api_mod.winapi, "memory_status", lambda: (95, 900))
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
-    assert r["ok"] is False and r["error"].startswith("Not now: only 0.9 GB free, SmolVLM2 needs about 0.9 GB")
+    assert r["ok"] is False and r["error"].startswith("Not now: only 0.9 GB free, SmolVLM2 needs about 1.0 GB")
 
 
 def test_compare_needs_two_different_photos(env):
@@ -288,12 +288,25 @@ def test_describe_streams_then_done(env):
     assert st["loaded"] == SMOL and st["busy"] is False and st["running"] is True
 
 
-def test_vulkan_runtime_passes_the_gpu_need_and_layers(env):
+def test_vulkan_runtime_passes_the_gpu_need_and_layers(env, monkeypatch):
     _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(env["events"], r["job"]))
     (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
     assert settings["need_mb"] == models.get(SMOL)["vram_mb"] and gpu == 99
+
+
+def test_vulkan_on_shared_memory_graphics_needs_the_bigger_figure(env, monkeypatch):
+    """Integrated graphics (Iris Xe: 128 MB of its own) use system RAM: measured, Qwen on Vulkan committed more RAM
+    than its graphics memory, so the need is max(ram_mb, vram_mb)."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1})
+    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(env["events"], r["job"]))
+    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
+    m = models.get(SMOL)
+    assert settings["need_mb"] == max(m["ram_mb"], m["vram_mb"]) and gpu == 99
 
 
 def test_new_ask_cancels_old_stream(env):
@@ -333,7 +346,7 @@ def test_out_of_memory_mid_answer_is_an_error_and_the_next_job_works(env):
     assert any(e["job"] == r["job"] and e["text"] == "A red " for e in ev)        # tokens were streamed ...
     end = _final(ev, r["job"])
     assert end["state"] == "error" and end["text"] == ""                          # ... and the answer failed
-    assert end["note"] == ("Not enough memory right now (needs about 942 MB). Close something or try again "
+    assert end["note"] == ("Not enough memory right now (needs about 1.0 GB). Close something or try again "
                            "later.")
     assert ("close", SMOL) in FakeSession.log                                     # unloaded
     env["opts"].update(fail_after=None)
@@ -930,7 +943,8 @@ def test_real_qwen_deeper_answer_inside_the_workers_job(tmp_path):
     assert got["final"]["model"] == QWEN and got["final"]["text"].strip()
     assert got["kills"] == [] and got["still_running"]                         # ... the worker wasn't killed ...
     assert "memory" not in got["final"]["note"].lower()                        # ... and no allocation failure
-    need = models.get(QWEN)["vram_mb" if got["runtime"] == "llama-vulkan" else "ram_mb"]
+    from nobadfind import hardware
+    need = models.talk_need_mb(models.get(QWEN), got["runtime"], hardware.scan())
     assert got["budget_mb"] == need and got["job_commit_limit_mb"] == got["base_limit_mb"] + need
     assert got["limit_after_mb"] == got["base_limit_mb"]                       # back down once it has gone
     assert got["checks"] > 0

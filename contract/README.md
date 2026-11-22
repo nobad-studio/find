@@ -174,6 +174,12 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   were measured on the reference PC (0 / "" when not measured); `improves`, `licence`, `size_mb`, `source` and
   `ram_mb` are what the consent dialog shows. `recommended`: in the recommended tier for this PC and language focus.
   The `models` event brings the same object whenever it changes.
+  1.1: `feature` may also be `talk` (SmolVLM2 500M and Qwen3-VL 2B, talk about a photo) or `runtime` (the llama.cpp
+  runtimes `llama-cpu` / `llama-vulkan` they run on). A talk model also sends `vram_mb` (measured graphics memory on
+  Vulkan) and `runtime` (the runtime id this PC uses for it). The UI's one consent dialog for a talk model names the
+  model and that runtime (when it isn't on disk yet), both sizes and the total, and both sources (huggingface.co;
+  github.com, which redirects to `*.githubusercontent.com`); its Download then sends `model_download` for each. No
+  consent is stored for either. `model_use` is not for them; `model_remove` deletes a runtime's unpacked DLLs.
 - **`model_use`** `{feature, id}` → `{ok, error, needs_download: bool}`: choose the model for a feature (and turn the
   feature on). Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
   model rebuilds the meaning vectors in the background (`status_full.phases` has `{id: "rebuild"}`); the old vectors

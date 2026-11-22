@@ -204,8 +204,9 @@ def test_talk_models_are_pinned_and_measured():
         assert all(len(sha) == 64 and size > 0 for _p, size, sha in m["files"].values())
         assert m["talk"]["side"] == 512 and m["talk"]["n_ctx"] == 1024 and m["talk"]["n_ubatch"] == 256
         assert m["talk"]["flash_attn"] is True and m["talk"]["kv"] == "q8_0"
-    assert (t["smolvlm2-500m"]["ram_mb"], t["qwen3vl-2b"]["ram_mb"]) == (942, 2411)
-    assert (t["smolvlm2-500m"]["vram_mb"], t["qwen3vl-2b"]["vram_mb"]) == (658, 2060)
+    # measured through the real worker (docs/measurements.md 2026-11-22 1.1.0)
+    assert (t["smolvlm2-500m"]["ram_mb"], t["qwen3vl-2b"]["ram_mb"]) == (1031, 2483)
+    assert (t["smolvlm2-500m"]["vram_mb"], t["qwen3vl-2b"]["vram_mb"]) == (665, 2062)
     assert (t["smolvlm2-500m"]["tier"], t["qwen3vl-2b"]["tier"]) == ("balanced", "best")
     assert t["qwen3vl-2b"]["talk"]["image_max_tokens"] == 160 and "image_max_tokens" not in t["smolvlm2-500m"]["talk"]
 
@@ -238,6 +239,26 @@ def test_runtime_for_device(tmp_path):
     assert models.ready("llama-vulkan", str(tmp_path))
     assert models.runtime_for("vulkan", str(tmp_path)) == "llama-vulkan"
     assert models.runtime_for("cpu", str(tmp_path)) == "llama-cpu"
+
+
+def test_talk_runtime_is_the_one_on_disk_else_by_graphics(tmp_path):
+    d = str(tmp_path)
+    assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-vulkan"
+    assert models.talk_runtime({"gpu": ""}, d) == "llama-cpu"
+    cpu = models.model_dir("llama-cpu", d)
+    os.makedirs(cpu)
+    for n, (size, _s) in models.get("llama-cpu")["files_in_zip"].items():
+        with open(os.path.join(cpu, n), "wb") as f:
+            f.truncate(size)
+    assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-cpu"     # already there
+
+
+def test_talk_need_on_shared_memory_graphics_is_the_bigger_figure():
+    q = models.get("qwen3vl-2b")
+    iris, discrete = {"vram_gb": 0.1}, {"vram_gb": 6.0}
+    assert models.talk_need_mb(q, "llama-cpu", iris) == q["ram_mb"]
+    assert models.talk_need_mb(q, "llama-vulkan", iris) == max(q["ram_mb"], q["vram_mb"])
+    assert models.talk_need_mb(q, "llama-vulkan", discrete) == q["vram_mb"]
 
 
 def test_talk_models_are_not_downloaded_by_auto_configure():

@@ -859,13 +859,15 @@ class Api:
         rec = models.recommend(pc)
         choice = models.tier_choice(rec, focus)
         out = []
+        rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
-            if m["feature"] not in models.SEARCH_FEATURES:
-                continue                        # talk models and runtimes: the photo page asks for them (1.1)
             ok, why = models.capable(m, pc)
             if m["feature"] == "ocr" and not ocr.available():
                 ok, why = False, ocr.why_missing() or "Windows OCR isn't available on this PC"
-            out.append({"id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            # 1.1: the talk models also say their graphics memory and the runtime they need on this PC (its
+            # download is offered with theirs, in one consent)
+            talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
+            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": models.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -900,8 +902,8 @@ class Api:
             if self._mdl.get(mid, {}).get("state") == "downloading":
                 return {"ok": True, "error": ""}            # already on its way: one download per model
             self._mdl[mid] = {"state": "downloading", "got": 0, "size": 0, "error": ""}
-        if m["feature"] != "runtime":                       # a llama.cpp runtime grants no model consent
-            self._settings.update({"allow_model_download" if m["feature"] == "text" else
+        if m["feature"] in ("text", "photo"):       # talk models and llama.cpp runtimes: no stored consent (each
+            self._settings.update({"allow_model_download" if m["feature"] == "text" else    # download is a click)
                                    "allow_photo_model_download": True})
         st = self._mdl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()),
                                "error": ""}
@@ -1026,9 +1028,8 @@ class Api:
         if m is None:
             return None, {"ok": False, "error": why, "job": 0}
         d = self._mdir()
-        rid = models.runtime_for("vulkan", d)
-        if not models.ready(rid, d):
-            rid = "llama-vulkan" if hw.scan().get("gpu") else "llama-cpu"
+        pc = hw.scan()
+        rid = models.talk_runtime(pc, d)
         need = [x for x in (m, models.get(rid)) if not models.ready(x["id"], d)]
         if need:
             mb = sum(models.missing_mb(x["id"], d) for x in need)
@@ -1039,7 +1040,7 @@ class Api:
                                        for x in need]}
         vulkan = rid == "llama-vulkan"
         settings = dict(m["talk"])
-        settings["need_mb"] = int(m.get("vram_mb" if vulkan else "ram_mb") or 0) or None
+        settings["need_mb"] = models.talk_need_mb(m, rid, pc) or None
         mdir = models.model_dir(m["id"], d)
         talk = self._talker()
         job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
@@ -1116,7 +1117,7 @@ class Api:
 
     def vision_state(self):
         d = self._mdir()
-        rid = models.runtime_for("vulkan", d)
+        rid = models.talk_runtime(hw.scan(), d)          # the one a question would use (or ask to download)
         sample = getattr(self._governor, "sample", None)
         out = []
         for i, m in enumerate(models.talk_models()):
@@ -1222,7 +1223,9 @@ class Api:
         if m["feature"] in ("talk", "runtime"):
             self.vision_stop("Stopped: that model is being removed.")     # its files are open in the talk worker
         d = models.model_dir(mid, self._mdir())
-        for name in m["files"]:
+        # a runtime keeps only its pinned DLLs (the zip was deleted after unpacking): those are what goes
+        names = list(m["files_in_zip"]) if m["feature"] == "runtime" else list(m["files"])
+        for name in names:
             for p in (os.path.join(d, name), os.path.join(d, name + ".part"), os.path.join(d, name + ".dl.part")):
                 try:
                     os.remove(p)

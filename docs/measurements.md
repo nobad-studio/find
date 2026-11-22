@@ -4,6 +4,40 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22 (1.1.0): talk about a photo through the real worker
+
+Describe, Ask and Compare through `vlm.worker.Talker` and its spawned talk worker process (not the llama.cpp
+CLI), on the reference PC (i5-12500H, 16 threads, 15.7 GB, Intel Iris Xe with 128 MB of its own memory: the
+graphics share system RAM), llama.cpp b12602, the catalog's talk settings (512 px side, n_ctx 1024, n_ubatch 256,
+flash attention, q8_0 KV; Qwen `image_max_tokens` 160), greedy. NOBAD Find itself was running beside it
+(about 1 GB); 4.8-5.3 GB was free before each run. One fresh worker per row; its jobs in order: **Describe**
+dog-01.jpg (cold: starts the worker, loads the model, answers), **Ask** "What's written here?" on sign-01.jpg,
+**Compare** dog-01.jpg with dog-02.jpg, **Describe** cat-01.jpg (warm), photos from the Wikimedia Commons set of
+`tools/vision_bench`. Times are seconds from the question to its first word / to the finished answer. Peak
+private = the worker's peak committed memory (PeakPagefileUsage); working set sampled every 0.25 s; graphics =
+the PDH counters `\GPU Process Memory(pid_*)\Dedicated Usage` + `Shared Usage`, peak.
+
+| model, runtime | Describe (cold) | Ask | Compare | Describe (warm) | peak private | peak working set | graphics |
+|---|---|---|---|---|---|---|---|
+| SmolVLM2 500M, CPU | 6.5 / 6.9 | 3.3 / 3.3 | 6.8 / 7.2 | 3.8 / 3.9 | 535 MB | 610 MB | - |
+| SmolVLM2 500M, Vulkan | 2.4 / 2.8 | 1.2 / 1.3 | 2.4 / 2.9 | 1.3 / 1.4 | 1,031 MB | 784 MB | 665 MB shared |
+| Qwen3-VL 2B, CPU | 16.7 / 20.0 | 6.9 / 7.0 | 9.7 / 19.6 | 4.6 / 7.2 | 1,736 MB | 2,373 MB | - |
+| Qwen3-VL 2B, Vulkan | 14.9 / 18.5 | 1.7 / 1.7 | 3.2 / 12.0 | 1.8 / 5.1 | 2,483 MB | 2,250 MB | 2,062 MB shared |
+
+- Answers: both models read the sign as "EXIT". SmolVLM2's describe and compare are short and plain ("There is a
+  cat walking on the snow."; it called both dog-park signs "a sign with a dog on it"); Qwen's are long and
+  specific (it named the park on the sign, slightly misspelled, the flag and the silos).
+- Loading: Qwen's first word comes 13-15 s after the first question (start + load + the first picture), 2-5 s after
+  later ones; SmolVLM2's 2.4 s (Vulkan) / 6.5 s (CPU) and then 1-4 s. The UI's "Loading … about N s" is 2 s for
+  SmolVLM2 and 13 s for Qwen (`talk_controller.loadSeconds`).
+- Memory: on Vulkan with shared-memory graphics the worker commits MORE system RAM than its graphics memory (Qwen
+  2,483 vs 2,062 MB), so the need passed to the worker there is `max(ram_mb, vram_mb)` (`models.talk_need_mb`;
+  under 1 GB of dedicated video memory counts as shared). Catalog, from these rows: `ram_mb` = the biggest
+  system-memory figure of the model's CPU and Vulkan runs (SmolVLM2 1,031, Qwen 2,483; was 942 / 2,411 from the
+  CLI at `-c 4096`), `vram_mb` = its graphics memory on Vulkan (665 / 2,062; was 658 / 2,060). Qwen on Vulkan
+  fits the worker group's commit limit (base 4,019 MB + the need) with room to spare.
+- Not measured: a discrete graphics card (dedicated memory), and a PC with less memory.
+
 ## 2026-11-22: review fixes to photo ranking v2
 
 Found in review; fixed in `nobadfind/query.py` (intent) and `nobadfind/search.py` (tests in `tests/test_photo.py`).

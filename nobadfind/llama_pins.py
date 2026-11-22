@@ -1,7 +1,7 @@
 """The pinned llama.cpp release (tag b12602, tools/vision_bench/models.json): each runtime zip and the DLLs kept from it.
 
-Every .dll in the zip except ggml-rpc.dll (a network backend; maintainer ruling: never kept; b12602 does not ship it
-anyway) and no .exe. name: (size, SHA-256).
+Every .dll in the zip except ggml-rpc.dll (a network backend; maintainer ruling: never kept. b12602's zips do ship
+it, with ggml-rpc-server.exe: neither is pinned, so neither is unpacked) and no .exe. name: (size, SHA-256).
 """
 
 TAG = 'b12602'

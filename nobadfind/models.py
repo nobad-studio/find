@@ -97,8 +97,10 @@ CATALOG = [
      "builtin": False},
     # talk about a photo (find 1.1): a small vision-language model run by llama.cpp (the runtimes below). Not part of
     # the search tiers: it is offered when the user first asks to talk about a photo. Files, revisions, sizes and
-    # SHA-256s are tools/vision_bench/models.json; ram_mb / vram_mb are peak private memory, measured
-    # (docs/measurements.md, 2026-11-22).
+    # SHA-256s are tools/vision_bench/models.json. Measured through the real talk worker on the reference PC
+    # (docs/measurements.md, 2026-11-22 1.1.0): ram_mb = the most system memory the worker held (peak private or
+    # working set, the bigger, over the CPU and the Vulkan runs: on shared-memory graphics the "video" memory is
+    # system RAM too); vram_mb = its peak graphics memory on Vulkan (talk_need_mb picks between them).
     {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
      "source": HF + "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF", "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
      "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
@@ -108,7 +110,9 @@ CATALOG = [
                                "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b")},
      "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
-     "ram_mb": 942, "vram_mb": 658, "speed_note": "about 3 s a photo on the reference PC's GPU", "builtin": False},
+     "ram_mb": 1031, "vram_mb": 665,
+     "speed_note": "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-7 s on its processor",
+     "builtin": False},
     {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
      "source": HF + "Qwen/Qwen3-VL-2B-Instruct-GGUF", "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
      "repo": "Qwen/Qwen3-VL-2B-Instruct-GGUF",
@@ -118,7 +122,9 @@ CATALOG = [
                                "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82")},
      "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
-     "ram_mb": 2411, "vram_mb": 2060, "speed_note": "about 5 s a photo (deeper analysis)", "builtin": False},
+     "ram_mb": 2483, "vram_mb": 2062,
+     "speed_note": "an answer in about 2-12 s on the reference PC's graphics (Iris Xe), 7-20 s on its processor; "
+                   "the first question also loads it (about 13 s)", "builtin": False},
     # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
     # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.
     _runtime("llama-cpu", "llama.cpp runtime (CPU)", llama_pins.CPU_ZIP, llama_pins.CPU_DLLS,
@@ -213,6 +219,30 @@ def talk_models():
 def runtime_for(device, data_dir=DATA_DIR):
     """The llama.cpp runtime id to use: llama-vulkan for "vulkan" when it is on disk, else llama-cpu."""
     return "llama-vulkan" if device == "vulkan" and ready("llama-vulkan", data_dir) else "llama-cpu"
+
+
+def talk_runtime(pc, data_dir=DATA_DIR):
+    """The runtime talk about a photo uses on this PC: the one on disk (llama-vulkan first), else the one to
+    download: llama-vulkan when Windows lists a graphics adapter (hardware.scan "gpu"), else llama-cpu."""
+    rid = runtime_for("vulkan", data_dir)
+    if ready(rid, data_dir):
+        return rid
+    return "llama-vulkan" if pc.get("gpu") else "llama-cpu"
+
+
+SHARED_VRAM_GB = 1.0            # under this much dedicated video memory the graphics share the system RAM
+
+
+def talk_need_mb(m, runtime, pc):
+    """The talk model's measured memory need for this runtime: ram_mb on the processor; on Vulkan its vram_mb, or
+    max(ram_mb, vram_mb) on integrated graphics (shared memory, e.g. Intel Iris Xe: measured, Qwen3-VL on Vulkan
+    committed more system RAM than its graphics memory)."""
+    ram, vram = int(m.get("ram_mb") or 0), int(m.get("vram_mb") or 0)
+    if runtime != "llama-vulkan":
+        return ram
+    if float(pc.get("vram_gb") or 0) < SHARED_VRAM_GB:
+        return max(ram, vram)
+    return vram or ram
 
 
 def recommend(pc):

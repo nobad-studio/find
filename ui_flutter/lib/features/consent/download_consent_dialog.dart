@@ -94,6 +94,48 @@ class ModelOffer {
   }
 }
 
+/// 1.1: one consent for a talk model and the llama.cpp runtime it runs on ([runtime] null: already on this PC):
+/// both names, both sizes and the total, and both sources. Its one Download fetches both.
+ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime) {
+  final rt = runtime;
+  final model = !m.onDisk; // the model may be here already and only its runtime missing
+  final total = (model ? m.sizeMb : 0) + (rt?.sizeMb ?? 0);
+  return ModelOffer(
+    id: m.id,
+    title: model || rt == null ? 'Download ${m.name}?' : 'Download the ${rt.name}?',
+    what: [
+      m.improves.isNotEmpty ? m.improves : featureLabel(m.feature),
+      'Runs on this PC only.',
+      if (rt != null) model ? 'It needs the ${rt.name}, downloaded with it.' : '${m.name} needs the ${rt.name}.',
+    ].join(' '),
+    facts: [
+      if (model) ('Model', '${m.name}: ${m.sizeMb.round()} MB from huggingface.co'),
+      if (rt != null)
+        ('Runtime', '${rt.name}: ${rt.sizeMb.round()} MB from github.com (llama.cpp releases, delivered by '
+            '*.githubusercontent.com)'),
+      ('Total', '${total.round()} MB, once'),
+      ('Licence', rt == null ? m.licence : '${m.licence} (model), ${rt.licence} (runtime)'),
+      if (m.ramMb > 0) ('Memory', 'About ${m.ramMb.round()} MB while answering'),
+      if (m.languages.isNotEmpty) ('Languages', m.languageText),
+      (
+        'Checked',
+        rt == null
+            ? 'Pinned revision, exact size and SHA-256'
+            : 'Pinned revision and release, exact size and SHA-256; only the runtime\'s pinned files are kept',
+      ),
+    ],
+    source: '',
+  );
+}
+
+Future<bool> askTalkConsent(BuildContext context, ModelInfo m, ModelInfo? runtime) async {
+  final r = await showDialog<bool>(
+    context: context,
+    builder: (context) => ConsentDialog(offer: talkOffer(m, runtime)),
+  );
+  return r ?? false;
+}
+
 Future<bool> askModelConsent(BuildContext context, ModelInfo m) async {
   final r = await showDialog<bool>(
     context: context,

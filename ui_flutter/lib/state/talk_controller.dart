@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 
 import '../engine/engine_api.dart';
 import '../engine/events.dart';
+import 'models_controller.dart' show TalkConsent, fetchTalkModel;
 import 'settings_controller.dart' show errorText;
 
 enum TalkKind { describe, ask, compare }
@@ -44,10 +45,21 @@ const unverifiedNote = 'may not be exact';
 final _devanagari = RegExp(r'[ऀ-ॿ]');
 
 /// Seconds the UI says, by the model's role. vision_state has no timings, so these come from the measured rows
-/// (docs/measurements.md, reference PC): loading SmolVLM2-500M about 2 s and Qwen3-VL-2B about 4 s, a deeper
-/// answer about 5 s. The memory figure always comes from vision_state (`ram_mb`).
-const loadSeconds = {false: 2, true: 4};
+/// (docs/measurements.md 2026-11-22 1.1.0, reference PC, through the real worker): loading SmolVLM2-500M about
+/// 1-3 s and Qwen3-VL-2B about 12-13 s (its first word came 13-15 s after the first question, 2-5 s after later
+/// ones), a deeper answer about 2-7 s once loaded. The memory figure always comes from vision_state (`ram_mb`).
+const loadSeconds = {false: 2, true: 13};
 const deeperAnswerSeconds = 5;
+
+/// The talk model to offer a Download for after a refusal that lists [download] (vision_* `download`): the talk
+/// model it names, else (only the runtime is missing) the quick model, whose consent then names just the runtime.
+String? talkDownloadId(List<VisionDownload> download, VisionState? state) {
+  if (download.isEmpty || state == null) return null;
+  for (final d in download) {
+    if (state.byId(d.id) != null) return d.id;
+  }
+  return state.quick?.id;
+}
 
 class TalkController extends ChangeNotifier {
   TalkController(this.engine) {
@@ -125,21 +137,53 @@ class TalkController extends ChangeNotifier {
   String get notNow => _state?.notNow ?? '';
 
   /// The deeper model's line: its live cost, or "Not now: …"; null when the engine offers no deeper model.
-  ({String label, bool available, String detail})? get deeperOffer {
+  /// [download]: the model id to offer a Download for (not on this PC yet), else null.
+  ({String label, bool available, String detail, String? download})? get deeperOffer {
     final d = _state?.deeper;
     if (d == null) return null;
     final label = 'Deeper analysis (${d.label})';
-    if (notNow.isNotEmpty) return (label: label, available: false, detail: _notNowText(notNow));
+    if (notNow.isNotEmpty) return (label: label, available: false, detail: _notNowText(notNow), download: null);
     // not on this PC yet: the download (with its consent) comes first; asking deeper would only be refused
     if (!d.ready) {
-      final mb = d.missingMb > 0 ? ' (${d.missingMb} MB)' : '';
-      return (label: label, available: false, detail: 'Needs a one-time download$mb');
+      if (_fetching.isNotEmpty) {
+        return (label: label, available: false, detail: 'Downloading…', download: null);
+      }
+      final rt = _state!.runtimeReady ? 0 : _state!.runtimeMissingMb; // the runtime comes with it, same consent
+      final all = d.missingMb + rt;
+      final mb = all > 0 ? ' ($all MB)' : '';
+      return (label: label, available: false, detail: 'Needs a one-time download$mb', download: d.id);
     }
     if (!d.canRun) {
-      return (label: label, available: false, detail: _notNowText(d.why.isEmpty ? "it doesn't fit right now." : d.why));
+      final why = _notNowText(d.why.isEmpty ? "it doesn't fit right now." : d.why);
+      return (label: label, available: false, detail: why, download: null);
     }
     final gb = (d.ramMb / 1000).toStringAsFixed(1);
-    return (label: label, available: true, detail: 'about $deeperAnswerSeconds s, $gb GB while answering');
+    return (label: label, available: true, detail: 'about $deeperAnswerSeconds s, $gb GB while answering', download: null);
+  }
+
+  /// Talk models (and runtimes) whose download this sheet started and that haven't finished.
+  final _fetching = <String>{};
+
+  /// True while a download started here is on its way.
+  bool get fetching => _fetching.isNotEmpty;
+
+  /// Download talk model [id] (the Deeper line's or a refusal's Download): ONE consent names it and the runtime it
+  /// needs (Settings → Models' dialog), then both are fetched. The Deeper switch comes on with the next
+  /// vision_state after the download.
+  Future<void> fetch(String id, {required TalkConsent consent}) async {
+    if (_fetching.contains(id)) return;
+    try {
+      final info = await engine.models();
+      final m = info.byId(id);
+      if (m == null) return;
+      final r = await fetchTalkModel(engine, info, m, consent: consent);
+      if (r.error.isNotEmpty) _error = r.error;
+      _fetching.addAll(r.started.map((x) => x.id));
+      if (r.started.isNotEmpty && _phase == TalkPhase.failed) _download = const []; // its Download was pressed
+    } catch (e) {
+      _error = errorText(e);
+    }
+    _changed();
   }
 
   static String _notNowText(String why) => why.startsWith('Not now') ? why : 'Not now: $why';
@@ -302,6 +346,17 @@ class TalkController extends ChangeNotifier {
   void _event(EngineEvent e) {
     if (e is LevelEvent) {
       if (_fileId != null) unawaited(refresh()); // a pause or its end changes "Not now"
+      return;
+    }
+    if (e is DownloadEvent) {
+      // a talk model or runtime arrived (or failed): vision_state says what can run now
+      if (e.state != 'downloading' && _fetching.remove(e.id)) {
+        if (e.error.isNotEmpty) {
+          _fetching.clear();
+          _error = 'The download stopped: ${e.error}';
+        }
+        unawaited(refresh());
+      }
       return;
     }
     if (e is! VisionEvent) return;

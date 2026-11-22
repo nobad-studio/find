@@ -100,7 +100,10 @@ Specific to this app:
   `github.com/ggml-org/llama.cpp/releases` (GitHub redirects to its `*.githubusercontent.com` asset host),
   unpacked by `vlm/runtime.py` to only the DLL names pinned in `llama_pins.py` (each size-capped and SHA-256
   checked, the zip deleted), and `vlm/llama_api.load` loads only the pinned backend DLLs, one by one, never
-  `ggml_backend_load_all_from_path` and never `ggml-rpc.dll`. A new model needs a catalog entry with its revision, file
+  `ggml_backend_load_all_from_path` and never `ggml-rpc.dll`. The talk models (`smolvlm2-500m`, `qwen3vl-2b`) and
+  the runtimes store NO consent: each download is the user's click on one dialog that names the talk model and
+  the runtime this PC needs (`models.talk_runtime`), both sizes and the total and both hosts (huggingface.co;
+  github.com), in Settings → Models or on the photo's talk panel. A new model needs a catalog entry with its revision, file
   sizes and SHA-256s, a measured row in `docs/measurements.md` (`tools/eval_text.py`) and a permissive licence
   (OpenAI CLIP's model card rules out deployment, so it isn't used).
 - Vectors carry their model's id (`meta vec_model`, `pvec_model`); a search never compares vectors from two models
@@ -108,7 +111,13 @@ Specific to this app:
   (`vecs_next`) and swaps them in one transaction.
 - Photos for photo meaning are decoded only by Windows' decoders in the one photo worker process (`photo.py`).
   Result previews come from Windows' thumbnail cache (`thumbs.py`), asked for by result id, never a page path.
-- Models are `embed.Lazy`: loaded on use, released when idle. Don't hold a model outside that wrapper.
+- Models are `embed.Lazy`: loaded on use, released when idle. Don't hold a model outside that wrapper. The one
+  exception is talk about a photo (find 1.1): the talk model lives only in the **talk worker** process
+  (`vlm/worker.py`, a spawn child in the WORKERS job, one model resident, one question at a time), driven by
+  `worker.Talker` in the engine; it follows the same rules (released after `IDLE` = `embed.Lazy.IDLE` seconds, on
+  a pause or memory pressure, before a runtime reinstall), and the WORKERS commit limit is raised by the model's
+  measured need while it is loaded (`models.talk_need_mb`: `max(ram_mb, vram_mb)` on shared-memory graphics).
+  Photos reach it only by result id; it opens only the job's photos and the model / runtime files on disk.
 - Typed network paths (\\server\share) are never looked up on disk (`search.folder_checker`): only folders already
   in the index or the folder list count, so typing one can't make Windows contact a server.
 - New setting: `const.DEFAULTS` + `settings.coerce` + a row on its Flutter Settings page

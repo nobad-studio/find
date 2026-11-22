@@ -20,6 +20,7 @@ import '../../engine/models/result.dart';
 import '../../state/talk_controller.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/icons.dart';
+import '../consent/download_consent_dialog.dart' show askTalkConsent;
 
 /// The answer area's label: what is shown is the model's reading, not a fact about the photo.
 const talkLabel = "Find's reading of this photo";
@@ -79,6 +80,10 @@ class _TalkPanelState extends State<TalkPanel> {
     }
     return KeyEventResult.handled;
   }
+
+  /// The one consent for a talk model and its runtime (the same dialog as Settings → Models), then both downloads.
+  Future<void> _fetch(String id) =>
+      widget.talk.fetch(id, consent: (m, rt) => askTalkConsent(context, m, rt));
 
   void _copy() {
     unawaited(Clipboard.setData(ClipboardData(text: widget.talk.text)));
@@ -205,6 +210,13 @@ class _TalkPanelState extends State<TalkPanel> {
                       ],
                     ),
                   ),
+                  if (offer.download case final id?)
+                    NbButton(
+                      'Download…',
+                      small: true,
+                      kind: NbButtonKind.ghost,
+                      onPressed: () => unawaited(_fetch(id)),
+                    ),
                 ],
               ),
             ],
@@ -212,7 +224,10 @@ class _TalkPanelState extends State<TalkPanel> {
               const SizedBox(height: 8),
               Text(t.notNow, style: NbType.text(12, c.muted, height: 1.4)),
             ],
-            if (t.phase != TalkPhase.idle) ...[const SizedBox(height: 12), _Answer(talk: t, onCopy: _copy)],
+            if (t.phase != TalkPhase.idle) ...[
+              const SizedBox(height: 12),
+              _Answer(talk: t, onCopy: _copy, onFetch: (id) => unawaited(_fetch(id))),
+            ],
           ],
         );
       },
@@ -222,9 +237,12 @@ class _TalkPanelState extends State<TalkPanel> {
 
 /// The answer: its label, the text as it streams (replaced as it grows), its notes and what can be done with it.
 class _Answer extends StatelessWidget {
-  const _Answer({required this.talk, required this.onCopy});
+  const _Answer({required this.talk, required this.onCopy, required this.onFetch});
   final TalkController talk;
   final VoidCallback onCopy;
+
+  /// A refusal that names a download (the talk model not on this PC yet): its Download, with consent.
+  final void Function(String id) onFetch;
 
   @override
   Widget build(BuildContext context) {
@@ -262,6 +280,7 @@ class _Answer extends StatelessWidget {
     }
     if (failed) children.add(Text(t.error, style: NbType.text(12.5, c.danger, height: 1.4)));
     if (!failed && t.error.isNotEmpty) children.add(Text(t.error, style: NbType.text(12, c.danger, height: 1.4)));
+    final fetchId = failed && !t.fetching ? talkDownloadId(t.download, t.state) : null;
     final actions = <Widget>[
       if (t.running) NbButton('Stop', small: true, kind: NbButtonKind.ghost, icon: NbGlyph.close, onPressed: t.stop),
       if (!t.running && !failed && t.text.isNotEmpty)
@@ -276,6 +295,9 @@ class _Answer extends StatelessWidget {
         ),
       if (t.textOnly)
         NbButton('Ask the model too', small: true, kind: NbButtonKind.ghost, onPressed: () => unawaited(t.askModelToo())),
+      // the model the refusal names (its runtime comes in the same consent); a runtime alone: its model's dialog
+      if (fetchId != null)
+        NbButton('Download…', small: true, kind: NbButtonKind.ghost, icon: NbGlyph.download, onPressed: () => onFetch(fetchId)),
     ];
     if (actions.isNotEmpty) {
       children.add(const SizedBox(height: 10));

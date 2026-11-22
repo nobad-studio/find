@@ -3050,8 +3050,20 @@
           "enum": [
             "text",
             "photo",
-            "ocr"
-          ]
+            "ocr",
+            "talk",
+            "runtime"
+          ],
+          "description": "1.1: talk = a talk-about-a-photo model, runtime = a llama.cpp runtime the talk models run on. Neither is part of a tier or of model_use."
+        },
+        "vram_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Talk models only: measured graphics memory while answering on the Vulkan runtime (0 = not measured)."
+        },
+        "runtime": {
+          "$ref": "#/$defs/model_id",
+          "description": "Talk models only: the runtime this PC uses for it (llama-vulkan with a graphics adapter, else llama-cpu); its download is offered together with the model's, in one consent."
         },
         "name": {
           "type": "string"

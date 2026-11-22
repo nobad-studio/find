@@ -169,7 +169,8 @@ Extends `hardware.py` (already reads RAM, cores, AVX2/AVX-512, GPU via DXGI incl
   enough free RAM/VRAM is measured for that model plus a margin.
 - **Instant back-off:** input, a fullscreen app or a game, a lag sign (existing record_lag) → the heavy worker
   stops after the current photo (max a few seconds), unloads the model, and the per-app memory learns, as today.
-- **Idle unload:** a talk model unloads after 2 min without a question; the L1 model when its queue is empty.
+- **Idle unload:** a talk model unloads after 3 min (180 s, `embed.Lazy.IDLE` = `vlm.worker.IDLE`) without a
+  question; the L1 model when its queue is empty.
 - **Crash and hang control:** each model runs in its own worker process in the WORKERS job with a memory cap.
   A per-photo timeout (watchdog.py) kills a stuck worker. A crash or out-of-memory marks the photo (`err`),
   retries once, then drops that layer to the next smaller model; two crashes in a day turn the layer off and the

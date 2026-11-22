@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nobad_find/engine/engine_api.dart';
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/models_info.dart';
 import 'package:nobad_find/features/search/talk_panel.dart';
 import 'package:nobad_find/widgets/controls.dart';
 
@@ -154,7 +155,7 @@ void main() {
     expect(e.visionCalls.last.$2, {'file_id': 3, 'question': 'What breed is the dog?', 'deeper': true});
     say(e, 'loading', model: 'qwen3vl-2b', note: 'Loading Qwen3-VL 2B');
     await tester.pump();
-    expect(find.text('Loading Qwen3-VL-2B… about 4 s'), findsOneWidget);
+    expect(find.text('Loading Qwen3-VL-2B… about 13 s'), findsOneWidget);
 
     e.vision = demoVisionState(deeperWhy: 'Not now: only 3.0 GB free, Qwen needs about 2.4 GB plus margin.');
     say(e, 'done', text: 'A beagle.', model: 'qwen3vl-2b'); // the end of a job reads vision_state again
@@ -240,6 +241,54 @@ void main() {
     await tester.pump();
     await ask(tester, 'What breed is the dog?');
     expect(e.visionCalls.last.$2, {'file_id': 3, 'question': 'What breed is the dog?'}); // no deeper
+  });
+
+  testWidgets("the deeper line's Download asks one consent for the model and its runtime, then fetches both", (
+    tester,
+  ) async {
+    final e = FakeEngine(files: demoFiles())..vision = demoVisionState(deeperReady: false);
+    await openPhoto(tester, engine: e);
+    final button = find.text('Download…');
+    expect(button, findsOneWidget);
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Download Qwen3-VL 2B?'), findsOneWidget);
+    expect(find.textContaining('llama.cpp runtime (graphics card): 37 MB from github.com'), findsOneWidget);
+    expect(find.text('1518 MB, once'), findsOneWidget); // 1481 + 37
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(e.calls, isNot(contains('model_download'))); // nothing without the click
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    final state = {for (final m in e.modelsInfo.models) m.id: m.state};
+    expect(state['qwen3vl-2b'], ModelUseState.downloading);
+    expect(state['llama-vulkan'], ModelUseState.downloading);
+    expect(find.text('Downloading…'), findsOneWidget);
+    // done: the next vision_state makes the switch available
+    e.vision = demoVisionState();
+    e.emit(const DownloadEvent(id: 'qwen3vl-2b', state: 'ready'));
+    e.emit(const DownloadEvent(id: 'llama-vulkan', state: 'ready'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<NbSwitch>(find.byType(NbSwitch)).onChanged, isNotNull);
+  });
+
+  testWidgets('a refusal that names a download offers it, with the same consent', (tester) async {
+    final e = await openPhoto(tester);
+    e.visionRefuse = const VisionAnswer(
+      error: 'To talk about photos, download SmolVLM2 500M first (520 MB, once).',
+      download: [VisionDownload(id: 'smolvlm2-500m', name: 'SmolVLM2 500M', sizeMb: 520)],
+    );
+    await describe(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download…'));
+    await tester.pumpAndSettle();
+    expect(find.text('Download SmolVLM2 500M?'), findsOneWidget);
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    expect(e.modelsInfo.models.firstWhere((m) => m.id == 'smolvlm2-500m').state, ModelUseState.downloading);
   });
 
   testWidgets('narrow window: the sheet lays the talk panel out, and closing it stops the answer', (tester) async {

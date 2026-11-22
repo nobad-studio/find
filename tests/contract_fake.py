@@ -210,10 +210,10 @@ class FakeApi:
         rec = cat.recommend(pc)
         choice = cat.tier_choice(rec, focus)
         out = []
+        rid = "llama-vulkan" if pc.get("gpu") else "llama-cpu"
         for m in cat.CATALOG:
-            if m["feature"] not in cat.SEARCH_FEATURES:
-                continue
             ok, why = cat.capable(m, pc)
+            talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
             if m["builtin"]:
                 state = "active" if self.settings.get("ocr") else "ready"
             elif self.dl.get(m["id"], {}).get("state") == "downloading":
@@ -222,7 +222,7 @@ class FakeApi:
                 state = "active" if cat.selected(self.settings, m["feature"]) == m["id"] else "ready"
             else:
                 state = "not_downloaded"
-            out.append({"id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": cat.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",

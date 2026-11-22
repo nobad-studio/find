@@ -1,5 +1,28 @@
 # NOBAD Find changelog
 
+## 1.1.0 · (in development)
+
+### Talk about a photo
+- **Describe a photo, ask about it, or compare two,** on a photo's detail pane. The answer appears word by word,
+  is labelled as Find's reading of the photo, and can be copied, stopped (Stop or Esc) or kept: a kept description
+  makes the photo findable by its words.
+- **"What's written here?"** first shows the text Windows OCR already read from the photo; "Ask the model too"
+  asks the model as well. An answer with Hindi script in it says it may not be exact.
+- **Runs on this PC only,** with a small vision model (SmolVLM2 500M, 520 MB) and, for deeper answers, Qwen3-VL 2B
+  (1,481 MB), on the llama.cpp runtime (24 MB for the processor, 37 MB for the graphics card). Nothing downloads
+  until you say Download: one dialog names the model, the runtime it needs, both sizes and the total, and where
+  they come from (huggingface.co; github.com). Files are pinned and checked by size and SHA-256; only the
+  runtime's pinned DLLs are kept, never its programs or its network backend.
+- **Measured on the reference PC (i5-12500H, Iris Xe):** SmolVLM2 answers in about 1-3 s on the graphics,
+  3-7 s on the processor, using about 1 GB of memory; Qwen3-VL in about 2-12 s on the graphics and 7-20 s on the
+  processor once loaded (the first question also loads it, about 13 s), using about 2.5 GB.
+- **Deeper analysis is only offered when it fits:** it says its memory cost, or why not now (too little free
+  memory, NOBAD Find paused). Qwen3-VL shows a warning on PCs below its tier (16 GB and 8 cores).
+- The model leaves memory 3 minutes after the last question, when memory runs short, or when NOBAD Find pauses.
+- Settings > Models has a "Talk about photos" group: both models and both runtimes, with sizes, memory, Download
+  (with the same consent) and Remove.
+
+## 1.0.0 · 2026-11-22
 ## 1.0.0 · 2026-11-22
 
 ### Fixed
