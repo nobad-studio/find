@@ -1,0 +1,97 @@
+import ctypes
+import importlib.util
+import os
+
+import pytest
+
+from nobadfind.vlm import llama_api
+
+_spec = importlib.util.spec_from_file_location(
+    "vlm_header_check", os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "vlm_header_check.py"))
+header_check = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(header_check)
+
+HEADERS = os.environ.get("NOBAD_FIND_LLAMA_HEADERS")
+RUNTIME = os.environ.get("NOBAD_FIND_LLAMA_DIR")
+
+
+@pytest.mark.skipif(not HEADERS, reason="NOBAD_FIND_LLAMA_HEADERS not set (dev only)")
+def test_structs_match_b12602_headers():
+    for cls, header, cname in header_check.STRUCTS:
+        fields = header_check.parse_struct(os.path.join(HEADERS, header), cname)
+        assert [f.name for f in fields] == [name for name, _ in cls._fields_], cname
+        for f, (name, ctype) in zip(fields, cls._fields_):
+            assert header_check.kind_of_c(f.ctype) == header_check.kind_of_ctypes(ctype), (cname, name, f.ctype)
+        assert ctypes.sizeof(header_check.layout_from_header(fields)) == ctypes.sizeof(cls), cname
+    assert header_check.check(HEADERS) == []
+
+
+def test_load_refuses_a_runtime_without_both_dlls(tmp_path):
+    assert llama_api.LLAMA_BUILD == "b12602"
+    with pytest.raises(RuntimeError, match="llama.cpp runtime incomplete"):
+        llama_api.load(str(tmp_path))
+    (tmp_path / "llama.dll").write_bytes(b"")
+    with pytest.raises(RuntimeError, match="llama.cpp runtime incomplete"):
+        llama_api.load(str(tmp_path))
+
+
+def _values(struct):
+    return {name: getattr(struct, name) for name, _ in struct._fields_}
+
+
+@pytest.mark.skipif(not RUNTIME, reason="NOBAD_FIND_LLAMA_DIR not set (needs a real llama.cpp b12602 runtime)")
+def test_real_runtime_smoke():
+    lib = llama_api.load(RUNTIME)
+    assert isinstance(lib.llama, ctypes.CDLL) and isinstance(lib.mtmd, ctypes.CDLL)
+    assert llama_api.load(RUNTIME) is lib                   # loaded once per folder
+    lib.llama.llama_backend_init()
+
+    # Every field's default, from b12602's own source (llama-model.cpp:3596, llama-context.cpp:4400,
+    # llama.cpp:78, mtmd.cpp:592): a field read from the wrong offset shows up here.
+    mp = lib.llama.llama_model_default_params()
+    assert isinstance(mp, llama_api.ModelParams)
+    assert _values(mp) == {
+        "devices": None, "tensor_buft_overrides": None, "n_gpu_layers": -1,
+        "split_mode": llama_api.LLAMA_SPLIT_MODE_LAYER, "load_mode": -1, "lazy_mode": 1, "main_gpu": 0,
+        "tensor_split": None, "progress_callback": None, "progress_callback_user_data": None, "kv_overrides": None,
+        "vocab_only": False, "check_tensors": False, "use_extra_bufts": True, "no_host": False, "no_alloc": False,
+        "load_mtp": False}
+    mp.n_gpu_layers = 7
+    assert mp.n_gpu_layers == 7 and mp.split_mode == llama_api.LLAMA_SPLIT_MODE_LAYER
+
+    cp = lib.llama.llama_context_default_params()
+    assert isinstance(cp, llama_api.ContextParams)
+    assert _values(cp) == {
+        "n_ctx": 512, "n_batch": 2048, "n_ubatch": 512, "n_seq_max": 1, "n_rs_seq": 0, "n_outputs_max": 0,
+        "n_outputs_max_per_seq": 1, "n_threads": 4, "n_threads_batch": 4, "ctx_type": 0,
+        "rope_scaling_type": -1, "pooling_type": -1, "attention_type": -1,
+        "flash_attn_type": llama_api.LLAMA_FLASH_ATTN_TYPE_AUTO, "rope_freq_base": 0.0, "rope_freq_scale": 0.0,
+        "yarn_ext_factor": -1.0, "yarn_attn_factor": -1.0, "yarn_beta_fast": -1.0, "yarn_beta_slow": -1.0,
+        "yarn_orig_ctx": 0, "cb_eval": None, "cb_eval_user_data": None,
+        "type_k": llama_api.GGML_TYPE_F16, "type_v": llama_api.GGML_TYPE_F16, "moe_cache_size": 0,
+        "moe_cache_cpu_share": 0.0, "abort_callback": None, "abort_callback_data": None, "embeddings": False,
+        "offload_kqv": True, "no_perf": True, "op_offload": True, "swa_full": True, "kv_unified": False,
+        "samplers": None, "n_samplers": 0, "ctx_other": None}
+
+    sp = lib.llama.llama_sampler_chain_default_params()
+    assert sp.no_perf is True
+    chain = lib.llama.llama_sampler_chain_init(sp)
+    assert chain
+    lib.llama.llama_sampler_chain_add(chain, lib.llama.llama_sampler_init_greedy())
+    lib.llama.llama_sampler_free(chain)
+
+    xp = lib.mtmd.mtmd_context_params_default()
+    assert isinstance(xp, llama_api.MtmdContextParams)
+    assert lib.mtmd.mtmd_default_marker() == b"<__media__>"
+    assert _values(xp) == {
+        "use_gpu": True, "device": None, "print_timings": True, "n_threads": 4, "image_marker": None,
+        "media_marker": b"<__media__>", "flash_attn_type": llama_api.LLAMA_FLASH_ATTN_TYPE_AUTO, "warmup": True,
+        "image_min_tokens": -1, "image_max_tokens": -1, "cb_eval": None, "cb_eval_user_data": None,
+        "batch_max_tokens": 1024, "progress_callback": None, "progress_callback_user_data": None}
+
+    bmp = lib.mtmd.mtmd_bitmap_init(2, 2, bytes(12))
+    assert bmp
+    lib.mtmd.mtmd_bitmap_free(bmp)
+    chunks = lib.mtmd.mtmd_input_chunks_init()
+    assert chunks
+    lib.mtmd.mtmd_input_chunks_free(chunks)
