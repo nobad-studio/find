@@ -414,6 +414,29 @@ def photo_v2():
 PHOTO_TEXT_MEANING = 0.38      # = "related" in _closeness
 
 
+def _keywordish(q):
+    """A document-style keyword search ("lease", "invoice march"): one content word and no picture words, as
+    opposed to a visual description ("a red car", "photos of my dog")."""
+    return len(q.terms) + len(q.phrases) <= 1 and "image" not in q.kinds
+
+
+def _admit_photos(q, photos, pbest, other):
+    """Photo admission policies, measurement only (search.VARIANTS; maintainer 2026-11-22, Experiment A). Off
+    unless a variant asks; today's behaviour (policy A) is the default. `other`: files found by a name, text or
+    meaning channel (evidence that isn't the picture's look).
+      admit_conf:<t>  B: a photo found only by its look needs a photo score >= t
+      admit_evidence  C: photos near the best one (the existing "sure" rule) stay; weaker ones only with evidence
+      admit_query     D: C for keyword-style searches, A for visual descriptions"""
+    v = next(x for x in VARIANTS if x.startswith("admit_"))
+    if v.startswith("admit_conf:"):
+        t = float(v.split(":", 1)[1])
+        return [f for f in photos if pbest.get(f, 0) >= t or f in other]
+    if v == "admit_query" and not _keywordish(q):
+        return photos
+    sure = PHOTO_SURE * max(pbest.values()) if pbest else 1.0
+    return [f for f in photos if pbest.get(f, 0) >= sure or f in other]
+
+
 def _drop_loose_photo_text(store, meaning, best):
     """v2: a photo's OCR text counts as a meaning match only when it is at least "related". Measured on 308 judged
     photos: 38 of 44 "loosely related" OCR matches in the top 10 were wrong (garbled advert text in a stadium photo
@@ -728,6 +751,8 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         meaning = _drop_loose_photo_text(store, meaning, best)
     lists.append((w_meaning, meaning))
     photos, pbest = _photo_hits(store, q, photo_text, pindex, 100)
+    if photos and any(v.startswith("admit_") for v in VARIANTS):
+        photos = _admit_photos(q, photos, pbest, set(names) | set(texts) | set(meaning))
     # asking for photos ("beach photos", the Images filter): what's in the picture counts most
     lists.append((W_PHOTO_ASKED if "image" in q.kinds else W_PHOTO, photos))
     if "photo_only" in VARIANTS and photos:         # measurement: the photo channel alone where it has answers

@@ -274,3 +274,19 @@ def test_photo_v2_keeps_loose_name_meaning_and_needs_a_photo_model_to_drop_ocr(t
     best = {photo_id: (0.30, "", "name")}                            # "beach_trip.jpg" found for "seaside"
     assert search._drop_loose_photo_text(s, [photo_id], best) == [photo_id]
     s.close()
+
+
+def test_admission_policies_are_off_by_default_and_follow_their_rules(monkeypatch):
+    """Experiment A (measurement only): A = today; B = minimum photo score unless other evidence; C = near-best
+    photos, weaker ones only with other evidence; D = C for keyword-style searches only."""
+    from nobadfind.query import parse
+    photos, pbest = [1, 2, 3], {1: 0.08, 2: 0.03, 3: 0.02}
+    other = {3}                                                        # 3 is also found by its name or text
+    monkeypatch.setattr(search, "VARIANTS", {"admit_conf:0.05"})
+    assert search._admit_photos(parse("lease"), photos, pbest, other) == [1, 3]
+    monkeypatch.setattr(search, "VARIANTS", {"admit_evidence"})
+    assert search._admit_photos(parse("a red car"), photos, pbest, other) == [1, 3]
+    monkeypatch.setattr(search, "VARIANTS", {"admit_query"})
+    assert search._admit_photos(parse("lease"), photos, pbest, other) == [1, 3]      # keyword-style: C
+    assert search._admit_photos(parse("a red car"), photos, pbest, other) == photos  # a description: A
+    assert search._keywordish(parse("invoice")) and not search._keywordish(parse("photos of my dog"))

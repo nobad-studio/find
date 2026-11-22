@@ -62,6 +62,63 @@ def aggregate(rows):
             "mrr10": _mean(r["mrr"] for r in rows)}
 
 
+def make_decoder(side=224, aspect="squeeze"):
+    """Dev-only stand-in for photo.decode_224 (Experiment A), same Windows decoder and range. side: the model's
+    input size. aspect: "squeeze" (Find's way: the whole picture squeezed to side x side), "pad" (kept in shape,
+    the long side = side, filled to a square with neutral grey = 0 in the model's range), "crop" (the short side
+    = side, the centre side x side kept)."""
+    import numpy as np
+    from nobadfind import photo
+
+    def decode(data):
+        from winrt.windows.graphics.imaging import (BitmapAlphaMode, BitmapBounds, BitmapDecoder,
+                                                     BitmapInterpolationMode, BitmapPixelFormat, BitmapTransform,
+                                                     ColorManagementMode, ExifOrientationMode)
+        from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+        stream = InMemoryRandomAccessStream()
+        w = DataWriter(stream)
+        w.write_bytes(data)
+        w.store_async().get()
+        w.flush_async().get()
+        w.detach_stream()
+        stream.seek(0)
+        dec = BitmapDecoder.create_async(stream).get()
+        width, height = dec.oriented_pixel_width, dec.oriented_pixel_height
+        if min(width, height) < 64 or width * height > photo.MAX_PIXELS:
+            return None
+        t = BitmapTransform()
+        t.interpolation_mode = BitmapInterpolationMode.FANT
+        if aspect == "squeeze":
+            sw, sh = side, side
+        elif aspect == "pad":
+            k = side / max(width, height)
+            sw, sh = max(1, round(width * k)), max(1, round(height * k))
+        else:
+            k = side / min(width, height)
+            sw, sh = max(side, round(width * k)), max(side, round(height * k))
+        t.scaled_width, t.scaled_height = sw, sh
+        ow, oh = sw, sh
+        if aspect == "crop":
+            b = BitmapBounds()
+            b.x, b.y, b.width, b.height = (sw - side) // 2, (sh - side) // 2, side, side
+            t.bounds = b
+            ow, oh = side, side
+        px = dec.get_pixel_data_transformed_async(BitmapPixelFormat.RGBA8, BitmapAlphaMode.IGNORE, t,
+                                                  ExifOrientationMode.RESPECT_EXIF_ORIENTATION,
+                                                  ColorManagementMode.COLOR_MANAGE_TO_S_RGB).get()
+        raw = np.frombuffer(bytes(px.detach_pixel_data()), np.uint8)
+        if raw.size != ow * oh * 4:
+            return None
+        rgb = (raw.reshape(oh, ow, 4)[:, :, :3].astype(np.float32) / 255.0 - 0.5) / 0.5
+        if aspect == "pad":
+            out = np.zeros((side, side, 3), np.float32)
+            y0, x0 = (side - oh) // 2, (side - ow) // 2
+            out[y0:y0 + oh, x0:x0 + ow] = rgb
+            rgb = out
+        return rgb.transpose(2, 0, 1)
+    return decode
+
+
 def _basic_graph_optimization():
     """fp16 exports of SigLIP 2 fail ONNX Runtime 1.27's full graph optimizer (GetIndexFromName); basic loads them."""
     import onnxruntime as ort
@@ -127,7 +184,7 @@ def build(root, home, data_dir, ocr=True, photo_model="siglip-base", photo_dir=N
 
 
 def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, photo_model="siglip-base",
-        photo_dir=None):
+        photo_dir=None, side=224, aspect="squeeze"):
     from nobadfind import search
     queries, photos, qrels = load_set(folder)
     root = tempfile.mkdtemp(prefix="nobadfind-evalphoto-")
@@ -141,12 +198,23 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
             src = os.path.join(models_dir, sub)
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(data_dir, sub))
-        # neutral camera-style names: the set's names ("dog-01.jpg") would hand the name channel the answer
+        # neutral camera-style names: the set's names ("dog-01.jpg") would hand the name channel the answer.
+        # A set may give its own display names (manifest.json): neutral IMG_ names for most photos and true,
+        # descriptive names for a few (lease_agreement_scan.jpg), so name evidence can be measured honestly.
         alias = {}
+        man = os.path.join(folder, "manifest.json")
+        shown = {}
+        if os.path.exists(man):
+            shown = {n: p["display_name"] for n, p in json.load(open(man, encoding="utf-8"))["photos"].items()}
         for i, name in enumerate(sorted(photos)):
-            alias[f"IMG_{i + 1:04}.jpg"] = name
-            shutil.copy2(os.path.join(folder, "photos", name), os.path.join(pics, f"IMG_{i + 1:04}.jpg"))
+            disp = shown.get(name) or f"IMG_{i + 1:04}.jpg"
+            assert disp not in alias, f"two photos shown as {disp}"
+            alias[disp] = name
+            shutil.copy2(os.path.join(folder, "photos", name), os.path.join(pics, disp))
         t0 = time.perf_counter()
+        if side != 224 or aspect != "squeeze":     # dev only: Experiment A input size / shape handling
+            from nobadfind import photo as _photo
+            _photo.decode_224 = make_decoder(side, aspect)
         ctx = build(root, home, data_dir, ocr=ocr, photo_model=photo_model, photo_dir=photo_dir)
         build_s = time.perf_counter() - t0
         store = ctx["store"]
@@ -183,7 +251,8 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
                     feats.append({"q": item["id"], "photo": n, "grade": grades.get(n, 0), "siglip": sig.get(n),
                                   "find_rank": pos.get(n), "ocr_chars": len(txt),
                                   "ocr_word_hits": sum(1 for w in words if w in txt)})
-        rep = {"models": ctx["ran"], "photo_embed_s": ctx.get("photo_embed_s"), "ocr": ocr, "photos": len(photos), "queries": len(queries),
+        rep = {"models": ctx["ran"], "photo_embed_s": ctx.get("photo_embed_s"), "side": side, "aspect": aspect,
+               "ocr": ocr, "photos": len(photos), "queries": len(queries),
                "build_s": round(build_s, 1), "rows": rows,
                "lat_p50_ms": round(statistics.median(lat), 1), "lat_max_ms": round(max(lat), 1),
                "ocr_photos": sum(1 for v in ocr_text.values() if v.strip())}
@@ -220,8 +289,12 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
                               if n in photos]
                     rec, ndcg, mrr = metrics(ranked, qrels.get(item["id"], {}))
                     why = {alias.get(os.path.basename(x["path"]), ""): x["why"] for x in r["results"]}
+                    weak = {alias.get(os.path.basename(x["path"]), ""): bool(x.get("weak")) for x in r["results"]}
                     vrows.append(dict(id=item["id"], recall=rec, ndcg=ndcg, mrr=mrr, found=len(ranked),
-                                      top=[(n, why.get(n)) for n in ranked[:10]]))
+                                      top=[(n, why.get(n)) for n in ranked[:10]],
+                                      n_weak=sum(1 for n in ranked if weak.get(n)),
+                                      n_sure=sum(1 for n in ranked if not weak.get(n)),
+                                      ranked=ranked[:60], weak10=[weak.get(n) for n in ranked[:10]]))
             finally:
                 search.VARIANTS.clear()
                 search.VARIANTS.update(old)
@@ -230,6 +303,7 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
             a.update(vs_siglip_better=sum(x > 0.005 for x in d), vs_siglip_worse=sum(x < -0.005 for x in d),
                      empty=sum(1 for r in vrows if not r["found"]), per_query={r["id"]: r["ndcg"] for r in vrows},
                      tops={r["id"]: r["top"] for r in vrows},
+                     detail={r["id"]: {"n_weak": r["n_weak"], "n_sure": r["n_sure"], "ranked": r["ranked"], "weak10": r["weak10"]} for r in vrows},
                      lat_p50_ms=round(statistics.median(vlat), 1), lat_max_ms=round(max(vlat), 1),
                      results_p50=statistics.median(r["found"] for r in vrows))
             rep["variants"]["+".join(sorted(vs)) or "today"] = a
@@ -275,11 +349,13 @@ def main(argv=None):
     ap.add_argument("--no-ocr", action="store_true")
     ap.add_argument("--photo-model", default="siglip-base", help="catalog id: siglip-base or siglip2-base")
     ap.add_argument("--photo-dir", help="dev only: a folder with vision.onnx/text.onnx/tokenizer.json of that model")
+    ap.add_argument("--side", type=int, default=224, help="dev only: photo model input size (256/384/512 variants)")
+    ap.add_argument("--aspect", choices=("squeeze", "pad", "crop"), default="squeeze", help="dev only: shape handling")
     ap.add_argument("--variants", help='ranking variant sets to measure, e.g. ";photo_nofloor;noweak,noguess" ("" = today)')
     a = ap.parse_args(argv)
     sets = [[v for v in part.split(",") if v] for part in a.variants.split(";")] if a.variants else None
     rep = run(a.folder, a.models_dir, ocr=not a.no_ocr, features_out=a.features, variant_sets=sets, photo_model=a.photo_model,
-              photo_dir=a.photo_dir)
+              photo_dir=a.photo_dir, side=a.side, aspect=a.aspect)
     _print(rep)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
