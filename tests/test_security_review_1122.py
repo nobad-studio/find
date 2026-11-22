@@ -162,3 +162,43 @@ def test_every_launch_uses_a_full_path(tmp_path, monkeypatch):
     assert '"powershell.exe"' not in src.replace('_exe("powershell.exe")', "")
 
 
+# ---------- L7: names in the sentences the engine builds read in their real order ----------
+def test_visible_shows_every_direction_control_and_keeps_ordinary_text():
+    from nobadfind import display
+    assert display.visible("Invoice_\u202efdp.exe") == "Invoice_[U+202E]fdp.exe"
+    for c in display.HIDDEN:
+        out = display.visible(f"a{chr(c)}b")
+        assert out == f"a[U+{c:04X}]b" and display.visible(out) == out
+    for s in ("tax 2025.pdf", "बिजली.pdf", "क्\u200dष.txt", "", None, 3):
+        assert display.visible(s) == s
+
+
+def test_the_ui_and_the_engine_hide_the_same_characters():
+    import re
+    from nobadfind import display
+    dart = open(os.path.join(os.path.dirname(__file__), "..", "ui_flutter", "lib", "engine", "models",
+                             "safe_text.dart"), encoding="utf-8").read()
+    block = dart[dart.index("const hiddenControls"):dart.index("};")]
+    assert {int(x, 16) for x in re.findall(r"0x([0-9A-Fa-f]{4})", block)} == set(display.HIDDEN)
+
+
+def test_suggestions_place_labels_and_app_actions_show_hidden_characters(tmp_path):
+    from nobadfind import launcher, suggest
+    from nobadfind.query import parse
+    from nobadfind.store import Store
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    d = os.path.join(PROF, "Docs\u202e")
+    s.upsert_files([(os.path.join(d, "Invoice_\u202efdp.exe"), "Invoice_\u202efdp.exe", d, ".exe", "app", 1, 1.0, 1.0,
+                     1)])
+    got = [x for x in suggest.suggest(s, "invoi")["items"] if x["kind"] == "file"]
+    assert got and got[0]["label"] == "Invoice_[U+202E]fdp.exe" and "[U+202E]" in got[0]["detail"]
+    s.close()
+    q = parse("report in Docs\u202e")
+    assert "\u202e" not in q.place_label()
+    L = launcher.Launcher(str(tmp_path), run=lambda argv: None)
+    L.apps = [{"id": "app:0:x", "name": "Spot\u202eify", "app_id": "X!App", "version": "", "publisher": "",
+               "folder": ""}]
+    titles = [a["title"] for a in L.actions("open spot")]
+    assert titles and all("\u202e" not in t for t in titles), titles
+
+

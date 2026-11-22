@@ -5,6 +5,7 @@
 /// contract has them (FakeEngine sends them now). Everything here is parsed leniently.
 library;
 
+import 'safe_text.dart';
 import 'format.dart';
 import 'json.dart';
 
@@ -217,7 +218,12 @@ class Drive {
   static Drive? fromJson(Object? v) {
     final m = jMap(v);
     if (jStr(m['root']).isEmpty) return null;
-    return Drive(root: jStr(m['root']), label: jStr(m['label']), type: jStr(m['type']), present: m['present'] != false);
+    return Drive(
+      root: jStr(m['root']),
+      label: visibleControls(jStr(m['label'])), // a drive's name is chosen by whoever formatted it
+      type: jStr(m['type']),
+      present: m['present'] != false,
+    );
   }
 }
 

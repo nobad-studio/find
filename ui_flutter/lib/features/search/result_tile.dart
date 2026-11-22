@@ -404,11 +404,19 @@ class DetailPane extends StatelessWidget {
                       ),
                       const SizedBox(height: 14),
                       Text(r.name, style: NbType.text(15, c.text, weight: FontWeight.w600, height: 1.3)),
+                      if (r.disguised) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          disguisedNote(r),
+                          key: const ValueKey('disguised-name'),
+                          style: NbType.text(12.5, c.warn, height: 1.4),
+                        ),
+                      ],
                       const SizedBox(height: 6),
                       SelectableText(r.dir, style: NbType.data(11.5, c.muted, height: 1.45)),
                       const SizedBox(height: 8),
                       Text(
-                        [kindTag(r.kind), r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
+                        [kindTag(r.kind), r.ext, r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
                         style: NbType.data(11.5, c.dim),
                       ),
                       if (r.snippet.isNotEmpty) ...[

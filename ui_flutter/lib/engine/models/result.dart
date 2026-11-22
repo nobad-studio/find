@@ -4,9 +4,14 @@
 /// shown as plain text (Text / TextSpan), never parsed as markup.
 library;
 
+import 'safe_text.dart';
+
 export 'format.dart' show humanSize;
 
 String _str(Object? v) => v is String ? v : '';
+
+/// A name, folder or other text from the index, as it is drawn: direction controls made visible (safe_text.dart).
+String _shown(Object? v) => visibleControls(_str(v));
 int? _int(Object? v) => v is int ? v : (v is double && v.isFinite ? v.toInt() : null);
 List<String> _strs(Object? v) => v is List
     ? [
@@ -28,10 +33,21 @@ class FileResult {
     this.snippet = '',
     this.why = const [],
     this.weak = false,
+    this.ext = '',
+    this.disguised = false,
   });
 
   final int id;
+
+  /// The name as it is drawn: direction controls and invisible characters made visible ([visibleControls]).
   final String name;
+
+  /// The extension Windows opens it by ('.exe'), from the name as it is on disk; '' when it has none.
+  final String ext;
+
+  /// The name on disk had direction controls or invisible characters (now shown as `[U+202E]`): the UI says what
+  /// it really ends in.
+  final bool disguised;
 
   /// The full path (contract `Result.path`), for Copy path; '' from an engine that doesn't send it.
   final String path;
@@ -57,15 +73,17 @@ class FileResult {
     final mt = json['mtime'];
     return FileResult(
       id: id,
-      name: _str(json['name']),
-      path: _str(json['path']),
-      dir: _str(json['dir']).isNotEmpty ? _str(json['dir']) : _str(json['folder']),
+      name: _shown(json['name']),
+      ext: realExtension(_str(json['name'])),
+      disguised: hasHiddenControls(_str(json['name'])),
+      path: _str(json['path']), // the real path, for Copy path and Add folder; never drawn
+      dir: _str(json['dir']).isNotEmpty ? _shown(json['dir']) : _shown(json['folder']),
       kind: _str(json['kind']).isEmpty ? 'other' : _str(json['kind']),
       size: _int(json['size']),
       mtime: mt is num && mt.isFinite ? mt.toDouble() : null,
       ago: _str(json['ago']),
-      snippet: _str(json['snippet']),
-      why: _strs(json['why']),
+      snippet: _shown(json['snippet']),
+      why: [for (final w in _strs(json['why'])) visibleControls(w)],
       weak: json['weak'] == true,
     );
   }
@@ -88,7 +106,7 @@ class QueryPart {
 
   static QueryPart? fromJson(Object? json) {
     if (json is! Map) return null;
-    final label = _str(json['label']);
+    final label = _shown(json['label']);
     if (label.isEmpty) return null;
     return QueryPart(kind: _str(json['kind']), label: label, without: _str(json['without']));
   }
@@ -130,8 +148,8 @@ class Suggestion {
     return Suggestion(
       text: text,
       kind: kind,
-      label: _str(json['label']).isEmpty ? text : _str(json['label']),
-      detail: _str(json['detail']),
+      label: _str(json['label']).isEmpty ? visibleControls(text) : _shown(json['label']),
+      detail: _shown(json['detail']),
       id: id is int ? id : null,
     );
   }
@@ -254,7 +272,13 @@ class SearchAction {
     final id = _str(v['id']), title = _str(v['title']);
     if (id.isEmpty || title.isEmpty) return null;
     final k = _str(v['kind']);
-    return SearchAction(id: id, kind: k.isEmpty ? 'app' : k, title: title, subtitle: _str(v['subtitle']));
+    // Start menu app names come from other programs: drawn like file names
+    return SearchAction(
+      id: id,
+      kind: k.isEmpty ? 'app' : k,
+      title: visibleControls(title),
+      subtitle: _shown(v['subtitle']),
+    );
   }
 }
 
@@ -340,6 +364,15 @@ const kindTags = {
 };
 
 String kindTag(String kind) => kindTags[kind] ?? 'FILE';
+
+/// What the details say about a [FileResult.disguised] name: it hides characters, and what it really is.
+String disguisedNote(FileResult r) {
+  final ends = r.ext.isEmpty ? 'It has no extension' : 'It really ends in ${r.ext}';
+  final program = r.kind == 'app' || const {'.exe', '.com', '.bat', '.cmd', '.scr', '.msi', '.ps1', '.vbs', '.js', '.lnk'}
+      .contains(r.ext);
+  return 'This name hides characters that change how it reads (shown as [U+…]). $ends'
+      '${program ? ': opening it runs a program.' : '.'}';
+}
 
 /// The filter bar (kind, date, size, folder, order), combined by the engine with whatever the words say.
 /// Values are the 0.7.0 page's option values; '' means "any".

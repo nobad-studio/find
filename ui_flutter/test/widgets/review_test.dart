@@ -1,7 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart' show EditableText, Opacity, RichText, Text;
+import 'package:flutter/widgets.dart' show EditableText, Opacity, RichText, Text, ValueKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/app/app.dart';
 import 'package:nobad_find/app/scope.dart';
@@ -168,16 +168,42 @@ void main() {
     expect(find.text('Watching for changes'), findsOneWidget);
   });
 
-  testWidgets('a file name with markup or control characters is shown exactly as it is', (tester) async {
-    const name = '<b>x</b> &amp; \u202Eevil\u0007 [link](http://a).txt';
-    final engine = FakeEngine(
-      files: [const FileResult(id: 9, name: name, dir: r'C:\x', kind: 'text')],
-    );
+  testWidgets('a file name with markup is shown as plain text, its direction controls made visible', (tester) async {
+    // as the engine sends it: parsed by FileResult.fromJson like every result from the pipe (review 2026-11-22, L7)
+    final r = FileResult.fromJson({
+      'id': 9,
+      'name': '<b>x</b> &amp; \u202Eevil\u0007 [link](http://a).txt',
+      'dir': r'C:\x',
+      'kind': 'text',
+    })!;
+    const name = '<b>x</b> &amp; [U+202E]evil\u0007 [link](http://a).txt';
+    expect(r.name, name);
+    final engine = FakeEngine(files: [r]);
     await pumpApp(tester, engine);
     await type(tester, 'evil');
     final shown = tester.widgetList<RichText>(find.byType(RichText)).map((r) => r.text.toPlainText());
     expect(shown, contains(name));
+    expect(shown.any((t) => t.contains('\u202E')), isFalse);
     expect(find.byWidgetPredicate((w) => w is Text && (w.data ?? w.textSpan?.toPlainText()) == name), findsOneWidget);
+  });
+
+  testWidgets('an .exe posing as a .pdf shows what it really is in the details', (tester) async {
+    final r = FileResult.fromJson({'id': 7, 'name': 'Invoice_\u202Efdp.exe', 'dir': r'D:\Downloads', 'kind': 'app'})!;
+    expect(r.name, 'Invoice_[U+202E]fdp.exe');
+    expect(r.ext, '.exe');
+    expect(r.disguised, isTrue);
+    final engine = FakeEngine(files: [r]);
+    await pumpApp(tester, engine, size: const Size(900, 700));
+    await type(tester, 'invoice');
+    final shown = tester.widgetList<RichText>(find.byType(RichText)).map((r) => r.text.toPlainText()).join('\n');
+    expect(shown, contains('Invoice_[U+202E]fdp.exe'));
+    expect(shown, isNot(contains('\u202E')));
+    expect(disguisedNote(r), contains('really ends in .exe: opening it runs a program'));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown); // the details, as a sheet at this width
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('disguised-name')), findsOneWidget); // the details pane says it
+    expect(find.textContaining('APP   .exe'), findsOneWidget);
   });
 
   testWidgets('the quick find bar hides when it loses the focus', (tester) async {

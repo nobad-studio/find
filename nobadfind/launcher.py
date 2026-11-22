@@ -23,6 +23,7 @@ import threading
 import time
 
 from . import wsettings
+from .display import visible
 from .log import log
 
 REFRESH_S = 6 * 3600
@@ -426,7 +427,8 @@ class Launcher:
             if s >= (0.65 if launch else 0.9):
                 sub = " · ".join(x for x in (a.get("publisher"), a.get("version") and "version " + a["version"],
                                              a.get("folder")) if x) or "App"
-                out.append((s + 0.02, {"id": a["id"], "kind": "app", "title": a["name"], "subtitle": sub}))
+                out.append((s + 0.02, {"id": a["id"], "kind": "app", "title": visible(a["name"]),   # L7
+                                       "subtitle": visible(sub)}))
         out.sort(key=lambda x: -x[0])
         seen, res = set(), []
         for _s, a in out:

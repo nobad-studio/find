@@ -46,6 +46,9 @@
 - Windows' own programs that NOBAD Find starts (File Explorer, Task Manager, Control Panel tools, PowerShell for the
   Start menu list) now always come from the Windows folder by full path, never from a same-named file elsewhere.
 - Messages to the engine nested absurdly deep get an error back instead of no answer.
+- A file name can no longer hide what it is with invisible direction characters (a program named to look like
+  `Invoice_exe.pdf`): those characters are shown as `[U+202E]`, the details show the real extension, and a
+  disguised program says "opening it runs a program".
 
 ## 1.0.1 · 2026-11-22
 

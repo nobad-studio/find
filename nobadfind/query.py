@@ -11,6 +11,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from .display import visible
 from .kinds import AMBIGUOUS_LANGUAGES, LANGUAGE_CUES, LANGUAGES, AMBIGUOUS_APPS, APP_CUES, APPS, WORDS
 
 MONTHS = {m: i for i, m in enumerate(
@@ -111,7 +112,7 @@ class Query:
         if p.startswith("label:"):
             return "on " + p[6:].upper()
         return {"removable": "on USB and external drives", "network": "on network drives",
-                "fixed": "on this PC's own drives"}.get(p, f"on {p}" if p else "")
+                "fixed": "on this PC's own drives"}.get(p, f"on {visible(p)}" if p else "")
 
     def understood(self):
         out = []

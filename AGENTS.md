@@ -76,7 +76,10 @@ Specific to this app:
   history" in Settings > Privacy, off deletes them. Never read anything Windows or other programs record.
 - **Everything indexed is untrusted:** file names, folder names and file contents go to the UI only through
   `esc()`; FTS queries only through `store.fts_quote`; nothing builds a shell string; files are never executed
-  except by the user's explicit Open (by result id, never a path from the page).
+  except by the user's explicit Open (by result id, never a path from the page). Names, folders, snippets, drive
+  and app names are drawn with direction controls and invisible characters made visible (`[U+202E]`; Dart
+  `safe_text.dart` at parse time, Python `display.visible` in sentences the engine builds; one list in both), and
+  a disguised name's details say its real extension (security review 2026-11-22, L7).
 - What's indexed follows `scope.Rules` (maintainer decision 2026-11-19: nothing skipped silently; every category
   is shown by `scope_info`): system folders and caches are user choices (default on), secrets (`const.SECRET_*`:
   keys, browser passwords/cookies/history, Windows Credentials/Vault/Protect, chat and developer tokens, wallets,
