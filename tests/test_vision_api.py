@@ -31,7 +31,10 @@ class FakeSession:
     """Stands in for vlm.session.Session. `script` is the answer's tokens; `fail_after` raises AllocFailed then."""
     log = []
 
-    def __init__(self, model, settings, gpu_layers, script=("A ", "red ", "circle."), delay=0.0, fail_after=None):
+    def __init__(self, model, settings, gpu_layers, script=("A ", "red ", "circle."), delay=0.0, fail_after=None,
+                 hang=None):
+        if hang is not None:
+            hang.wait(30)                       # a driver stall while loading (I3)
         self.model, self.settings, self.gpu_layers = model, settings, gpu_layers
         self.script, self.delay, self.fail_after = list(script), delay, fail_after
         FakeSession.log.append(("load", model["id"], dict(settings), gpu_layers))
@@ -54,10 +57,9 @@ class FakeSession:
 
 
 class ThreadProc:
-    pid = 0
-
-    def __init__(self, t):
-        self._t = t
+    def __init__(self, t, pid=0):
+        self._t, self.pid = t, pid
+        self.terminated = False
 
     def is_alive(self):
         return self._t.is_alive()
@@ -66,10 +68,10 @@ class ThreadProc:
         self._t.join(timeout)
 
     def terminate(self):
-        pass
+        self.terminated = True
 
 
-def thread_start(opts, decode=None):
+def thread_start(opts, decode=None, pid=0):
     """A Talker start() that runs the real worker loop on a thread (opts: FakeSession keyword arguments, read at
     each load, so a test can change them between jobs)."""
     started = []
@@ -84,8 +86,9 @@ def thread_start(opts, decode=None):
                                      "decode": decode or fake_decode})
         t.start()
         started.append(t)
-        return a, ThreadProc(t)
-    start.started = started
+        start.procs.append(ThreadProc(t, pid))
+        return a, start.procs[-1]
+    start.started, start.procs = started, []
     return start
 
 
@@ -444,27 +447,220 @@ def test_idle_is_the_lazy_models_idle():
     assert worker.IDLE == embed.Lazy.IDLE
 
 
-def test_worker_hooks_reach_the_talk_worker(env):
-    from nobadfind import engine
-
+def _hook_parts(order):
     class Ix:
         def release_models(self):
-            pass
+            order.append("indexer release")
 
         def release_idle_models(self):
-            pass
+            order.append("indexer idle")
+
+        def recycle_workers(self):
+            order.append("indexer recycle")
 
         def worker_names(self):
             return {7: "text reader"}
+    return Ix()
+
+
+def test_worker_hooks_reach_the_talk_worker_first(env):
+    from nobadfind import engine
     a, ev = env["a"], env["events"]
+    order = []
+    hooks = engine.worker_hooks({"indexer": _hook_parts(order), "api": a})
+    real_tick = a.vision_tick
+    a.vision_tick = lambda: order.append("talk tick") or real_tick()
+    hooks["release_idle"]()
+    assert order == ["talk tick", "indexer idle"]                        # the talk worker first (I2)
+
+    def boom():
+        raise RuntimeError("x")
+    a.vision_tick = boom
+    order.clear()
+    hooks["release_idle"]()
+    assert order == ["indexer idle"]                                     # one failing never skips the other
+    a.vision_tick = real_tick
     env["opts"].update(script=[f"t{i} " for i in range(400)], delay=0.005)
-    hooks = engine.worker_hooks({"indexer": Ix(), "api": a})
     r = a.vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
     assert hooks["names"]() == {7: "text reader"}           # a thread worker has no pid
-    hooks["release"]()                                       # memory pressure: the talk worker goes first
-    assert _final(ev, r["job"])["note"] == "Stopped: NOBAD Find needed the memory. Try again."
-    assert not a.vision_state()["running"]
+    assert hooks["talk_mb"]() == models.get(SMOL)["ram_mb"]
+    assert hooks["release_talk"]() is True
+    assert _final(ev, r["job"]) == {"job": r["job"], "state": "cancelled", "text": "", "model": SMOL,
+                                    "note": "Stopped: NOBAD Find needed the memory."}
+    assert not a.vision_state()["running"] and hooks["talk_mb"]() == 0
+
+
+def _watchdog(a, mb, job_mb, order, keep=False, start=None):
+    from nobadfind import engine
+    from nobadfind.activity import Activity
+    from nobadfind.watchdog import Watchdog
+    hooks = engine.worker_hooks({"indexer": _hook_parts(order), "api": a})
+    kills = []
+    w = Watchdog(Activity(), kill=kills.append, info=lambda pid: {"memory_mb": mb[pid]}, pids=lambda: list(mb),
+                 job_usage=lambda: {"memory_mb": job_mb[0]}, keep_models=lambda: keep,
+                 **{k: hooks[k] for k in ("release", "recycle", "names", "talk_mb", "release_talk")})
+    return w, kills
+
+
+def test_the_watchdog_gives_the_deeper_talk_worker_its_own_budget(env, monkeypatch):
+    """C1: Qwen (2411 MB measured) in the talk worker is not killed at WORKER_MB, and Find's total may grow by it."""
+    from nobadfind import watchdog as wd
+    a, ev = env["a"], env["events"]
+    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc: (True, ""))
+    budgets = []
+    start = thread_start(env["opts"], pid=4242)
+    a._talk = worker.Talker(ev.append, start=start, on_budget=budgets.append)
+    env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
+    r = a.vision_ask(env["ids"]["sea.jpg"], "what is the mood here?", deeper=True)
+    assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
+    qwen = models.get(QWEN)["ram_mb"]
+    assert budgets[0] == qwen and a.vision_budget_mb() == qwen        # raised when the job was sent
+    order = []
+    mb, job_mb = {4242: 2400, 5151: 1600}, [wd.JOB_MB + 2000]
+    w, kills = _watchdog(a, mb, job_mb, order)
+    assert w.worker_limit("talk worker") == int(1.5 * qwen) and w.job_limit() == wd.JOB_MB + qwen
+    w.check()
+    assert kills == [5151]                       # a text reader over 1500 MB still goes; the talk worker stays
+    assert order == [] and a.vision_state()["busy"]                   # under JOB_MB + Qwen: nothing released
+    mb[4242] = int(1.5 * qwen) + 10                                   # past its own budget: it goes
+    del mb[5151]
+    w.check()
+    assert kills == [5151, 4242]
+    a.vision_stop()
+    assert budgets[-1] == 0 and w.worker_limit("talk worker") == wd.WORKER_MB and w.job_limit() == wd.JOB_MB
+
+
+def test_memory_pressure_releases_the_talk_model_first_even_with_keep_models(env):
+    """I2: over the total, the talk model goes first, also with "Keep models loaded" on; the indexer's models and
+    workers stay until the next look."""
+    from nobadfind import watchdog as wd
+    a, ev = env["a"], env["events"]
+    env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
+    order = []
+    job_mb = [wd.JOB_MB + models.get(SMOL)["ram_mb"] + 100]
+    w, kills = _watchdog(a, {}, job_mb, order, keep=True)
+    w.check()
+    assert order == [] and not a.vision_state()["running"]
+    assert _final(ev, r["job"])["note"] == "Stopped: NOBAD Find needed the memory."
+    w.check()                                                         # still over, no talk model now
+    assert order == ["indexer recycle"]                              # then the old rule (keep: workers first)
+
+
+def test_a_pause_stops_the_running_answer_and_the_model(env):
+    """I1: a game or low memory (the governor's PAUSED) while an answer streams: it stops, the model goes."""
+    a, ev = env["a"], env["events"]
+    env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
+    assert a.vision_tick() is False                                   # gentle: it goes on
+    a._governor.decision = Decision("paused", "Paused: low on memory (300 MB free)")
+    try:
+        assert a.vision_tick() is True
+    finally:
+        a._governor.decision = Decision("gentle", "Gentle: you are using the PC")
+    assert _final(ev, r["job"]) == {"job": r["job"], "state": "cancelled", "text": "", "model": SMOL,
+                                    "note": "Stopped: NOBAD Find paused (low on memory (300 MB free))."}
+    assert not a.vision_state()["running"] and a.vision_budget_mb() == 0
+    n = len(ev)
+    time.sleep(0.05)
+    assert len(ev) == n                                               # no late tokens
+
+
+def test_a_hung_worker_is_ended_and_the_next_question_gets_a_fresh_one(env):
+    """I3: a stall in load (or image encode) past the deadline: the worker is ended, the job gets an error."""
+    a, ev = env["a"], env["events"]
+    now = [0.0]
+    stuck = threading.Event()
+    env["opts"].update(hang=stuck)
+    a._talk = worker.Talker(ev.append, start=env["start"], clock=lambda: now[0])
+    try:
+        r = a.vision_describe(env["ids"]["sea.jpg"])
+        assert _wait(lambda: any(e["job"] == r["job"] and e["state"] == "loading" for e in ev))
+        now[0] = worker.LOAD_S - 1
+        assert a.vision_tick() is False and a.vision_state()["busy"]
+        now[0] = worker.LOAD_S + 1
+        assert a.vision_tick() is True
+        assert _final(ev, r["job"]) == {"job": r["job"], "state": "error", "text": "", "model": SMOL,
+                                        "note": "The photo model stopped responding. Try again."}
+        assert env["start"].procs[0].terminated and not a.vision_state()["running"]
+        env["opts"].pop("hang")
+        r2 = a.vision_describe(env["ids"]["sea.jpg"])
+        assert _wait(lambda: _final(ev, r2["job"])) and _final(ev, r2["job"])["state"] == "done"
+        assert len(env["start"].started) == 2                          # a fresh worker
+    finally:
+        stuck.set()
+
+
+def test_no_token_for_too_long_also_counts_as_hung(env):
+    a, ev = env["a"], env["events"]
+    now = [0.0]
+    a._talk = worker.Talker(ev.append, start=env["start"], clock=lambda: now[0])
+    env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
+    now[0] = worker.LOAD_S + worker.ANSWER_S - 5                      # tokens keep coming: deadline moves on
+    assert _wait(lambda: a._talk._job and a._talk._job["deadline"] > now[0])
+    assert a.vision_tick() is False
+    now[0] += worker.ANSWER_S + 1
+    a._talk._job["deadline"] = now[0] - 1                             # no token since (frozen fake clock)
+    assert a.vision_tick() is True and _final(ev, r["job"])["note"] == worker.HUNG
+
+
+def test_a_worker_that_cannot_start_ends_the_job_with_an_error(env):
+    """I4: the reply named the job, so an event must follow even when the process can't start."""
+    a, ev = env["a"], env["events"]
+
+    def start():
+        raise OSError("no more processes")
+    a._talk = worker.Talker(ev.append, start=start)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert r["ok"]
+    assert ev[-1] == {"job": r["job"], "state": "error", "text": "", "model": SMOL,
+                      "note": "The picture model could not start. Try again."}
+    assert not a.vision_state()["running"] and not a.vision_state()["busy"]
+
+
+def test_idle_release_never_kills_a_question_that_just_came(env):
+    """M1: the idle check and the stop are one step under the Talker's lock."""
+    a, ev = env["a"], env["events"]
+    now = [0.0]
+    a._talk = worker.Talker(ev.append, start=env["start"], clock=lambda: now[0])
+    env["opts"].update(script=[f"t{i} " for i in range(800)], delay=0.005)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: any(e["job"] == r["job"] and e["text"] for e in ev))
+    now[0] = worker.IDLE + 5
+    assert a._talk.stop(only_if_idle=worker.IDLE) is False and a.vision_state()["busy"]
+
+
+def test_a_gone_photo_costs_no_model_load(env):
+    """The photo is decoded before the model loads (M7)."""
+    a, ev, ids = env["a"], env["events"], env["ids"]
+
+    def gone(path, side):
+        return worker.GONE
+    a._talk = worker.Talker(ev.append, start=thread_start(env["opts"], decode=gone))
+    r = a.vision_describe(ids["sea.jpg"])
+    assert _wait(lambda: _final(ev, r["job"])) and _final(ev, r["job"])["note"] == worker.GONE
+    assert not [x for x in FakeSession.log if x[0] == "load"]
+
+
+def test_set_talk_allowance_raises_and_restores_the_worker_limit(monkeypatch):
+    from nobadfind import jobs
+    got = []
+
+    class W:
+        def set_memory_limit(self, mb):
+            got.append(mb)
+            return True
+    monkeypatch.setattr(jobs, "WORKERS", W())
+    monkeypatch.setattr(jobs, "_base_limit", [4096])
+    assert jobs.set_talk_allowance(2411) and jobs.set_talk_allowance(0)
+    assert got == [4096 + 2411, 4096]
+    monkeypatch.setattr(jobs, "_base_limit", [0])
+    assert jobs.set_talk_allowance(2411) is False                     # no limit set at start: none added
 
 
 def test_runtime_reinstall_stops_the_worker_first(env, monkeypatch):

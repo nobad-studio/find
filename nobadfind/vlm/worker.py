@@ -42,6 +42,10 @@ from .session import AllocFailed
 IDLE = 180                      # = embed.Lazy.IDLE (tests keep them equal): the talk model leaves after 3 min idle
 MAX_IMAGES = 2                  # compare is two photos; more is refused
 OPS = ("describe", "ask", "compare")
+LOAD_S = 120                    # a job with no progress this long while loading and reading the photo ...
+ANSWER_S = 120                  # ... or between two tokens: the worker hangs and is ended (measured: load
+                                # and a whole answer take 2-8 s on the reference PC, Qwen about 5 s)
+HUNG = "The photo model stopped responding. Try again."
 GONE = "This photo is no longer there."
 BUILD = {"describe": lambda q: prompts.describe(), "ask": prompts.ask, "compare": lambda q: prompts.compare(q or None)}
 
@@ -55,6 +59,13 @@ def memory_note(need_mb):
 
 
 # ---------- the worker process ----------
+def _prepare(model):
+    """Load the pinned runtime's DLLs (quiet) before any picture is decoded: winrt brings an older MSVCP140, and
+    whichever loads first wins (ocr._load)."""
+    from . import llama_api
+    llama_api.load(model["runtime"], quiet=True)
+
+
 def _open_session(model, settings, gpu_layers):
     """The real model: the pinned runtime from its folder, logging off, then Session (vlm/session.py)."""
     from . import llama_api, session
@@ -80,8 +91,9 @@ def _decode(path, side):
 
 
 class _Serve:
-    def __init__(self, conn, open_session, decode):
+    def __init__(self, conn, open_session, decode, prepare=None):
         self.conn, self.open, self.decode = conn, open_session, decode
+        self.prepare = prepare or (lambda model: None)
         self.session, self.loaded = None, ""
         self.pending, self.stop = None, False
         self._cut, self._unload_after = False, False
@@ -157,9 +169,25 @@ class _Serve:
             prompt = BUILD[op](msg.get("question") or "")
         except ValueError:
             return fail("Type a question.")
-        if self.session is None or self.loaded != model.get("id"):
-            self.unload()                                   # one model resident: the other one leaves first
+        load = self.session is None or self.loaded != model.get("id")
+        if load:
             self.send(t="state", job=jid, state="loading")
+            try:
+                self.prepare(model)                         # the runtime's DLLs before winrt (MSVCP140 order)
+            except Exception as e:
+                return fail(f"The picture model could not start ({type(e).__name__}).")
+        # the photo first: one that is gone or unreadable costs no model load
+        images = []
+        for p in paths:
+            got = self.decode(p, int(settings.get("side") or 512))
+            if isinstance(got, str):
+                return fail(got)
+            images.append(got)
+        cancelled = self._check(jid)
+        if cancelled():
+            return self._stopped(jid)
+        if load:
+            self.unload()                                   # one model resident: the other one leaves first
             try:
                 self.session = self.open(model, settings, int(msg.get("gpu_layers") or 0))
             except AllocFailed as e:
@@ -170,17 +198,8 @@ class _Serve:
                 return fail(f"The picture model could not start ({type(e).__name__}).")
             self.loaded = model.get("id") or ""
             self.send(t="state", job=None, loaded=self.loaded)
-        cancelled = self._check(jid)
-        if cancelled():
-            return self._stopped(jid)
-        images = []
-        for p in paths:
-            got = self.decode(p, int(settings.get("side") or 512))
-            if isinstance(got, str):
-                return fail(got)
-            images.append(got)
-        if cancelled():
-            return self._stopped(jid)
+            if cancelled():
+                return self._stopped(jid)
         self.send(t="state", job=jid, state="answering")
         try:
             text = self.session.answer(images, prompt, prompts.max_tokens(op),
@@ -204,9 +223,10 @@ class _Serve:
             self.unload()
 
 
-def serve(conn, open_session=None, decode=None):
+def serve(conn, open_session=None, decode=None, prepare=None):
     """The worker's loop until quit or the engine's end of the pipe closes (tests run it on a thread with fakes)."""
-    _Serve(conn, open_session or _open_session, decode or _decode).run()
+    real = open_session is None
+    _Serve(conn, open_session or _open_session, decode or _decode, prepare or (_prepare if real else None)).run()
 
 
 def main(conn):
@@ -235,14 +255,19 @@ def start_process():
 
 # ---------- the engine side ----------
 class Talker:
-    """Drives the worker. `emit(event)` gets every `vision` event; `start()` -> (conn, process) (tests: a thread)."""
+    """Drives the worker. `emit(event)` gets every `vision` event; `start()` -> (conn, process) (tests: a thread).
+    `on_budget(mb)` is told the memory the talk worker may use now (the loaded or loading model's measured need,
+    0 when none): the engine raises Find's memory limits by it (engine.run, watchdog talk_mb)."""
 
-    def __init__(self, emit, start=None, clock=time.monotonic, idle=IDLE):
+    def __init__(self, emit, start=None, clock=time.monotonic, idle=IDLE, on_budget=None):
         self._emit, self._start, self._clock, self.idle = emit, start or start_process, clock, idle
+        self._on_budget = on_budget
         self._lock = threading.RLock()          # also held while emitting: no event of a job after it was replaced
         self._conn = self._proc = None
-        self._job = None                        # {"job", "model", "name", "text", "files", "op"}: the one followed
+        self._job = None                        # {"job", "model", "name", "text", "files", "op", "need", "deadline"}
         self._loaded = ""
+        self._need = {}                         # model id -> its measured need (MB), from the jobs sent
+        self._budget = 0
         self._used = clock()
         self._ids = itertools.count(1)
         self.answers = deque(maxlen=16)         # (file ids, op, text, model id) of finished answers (vision_keep)
@@ -261,29 +286,52 @@ class Talker:
         except Exception:
             pass                                # a UI that went away never stops the worker's reader
 
+    # -- memory budget --
+    def budget_mb(self):
+        """MB the talk worker may hold now: the loaded model's need, or the need of the model being loaded."""
+        with self._lock:
+            return self._budget
+
+    def _update_budget(self):
+        b = self._need.get(self._loaded, 0) if self._loaded else 0
+        if self._job is not None:
+            b = max(b, self._job["need"])
+        if b != self._budget:
+            self._budget = b
+            if self._on_budget is not None:
+                try:
+                    self._on_budget(b)
+                except Exception:
+                    pass
+
     # -- jobs --
     def submit(self, job, name=""):
         """Start `job` (the worker message, with "job" from next_id()); the one running is cancelled first."""
         with self._lock:
             self._cancel_current()
-            if self._conn is None:
-                self._spawn()
+            need = int((job.get("settings") or {}).get("need_mb") or 0)
+            self._need[job["model"]["id"]] = need
             self._job = {"job": job["job"], "model": job["model"]["id"], "name": name, "text": "",
-                         "files": tuple(job.get("files") or ()), "op": job["op"]}
+                         "files": tuple(job.get("files") or ()), "op": job["op"], "need": need,
+                         "deadline": self._clock() + LOAD_S}
             self._used = self._clock()
+            self._update_budget()               # before the worker starts loading: the limits are raised first
             msg = {k: v for k, v in job.items() if k != "files"}
             try:
+                if self._conn is None:
+                    self._spawn()
                 self._conn.send(msg)
-            except (OSError, ValueError):
+            except Exception:                   # could not start or reach the worker: say so for this job
                 cur, self._job = self._job, None
-                self._drop()
-                self._emit_safe(self._event(cur, "error", note="The picture model stopped unexpectedly. Try again."))
+                self._kill_locked()
+                self._emit_safe(self._event(cur, "error", note="The picture model could not start. Try again."))
 
     def cancel(self):
         with self._lock:
             self._cancel_current()
+            self._update_budget()
 
-    def _cancel_current(self):
+    def _cancel_current(self, note=""):
         cur, self._job = self._job, None
         if cur is None:
             return
@@ -292,12 +340,13 @@ class Talker:
                 self._conn.send({"op": "cancel", "job": cur["job"]})
             except (OSError, ValueError):
                 pass
-        self._emit_safe(self._event(cur, "cancelled"))
+        self._emit_safe(self._event(cur, "cancelled", note=note))
 
     def emit_now(self, ev):
         """An event that isn't the worker's (stored OCR text shown first): it replaces the job followed."""
         with self._lock:
             self._cancel_current()
+            self._update_budget()
             self._emit_safe(ev)
 
     # -- the worker's messages --
@@ -310,9 +359,7 @@ class Talker:
         while True:
             try:
                 msg = conn.recv()
-            except (EOFError, OSError):
-                break
-            except Exception:
+            except Exception:                   # EOFError / OSError: the worker ended
                 break
             if isinstance(msg, dict):
                 self._on(conn, msg)
@@ -331,12 +378,14 @@ class Talker:
                 return
             if msg.get("job") is None and "loaded" in msg:
                 self._loaded = msg.get("loaded") or ""
+                self._update_budget()
                 return
             cur = self._job
             if cur is None or msg.get("job") != cur["job"]:
                 return                          # a job that was replaced or cancelled: never shown
             t = msg.get("t")
             if t == "token":
+                cur["deadline"] = self._clock() + ANSWER_S          # it is making progress
                 cur["text"] += str(msg.get("s") or "")
                 self._emit_safe(self._event(cur, "answering", cur["text"]))
             elif t == "state":
@@ -344,36 +393,57 @@ class Talker:
                 if st == "loading":
                     self._emit_safe(self._event(cur, "loading", note=f"Loading {cur['name'] or cur['model']}"))
                 elif st == "answering":
+                    cur["deadline"] = self._clock() + ANSWER_S
                     self._emit_safe(self._event(cur, "answering", cur["text"]))
                 elif st == "cancelled":
-                    self._job = None
-                    self._used = self._clock()
+                    self._end()
                     self._emit_safe(self._event(cur, "cancelled"))
             elif t == "done":
-                self._job = None
-                self._used = self._clock()
+                self._end()
                 text = str(msg.get("text") or "")
                 self.answers.append((cur["files"], cur["op"], text, cur["model"]))
                 self._emit_safe(self._event(cur, "done", text,
                                             "may not be exact" if prompts.flag_unverified(text) else ""))
             elif t == "error":
-                self._job = None                # the UI drops any partial answer it showed
-                self._used = self._clock()
+                self._end()                     # the UI drops any partial answer it showed
                 self._emit_safe(self._event(cur, "error", note=str(msg.get("why") or "The answer failed.")))
+
+    def _end(self):
+        self._job = None
+        self._used = self._clock()
+        self._update_budget()
 
     # -- lifetime --
     def _drop(self):
         self._conn = self._proc = None
         self._loaded = ""
+        self._update_budget()
 
-    def stop(self, why="", timeout=5.0):
-        """End the worker (and its model). A job still streaming ends with `why` as its error (else cancelled)."""
+    def _kill_locked(self):
+        """End the worker at once (it may be hung): TerminateProcess, no waiting for it to read a quit."""
+        conn, proc = self._conn, self._proc
+        self._drop()
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def stop(self, why="", timeout=5.0, only_if_idle=None):
+        """End the worker (and its model). A job still streaming ends as cancelled with `why` as its note.
+        only_if_idle (seconds): only when no job is followed and none came for that long (checked under the lock,
+        so a question arriving at that moment is never killed)."""
         with self._lock:
-            conn, proc, cur = self._conn, self._proc, self._job
-            self._job = None
+            if only_if_idle is not None and (self._job is not None or self._clock() - self._used < only_if_idle):
+                return False
+            conn, proc = self._conn, self._proc
+            self._cancel_current(why)
             self._drop()
-            if cur is not None:
-                self._emit_safe(self._event(cur, "error", note=why) if why else self._event(cur, "cancelled"))
         if conn is None:
             return False
         try:
@@ -394,9 +464,23 @@ class Talker:
     def release_if_idle(self, idle=None):
         """The governor's tick: no question for `idle` (IDLE) seconds -> the worker and its model go."""
         with self._lock:
-            quiet = self._proc is not None and self._job is None and \
-                self._clock() - self._used >= (self.idle if idle is None else idle)
-        return self.stop() if quiet else False
+            if self._proc is None:
+                return False
+        return self.stop(only_if_idle=self.idle if idle is None else idle)
+
+    def check_deadline(self):
+        """The governor's tick: a job with no progress past its deadline (load LOAD_S, then ANSWER_S between
+        tokens) means the worker hangs (a driver stall in load or image encode): it is ended, the job gets an
+        error, and the next question starts a fresh worker. True when it did."""
+        with self._lock:
+            cur = self._job
+            if cur is None or self._clock() < cur["deadline"]:
+                return False
+            self._job = None
+            self._kill_locked()
+            self._used = self._clock()
+            self._emit_safe(self._event(cur, "error", note=HUNG))
+            return True
 
     def state(self):
         with self._lock:

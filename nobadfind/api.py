@@ -63,6 +63,7 @@ class Api:
         self._talk = None                 # vlm.worker.Talker, made on the first talk-about-a-photo question
         self._talk_lock = threading.Lock()
         self._on_vision = None            # engine.py: push one `vision` event to the UI
+        self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -952,8 +953,13 @@ class Api:
         with self._talk_lock:
             if self._talk is None:
                 from .vlm import worker
-                self._talk = worker.Talker(self._vision_emit)
+                self._talk = worker.Talker(self._vision_emit, on_budget=self._talk_budget)
             return self._talk
+
+    def _talk_budget(self, mb):
+        fn = self._on_talk_budget
+        if fn is not None:
+            fn(mb)
 
     def _vision_emit(self, ev):
         push = self._on_vision
@@ -1125,9 +1131,27 @@ class Api:
                 **st}
 
     # the engine's hooks (engine.worker_hooks, run): idle release, memory pressure, quitting
+    def vision_tick(self):
+        """The governor's tick (engine.worker_hooks release_idle): a pause ends the answer and the model (the
+        game or the memory comes first), a hung worker is ended, an idle one is released."""
+        t = getattr(self, "_talk", None)
+        if t is None:
+            return False
+        d = getattr(self._governor, "decision", None)
+        if d is not None and d.level == "paused":
+            why = d.reason.split(":", 1)[1].strip() if ":" in d.reason else ""
+            return t.stop("Stopped: NOBAD Find paused" + (f" ({why})." if why else "."))
+        if t.check_deadline():
+            return True
+        return t.release_if_idle()
+
     def vision_release_idle(self):
         t = getattr(self, "_talk", None)
         return t.release_if_idle() if t is not None else False
+
+    def vision_budget_mb(self):
+        t = getattr(self, "_talk", None)
+        return t.budget_mb() if t is not None else 0
 
     def vision_stop(self, why=""):
         t = getattr(self, "_talk", None)

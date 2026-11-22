@@ -1,8 +1,11 @@
 """The watchdog ends NOBAD Find's OWN stuck or runaway work. It never touches another app.
 
 - a text-reader worker over WORKER_MB is ended (the indexer treats it as a crashed reader and skips the file);
-- all of Find's processes together over JOB_MB: the models are released and the worker processes start
-  fresh (at most once per 5 minutes).
+- all of Find's processes together over JOB_MB: the photo talk model goes first (also with "Keep models loaded"
+  on); then the models are released and the worker processes start fresh (at most once per 5 minutes).
+- the photo talk worker (find 1.1) has a budget of its own while its model is loaded or loading (`talk_mb`, the
+  model's measured need): it is ended only over TALK_SHARE x that (never below WORKER_MB), and JOB_MB is raised by
+  it, so the deeper model (about 2.4 GB) can run at all.
 A UI that stops answering is the UI's own process: the engine notices it by its pipe closing (rpc), not here.
 Only pids listed by jobs.WORKERS.pids() are ever ended, and never this process.
 """
@@ -16,6 +19,7 @@ from .log import log
 
 WORKER_MB = 1500
 JOB_MB = 3000
+TALK_SHARE = 1.5         # the talk worker may use 1.5 x its model's measured need
 RELEASE_EVERY = 300      # seconds between model releases
 KILL_WINDOW = 600        # the same kind of worker killed twice within this many seconds ...
 KILL_PAUSE = 1800        # ... is left alone for this many seconds
@@ -50,12 +54,13 @@ class Watchdog:
                  pids=lambda: _jobs.WORKERS.pids() if _jobs.WORKERS else [],
                  job_usage=lambda: _jobs.OUTER.usage() if _jobs.OUTER else {"memory_mb": 0},
                  release=lambda: None, clock=time.monotonic, names=lambda: {}, recycle=lambda: None,
-                 keep_models=lambda: False):
+                 keep_models=lambda: False, talk_mb=lambda: 0, release_talk=lambda: False):
         self.activity = activity
         self._keep_models = keep_models    # "Keep models loaded": the workers go first, the models only if needed
         self._spared = False
         self._kill, self._info, self._pids, self._job_usage = kill, info, pids, job_usage
         self._release, self._recycle = release, recycle
+        self._talk_mb, self._release_talk = talk_mb, release_talk
         self._clock = clock
         self._names = names
         self._last_release = None
@@ -71,15 +76,35 @@ class Watchdog:
             except Exception as e:
                 log(f"watchdog step failed: {type(e).__name__}", "warn")
 
+    def _talk_budget(self):
+        try:
+            return max(0, int(self._talk_mb() or 0))
+        except Exception:
+            return 0
+
+    def worker_limit(self, kind):
+        """The working set a worker of this kind may reach before it is ended (MB)."""
+        if kind == "talk worker":
+            return max(WORKER_MB, int(TALK_SHARE * self._talk_budget()))
+        return WORKER_MB
+
+    def job_limit(self):
+        """All of Find's working set (MB) before memory is given back: JOB_MB, plus the talk model's need."""
+        return JOB_MB + self._talk_budget()
+
     def _check_workers(self):
         me = os.getpid()
+        names = None
         for pid in list(self._pids()):
             if pid == me:
                 continue
             mb = (self._info(pid) or {}).get("memory_mb", 0)
             if mb <= WORKER_MB:
                 continue
-            kind = self._names().get(pid, "background worker")
+            names = self._names() if names is None else names
+            kind = names.get(pid, "background worker")
+            if mb <= self.worker_limit(kind):
+                continue
             now = self._clock()
             if now < self._blocked.get(kind, 0):
                 continue
@@ -98,9 +123,18 @@ class Watchdog:
                                           "for 30 minutes")
 
     def _check_job(self):
-        if self._job_usage().get("memory_mb", 0) <= JOB_MB:
+        if self._job_usage().get("memory_mb", 0) <= self.job_limit():
             self._spared = False                # back under the limit: next time the workers go first again
             return
+        # the photo talk model first, whatever "Keep models loaded" says (it is only there while you ask)
+        try:
+            talk = bool(self._release_talk())
+        except Exception as e:
+            log(f"watchdog: releasing the talk model failed: {type(e).__name__}", "warn")
+            talk = False
+        if talk:
+            self.activity.add("model", "NOBAD Find is using a lot of memory, so it let go of the photo talk model")
+            return                              # measured again at the next tick, before anything else goes
         now = self._clock()
         if self._last_release is not None and now - self._last_release < RELEASE_EVERY:
             return

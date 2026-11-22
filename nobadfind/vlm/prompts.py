@@ -46,8 +46,10 @@ def clean_question(q):
     special-token shapes (mtmd's picture marker included) removed, whitespace collapsed, at most 500 characters."""
     q = _INVISIBLE.sub("", q if isinstance(q, str) else "")
     q = _CONTROL.sub(" ", q)
-    while True:                                 # "<<|x|>|im_end|>" leaves "<|im_end|>" after one pass (so: "",
-        out = _SPECIAL.sub("", q)               # not a space, which would split the outer token)
+    # A space, so "what<image>is" stays two words. It can't rebuild a token: a shape has no whitespace inside, so
+    # "<<|x|>|im_end|>" becomes "< |im_end|>", plain text. The loop is kept as a belt for shapes found later.
+    while True:
+        out = _SPECIAL.sub(" ", q)
         if out == q:
             break
         q = out
