@@ -6,6 +6,7 @@ library;
 import 'models/update.dart';
 import 'models/json.dart';
 import 'models/models_info.dart';
+import 'models/notification.dart';
 import 'models/scope_info.dart';
 import 'models/status.dart';
 
@@ -15,6 +16,7 @@ sealed class EngineEvent {
   /// What the main window subscribes to (status_full only while the Indexing page is open).
   static const mainWindow = [
     'status', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', 'models', 'turbo', 'update', //
+    'notification',
   ];
 
   /// What the quick find bar subscribes to.
@@ -63,6 +65,9 @@ sealed class EngineEvent {
         return HereEvent(jStr(m['path']));
       case 'quitting':
         return const QuittingEvent();
+      case 'notification':
+        final n = AppNotification.fromJson(m['item']);
+        return n == null ? null : NotificationEvent(n, unread: jInt(m['unread']));
     }
     return null;
   }
@@ -155,6 +160,13 @@ class UpdateEvent extends EngineEvent {
 class NoticeEvent extends EngineEvent {
   const NoticeEvent(this.text);
   final String text;
+}
+
+/// A new notification (the bell); [unread] is the engine's count with it.
+class NotificationEvent extends EngineEvent {
+  const NotificationEvent(this.item, {this.unread = 0});
+  final AppNotification item;
+  final int unread;
 }
 
 /// The engine is ending: exit instead of reconnecting.

@@ -47,6 +47,10 @@ class Settings {
     'search_history': true,
     'models_stay_loaded': false,
     'update_check': true,
+    'notify_toasts': true,
+    'notify_level': 'warning',
+    'notify_quiet': true,
+    'notify_show_names': false,
   };
 
   static const initial = Settings(defaults);

@@ -137,6 +137,14 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.turboSet(p['on'] as bool);
     case 'turbo_helper' when p['action'] == 'update' || p['action'] == 'remove':
       return c.turboHelper(p['action'] as String);
+    case 'notifications_list':
+      return c.notificationsList();
+    case 'notifications_read' when p['all'] == true && p.length == 1:
+      return c.notificationsRead(all: true);
+    case 'notifications_read' when p['ids'] is List && (p['ids'] as List).every((i) => i is int) && p.length == 1:
+      return c.notificationsRead(ids: (p['ids'] as List).cast<int>());
+    case 'notifications_clear':
+      return c.notificationsClear();
   }
   return c.call(m, p);
 }

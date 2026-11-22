@@ -1,0 +1,30 @@
+{"note": "Notifications (notify.py): the bell's list, a new one as an event on the next tick, the same key not twice, no path in the text, mark read (some, all), clear, and bad params."}
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "subscribe", "params": {"events": ["notification"]}}}
+{"recv": {"jsonrpc": "2.0", "id": 1, "result": {"events": ["notification"]}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "notifications_list", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 2, "result": {"items": [], "unread": 0}}}
+{"engine": {"do": "notify", "kind": "worker_restarted", "title": "A text reader used too much memory", "body": "NOBAD Find stopped a text reader using 1.6 GB. The file it was reading is skipped; the other files go on.", "severity": "warning", "action": "open_indexing", "key": "worker-memory:text reader"}}
+{"engine": {"do": "tick", "at": 0.0}}
+{"recv": {"jsonrpc": "2.0", "method": "notification", "params": {"item": {"id": 1, "t": 1763400000.0, "kind": "worker_restarted", "severity": "warning", "title": "A text reader used too much memory", "body": "NOBAD Find stopped a text reader using 1.6 GB. The file it was reading is skipped; the other files go on.", "detail": "", "action": {"id": "open_indexing", "label": "Open Indexing"}, "read": false}, "unread": 1}}}
+{"engine": {"do": "notify", "kind": "worker_restarted", "title": "A text reader used too much memory", "body": "the same key again: not posted", "severity": "warning", "key": "worker-memory:text reader"}}
+{"engine": {"do": "notify", "kind": "worker_crashed", "title": "The text reader stopped", "body": "The text reader stopped unexpectedly on C:\\Users\\me\\Documents\\tax 2025.pdf, so NOBAD Find skips that file until it changes.", "severity": "warning", "detail": "C:\\Users\\me\\Documents\\tax 2025.pdf"}}
+{"engine": {"do": "notify", "kind": "update_available", "title": "NOBAD Find 0.9.9 is available", "body": "You have 0.9.3. Update downloads it from GitHub, checks it and installs it.", "severity": "info", "action": "update", "key": "update:0.9.9"}}
+{"engine": {"do": "tick", "at": 0.5}}
+{"recv": {"jsonrpc": "2.0", "method": "notification", "params": {"item": {"id": 2, "t": 1763400000.0, "kind": "worker_crashed", "severity": "warning", "title": "The text reader stopped", "body": "The text reader stopped unexpectedly on a file, so NOBAD Find skips that file until it changes.", "detail": "", "action": null, "read": false}, "unread": 2}}}
+{"recv": {"jsonrpc": "2.0", "method": "notification", "params": {"item": {"id": 3, "t": 1763400000.0, "kind": "update_available", "severity": "info", "title": "NOBAD Find 0.9.9 is available", "body": "You have 0.9.3. Update downloads it from GitHub, checks it and installs it.", "detail": "", "action": {"id": "update", "label": "Update"}, "read": false}, "unread": 3}}}
+{"send": {"jsonrpc": "2.0", "id": 3, "method": "notifications_list", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 3, "result": {"items": [{"id": 3, "t": 1763400000.0, "kind": "update_available", "severity": "info", "title": "NOBAD Find 0.9.9 is available", "body": "You have 0.9.3. Update downloads it from GitHub, checks it and installs it.", "detail": "", "action": {"id": "update", "label": "Update"}, "read": false}, {"id": 2, "t": 1763400000.0, "kind": "worker_crashed", "severity": "warning", "title": "The text reader stopped", "body": "The text reader stopped unexpectedly on a file, so NOBAD Find skips that file until it changes.", "detail": "", "action": null, "read": false}, {"id": 1, "t": 1763400000.0, "kind": "worker_restarted", "severity": "warning", "title": "A text reader used too much memory", "body": "NOBAD Find stopped a text reader using 1.6 GB. The file it was reading is skipped; the other files go on.", "detail": "", "action": {"id": "open_indexing", "label": "Open Indexing"}, "read": false}], "unread": 3}}}
+{"send": {"jsonrpc": "2.0", "id": 4, "method": "notifications_read", "params": {"ids": [1, 99]}}}
+{"recv": {"jsonrpc": "2.0", "id": 4, "result": {"ok": true, "error": "", "unread": 2}}}
+{"send": {"jsonrpc": "2.0", "id": 5, "method": "notifications_read", "params": {"all": true}}}
+{"recv": {"jsonrpc": "2.0", "id": 5, "result": {"ok": true, "error": "", "unread": 0}}}
+{"send": {"jsonrpc": "2.0", "id": 6, "method": "notifications_read", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 6, "error": {"code": -32602, "message": "'ids' must be a list of at most 200 whole numbers"}}}
+{"send": {"jsonrpc": "2.0", "id": 7, "method": "notifications_read", "params": {"ids": ["1"]}}}
+{"recv": {"jsonrpc": "2.0", "id": 7, "error": {"code": -32602, "message": "'ids' must be a list of at most 200 whole numbers"}}}
+{"send": {"jsonrpc": "2.0", "id": 8, "method": "notifications_read", "params": {"all": false}}}
+{"recv": {"jsonrpc": "2.0", "id": 8, "error": {"code": -32602, "message": "give 'ids' or 'all': true"}}}
+{"send": {"jsonrpc": "2.0", "id": 9, "method": "notifications_clear", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 9, "result": {"ok": true, "error": ""}}}
+{"send": {"jsonrpc": "2.0", "id": 10, "method": "notifications_list", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 10, "result": {"items": [], "unread": 0}}}

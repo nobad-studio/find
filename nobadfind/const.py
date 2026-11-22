@@ -110,4 +110,10 @@ DEFAULTS = {
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.
     "search_history": True,
+    # notifications (notify.py, maintainer request 2026-11-21): all of them in the window's bell; Windows toasts
+    # (local only, on the lock screen and in the Action Center) from notify_level up
+    "notify_toasts": True,
+    "notify_level": "warning",      # the lowest severity that gets a Windows toast: info | warning | error
+    "notify_quiet": True,           # no toast while a game, a call or a presentation is on (the governor's detection)
+    "notify_show_names": False,     # file names in notifications; off: never a path or a name
 }

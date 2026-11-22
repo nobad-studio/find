@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.request
 
+from . import notify
 from .const import APP_VER, DATA_DIR
 from .log import log
 
@@ -141,6 +142,9 @@ class Updater:
                 ready = self._installer_ready(rel)
                 self._set("ready" if ready else "available")
                 log(f"update: NOBAD Find {rel['version']} is available (this is {self.current})")
+                notify.post("update_available", f"NOBAD Find {rel['version']} is available",
+                            f"You have {self.current}. Update downloads it from GitHub, checks it and installs it.",
+                            "info", action="update", key=f"update:{rel['version']}", once=True)
             else:
                 self.release = rel
                 self._set("uptodate")

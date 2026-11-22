@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-from . import embed, extract, models, ocr, photo, scope, winapi
+from . import embed, extract, models, notify, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
 from .kinds import READABLE_EXT, kind_of
 from .log import log
@@ -304,6 +304,19 @@ class Indexer:
                 self.activity.add("kill", text)
             except Exception:
                 pass
+
+    def _reader_crashed(self, what, job=None, skipped=False, stuck=False):
+        """A reader process died (or hung): a notification, without the file's path (notify.py keeps its name only
+        while notify_show_names is on)."""
+        how = f"was stuck for {JOB_TIMEOUT // 60} minutes" if stuck else "stopped unexpectedly"
+        if skipped:
+            body = (f"The {what} {how} on one file, so NOBAD Find skips that file until it changes. The other "
+                    "files go on.")
+        else:
+            body = (f"The {what} {how}. NOBAD Find starts a new one and reads the files it had one at a time to "
+                    "find the one that caused it.")
+        notify.post("worker_crashed", f"The {what} stopped", body, "warning", action="open_indexing",
+                    key=f"crash:{what}:{int(skipped)}", detail=job[1] if (skipped and job) else "")
 
     MEMORY_NOTE_EVERY = 1800
 
@@ -628,6 +641,7 @@ class Indexer:
                             self.store.set_text(job[0], job[3], [], "reader crashed")
                         else:
                             self._suspects = lost
+                        self._reader_crashed("text reader", job, skipped=careful)
                         return                      # the pool is gone; the next round starts a new one
                     except Exception as e:
                         log(f"text worker failed: {type(e).__name__}", "warn")
@@ -672,8 +686,16 @@ class Indexer:
             if active and (models.get(active) is None or not models.ready(active)):
                 if not models.ready(wanted):
                     log("meaning search unavailable: its model isn't on this PC", "warn")
+                    notify.post("model_fallback", "Meaning search is off for now",
+                                "The model your index was made with isn't on this PC any more, so searches use "
+                                "names and words only. Download a meaning model in Settings > Models.", "warning",
+                                action="open_models", key="model-missing", every=86400)
                     return
                 log(f"the meaning model {active} is gone; computing vectors again with {wanted}")
+                notify.post("model_fallback", "Meaning search changed model",
+                            "The model your index was made with isn't on this PC any more, so NOBAD Find makes "
+                            "the meaning index again with the model chosen in Settings.", "info",
+                            action="open_models", key="model-switch")
                 self.store.drop_vectors()
                 active = None
             if active is None:
@@ -697,6 +719,10 @@ class Indexer:
         except Exception as e:
             log(f"meaning search unavailable: {type(e).__name__}", "warn")
             self.embedder = None
+            notify.post("model_fallback", "Meaning search couldn't start",
+                        f"An error ({type(e).__name__}) stopped meaning search from starting, so searches use names "
+                        "and words only. Restarting NOBAD Find tries again.", "warning", action="open_models",
+                        key="model-failed")
 
     def _use_text_model(self, mid):
         """Search with `mid`: its question encoder, and the vectors made with it (never another model's)."""
@@ -914,6 +940,10 @@ class Indexer:
         except Exception as e:
             log(f"photo meaning unavailable: {type(e).__name__}", "warn")
             self.photo_text = None
+            notify.post("model_fallback", "Photo search couldn't start",
+                        f"An error ({type(e).__name__}) stopped photo search from starting, so searching by what is "
+                        "in a photo is off for now. Restarting NOBAD Find tries again.", "warning", action="open_models",
+                        key="photo-failed")
 
     _photos_logged = False
 
@@ -975,6 +1005,8 @@ class Indexer:
                                 else "crashed")
                         self._note(f"Stopped the photo reader: it {what}; "
                                    + ("the photo is skipped" if one else "those photos are tried one by one"))
+                        self._reader_crashed("photo reader", batch[0] if one else None, skipped=one,
+                                             stuck=what != "crashed")
                         _kill_pool(pool)
                         return
                     if results is None:
