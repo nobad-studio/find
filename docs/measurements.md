@@ -31,8 +31,8 @@ the PDH counters `\GPU Process Memory(pid_*)\Dedicated Usage` + `Shared Usage`, 
   later ones; SmolVLM2's 2.4 s (Vulkan) / 6.5 s (CPU) and then 1-4 s. The UI's "Loading … about N s" is 2 s for
   SmolVLM2 and 13 s for Qwen (`talk_controller.loadSeconds`).
 - Memory: on Vulkan with shared-memory graphics the worker commits MORE system RAM than its graphics memory (Qwen
-  2,483 vs 2,062 MB), so the need passed to the worker there is `max(ram_mb, vram_mb)` (`models.talk_need_mb`;
-  under 1 GB of dedicated video memory counts as shared). Catalog, from these rows: `ram_mb` = the biggest
+  2,483 vs 2,062 MB), so the need passed to the worker on Vulkan is `max(ram_mb, vram_mb)` (`models.talk_need_mb`,
+  on every graphics card: shared and dedicated memory can't be told apart reliably). Catalog, from these rows: `ram_mb` = the biggest
   system-memory figure of the model's CPU and Vulkan runs (SmolVLM2 1,031, Qwen 2,483; was 942 / 2,411 from the
   CLI at `-c 4096`), `vram_mb` = its graphics memory on Vulkan (665 / 2,062; was 658 / 2,060). Qwen on Vulkan
   fits the worker group's commit limit (base 4,019 MB + the need) with room to spare.

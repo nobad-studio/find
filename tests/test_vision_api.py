@@ -288,20 +288,24 @@ def test_describe_streams_then_done(env):
     assert st["loaded"] == SMOL and st["busy"] is False and st["running"] is True
 
 
-def test_vulkan_runtime_passes_the_gpu_need_and_layers(env, monkeypatch):
+def test_vision_state_sends_the_measured_timing_of_the_runtime_in_use(env):
+    """The UI's "about N s" comes from the catalog's measured figures for the runtime a question would use."""
+    st = {m["id"]: m for m in env["a"].vision_state()["models"]}
+    assert env["a"].vision_state()["runtime"]["id"] == "llama-cpu"
+    assert st[QWEN]["load_s"] == 12 and st[QWEN]["answer_s"] == [7, 20]          # measured on the CPU
+    assert st[SMOL]["load_s"] == 3 and st[SMOL]["answer_s"] == [3, 7]
     _put_files(env["data"], "llama-vulkan")
-    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
-    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
-    assert _wait(lambda: _final(env["events"], r["job"]))
-    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
-    assert settings["need_mb"] == models.get(SMOL)["vram_mb"] and gpu == 99
+    st = {m["id"]: m for m in env["a"].vision_state()["models"]}
+    assert st[QWEN]["load_s"] == 13 and st[QWEN]["answer_s"] == [2, 12]         # measured on Vulkan (Iris Xe)
+    assert st[SMOL]["load_s"] == 1 and st[SMOL]["answer_s"] == [1, 3]
 
 
-def test_vulkan_on_shared_memory_graphics_needs_the_bigger_figure(env, monkeypatch):
-    """Integrated graphics (Iris Xe: 128 MB of its own) use system RAM: measured, Qwen on Vulkan committed more RAM
-    than its graphics memory, so the need is max(ram_mb, vram_mb)."""
+@pytest.mark.parametrize("vram_gb", [0.1, 8.0])        # Iris Xe (shared) and a graphics card: the same need
+def test_vulkan_runtime_passes_the_bigger_need_and_layers(env, monkeypatch, vram_gb):
+    """On Vulkan the need is max(ram_mb, vram_mb) on every graphics card (measured: Qwen on Vulkan / Iris Xe
+    committed more system RAM than its graphics memory; shared and dedicated memory can't be told apart)."""
     _put_files(env["data"], "llama-vulkan")
-    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1})
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": vram_gb})
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(env["events"], r["job"]))
     (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
@@ -943,8 +947,7 @@ def test_real_qwen_deeper_answer_inside_the_workers_job(tmp_path):
     assert got["final"]["model"] == QWEN and got["final"]["text"].strip()
     assert got["kills"] == [] and got["still_running"]                         # ... the worker wasn't killed ...
     assert "memory" not in got["final"]["note"].lower()                        # ... and no allocation failure
-    from nobadfind import hardware
-    need = models.talk_need_mb(models.get(QWEN), got["runtime"], hardware.scan())
+    need = models.talk_need_mb(models.get(QWEN), got["runtime"])
     assert got["budget_mb"] == need and got["job_commit_limit_mb"] == got["base_limit_mb"] + need
     assert got["limit_after_mb"] == got["base_limit_mb"]                       # back down once it has gone
     assert got["checks"] > 0

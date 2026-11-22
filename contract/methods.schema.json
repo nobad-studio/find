@@ -3581,6 +3581,19 @@
           "type": "integer",
           "minimum": 0
         },
+        "load_s": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Measured seconds loading adds to the first question, on the runtime this PC would use (0 = not measured)."
+        },
+        "answer_s": {
+          "type": "array",
+          "description": "Measured seconds for an answer once loaded: always two numbers, [fastest, slowest], on the runtime this PC would use ([0, 0] = not measured).",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
         "can_run": {
           "type": "boolean"
         },
@@ -3596,6 +3609,8 @@
         "missing_mb",
         "ram_mb",
         "vram_mb",
+        "load_s",
+        "answer_s",
         "can_run",
         "why"
       ],

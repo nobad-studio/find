@@ -116,7 +116,7 @@ Specific to this app:
   (`vlm/worker.py`, a spawn child in the WORKERS job, one model resident, one question at a time), driven by
   `worker.Talker` in the engine; it follows the same rules (released after `IDLE` = `embed.Lazy.IDLE` seconds, on
   a pause or memory pressure, before a runtime reinstall), and the WORKERS commit limit is raised by the model's
-  measured need while it is loaded (`models.talk_need_mb`: `max(ram_mb, vram_mb)` on shared-memory graphics).
+  measured need while it is loaded (`models.talk_need_mb`: `max(ram_mb, vram_mb)` on Vulkan, `ram_mb` on the CPU).
   Photos reach it only by result id; it opens only the job's photos and the model / runtime files on disk.
 - Typed network paths (\\server\share) are never looked up on disk (`search.folder_checker`): only folders already
   in the index or the folder list count, so typing one can't make Windows contact a server.

@@ -66,7 +66,8 @@ jobs:
           if ("find-v$env:APP_VER" -ne $env:TAG) { throw "Tag $env:TAG does not match APP_VER $env:APP_VER" }
           $top = (Select-String -Path CHANGELOG.md -Pattern '^## (\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
           if ($top -ne $env:APP_VER) { throw "CHANGELOG.md's newest entry is $top, not $env:APP_VER" }
-          if (Select-String -Path CHANGELOG.md -Pattern "^## $([regex]::Escape($env:APP_VER)) \(in development\)") {
+          # "## 1.1.0 · (in development)" (any text between the version and the marker, the "·" included)
+          if (Select-String -Path CHANGELOG.md -Pattern "^## $([regex]::Escape($env:APP_VER))\b.*\(in development\)") {
             throw "CHANGELOG.md still says $env:APP_VER is in development" }
 
       - name: Build (tests, lint, app, installer)

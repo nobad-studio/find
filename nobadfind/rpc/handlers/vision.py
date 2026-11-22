@@ -46,7 +46,9 @@ def _state(api):
     return {"ok": bool(r.get("ok")), "error": "", "job": _job(r.get("job")), "not_now": str(r.get("not_now") or ""),
             "models": [{"id": str(m["id"]), "name": str(m["name"]), "deeper": bool(m["deeper"]),
                         "ready": bool(m["ready"]), "missing_mb": int(m["missing_mb"]), "ram_mb": int(m["ram_mb"]),
-                        "vram_mb": int(m["vram_mb"]), "can_run": bool(m["can_run"]), "why": str(m["why"] or "")}
+                        "vram_mb": int(m["vram_mb"]), "load_s": int(m.get("load_s") or 0),
+                        "answer_s": [int(x) for x in (m.get("answer_s") or (0, 0))][:2],
+                        "can_run": bool(m["can_run"]), "why": str(m["why"] or "")}
                        for m in r["models"]],
             "runtime": {"id": str(r["runtime"]["id"]), "ready": bool(r["runtime"]["ready"]),
                         "missing_mb": int(r["runtime"]["missing_mb"])},

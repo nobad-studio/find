@@ -253,12 +253,20 @@ def test_talk_runtime_is_the_one_on_disk_else_by_graphics(tmp_path):
     assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-cpu"     # already there
 
 
-def test_talk_need_on_shared_memory_graphics_is_the_bigger_figure():
-    q = models.get("qwen3vl-2b")
-    iris, discrete = {"vram_gb": 0.1}, {"vram_gb": 6.0}
-    assert models.talk_need_mb(q, "llama-cpu", iris) == q["ram_mb"]
-    assert models.talk_need_mb(q, "llama-vulkan", iris) == max(q["ram_mb"], q["vram_mb"])
-    assert models.talk_need_mb(q, "llama-vulkan", discrete) == q["vram_mb"]
+def test_talk_timing_is_measured_for_both_runtimes():
+    for m in models.talk_models():
+        for rid in ("llama-cpu", "llama-vulkan"):
+            load, (lo, hi) = models.talk_timing(m, rid)
+            assert load > 0 and 0 < lo <= hi, (m["id"], rid)
+    assert models.talk_timing({"id": "x"}, "llama-cpu") == (0, (0, 0))       # not measured: no number
+
+
+def test_talk_need_on_vulkan_is_the_bigger_figure():
+    for mid in ("smolvlm2-500m", "qwen3vl-2b"):
+        m = models.get(mid)
+        assert models.talk_need_mb(m, "llama-cpu") == m["ram_mb"]
+        assert models.talk_need_mb(m, "llama-vulkan") == max(m["ram_mb"], m["vram_mb"])
+    assert models.talk_need_mb({"ram_mb": 900, "vram_mb": 1500}, "llama-vulkan") == 1500
 
 
 def test_talk_models_are_not_downloaded_by_auto_configure():

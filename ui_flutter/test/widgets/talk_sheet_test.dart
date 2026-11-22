@@ -44,7 +44,7 @@ void main() {
     expect(e.visionCalls.single.$2, {'file_id': 3});
     say(e, 'loading', note: 'Loading SmolVLM2 500M');
     await tester.pump();
-    expect(find.text('Loading SmolVLM2-500M… about 2 s'), findsOneWidget);
+    expect(find.text('Loading SmolVLM2-500M… about 1 s'), findsOneWidget);
     say(e, 'answering', text: 'A sandy ');
     await tester.pump();
     expect(find.text('A sandy '), findsOneWidget);
@@ -144,11 +144,41 @@ void main() {
     expect(e.visionCalls.last.$2['b'], 8);
   });
 
+  testWidgets("a PC on the processor gets the processor's measured seconds, from the engine", (tester) async {
+    final e = FakeEngine(files: demoFiles())..vision = demoVisionState(cpu: true);
+    await openPhoto(tester, engine: e);
+    expect(find.text('about 7-20 s, 2.5 GB while answering'), findsOneWidget);
+    await tester.tap(find.byType(NbSwitch));
+    await tester.pump();
+    await ask(tester, 'What breed is the dog?');
+    say(e, 'loading', model: 'qwen3vl-2b', note: 'Loading Qwen3-VL 2B');
+    await tester.pump();
+    expect(find.text('Loading Qwen3-VL-2B… about 12 s'), findsOneWidget);
+  });
+
+  testWidgets('no measured seconds from the engine: no number is said', (tester) async {
+    final e = FakeEngine(files: demoFiles())
+      ..vision = const VisionState(
+        models: [
+          VisionModel(id: 'smolvlm2-500m', name: 'SmolVLM2 500M', ready: true, ramMb: 1031, canRun: true),
+          VisionModel(id: 'qwen3vl-2b', name: 'Qwen3-VL 2B', deeper: true, ready: true, ramMb: 2483, canRun: true),
+        ],
+        runtimeId: 'llama-cpu',
+        runtimeReady: true,
+      );
+    await openPhoto(tester, engine: e);
+    expect(find.text('2.5 GB while answering'), findsOneWidget);
+    await describe(tester);
+    say(e, 'loading', note: 'Loading SmolVLM2 500M');
+    await tester.pump();
+    expect(find.text('Loading SmolVLM2-500M…'), findsOneWidget);
+  });
+
   testWidgets('deeper shows the not-now reason', (tester) async {
     final e = FakeEngine(files: demoFiles());
     await openPhoto(tester, engine: e);
     expect(find.text('Deeper analysis (Qwen3-VL-2B)'), findsOneWidget);
-    expect(find.text('about 5 s, 2.4 GB while answering'), findsOneWidget); // ram_mb from vision_state
+    expect(find.text('about 2-12 s, 2.5 GB while answering'), findsOneWidget); // ram_mb from vision_state
     await tester.tap(find.byType(NbSwitch));
     await tester.pump();
     await ask(tester, 'What breed is the dog?');
@@ -161,7 +191,7 @@ void main() {
     say(e, 'done', text: 'A beagle.', model: 'qwen3vl-2b'); // the end of a job reads vision_state again
     await tester.pumpAndSettle();
     expect(find.text('Not now: only 3.0 GB free, Qwen needs about 2.4 GB plus margin.'), findsOneWidget);
-    expect(find.text('about 5 s, 2.4 GB while answering'), findsNothing);
+    expect(find.text('about 2-12 s, 2.5 GB while answering'), findsNothing);
     await ask(tester, 'And now?');
     expect(e.visionCalls.last.$2, {'file_id': 3, 'question': 'And now?'}); // deeper isn't sent while not now
 
@@ -233,7 +263,7 @@ void main() {
     await openPhoto(tester, engine: e);
     expect(find.text('Deeper analysis (Qwen3-VL-2B)'), findsOneWidget);
     expect(find.text('Needs a one-time download (1481 MB)'), findsOneWidget);
-    expect(find.text('about 5 s, 2.4 GB while answering'), findsNothing);
+    expect(find.text('about 2-12 s, 2.5 GB while answering'), findsNothing);
     final sw = tester.widget<NbSwitch>(find.byType(NbSwitch));
     expect(sw.value, isFalse); // off
     expect(sw.onChanged, isNull); // and disabled

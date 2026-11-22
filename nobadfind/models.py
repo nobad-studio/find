@@ -101,6 +101,9 @@ CATALOG = [
     # (docs/measurements.md, 2026-11-22 1.1.0): ram_mb = the most system memory the worker held (peak private or
     # working set, the bigger, over the CPU and the Vulkan runs: on shared-memory graphics the "video" memory is
     # system RAM too); vram_mb = its peak graphics memory on Vulkan (talk_need_mb picks between them).
+    # timing, per runtime (talk_timing), from the same rows: load_s = what loading adds to the first question (its
+    # first word, cold, minus a warm describe's), answer_s = (fastest, slowest) finished answer once loaded (Ask,
+    # Compare, warm Describe); the UI's "about N s" comes only from these.
     {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
      "source": HF + "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF", "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
      "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
@@ -111,6 +114,7 @@ CATALOG = [
      "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
      "ram_mb": 1031, "vram_mb": 665,
+     "timing": {"cpu": {"load_s": 3, "answer_s": (3, 7)}, "vulkan": {"load_s": 1, "answer_s": (1, 3)}},
      "speed_note": "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-7 s on its processor",
      "builtin": False},
     {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
@@ -123,6 +127,7 @@ CATALOG = [
      "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
      "ram_mb": 2483, "vram_mb": 2062,
+     "timing": {"cpu": {"load_s": 12, "answer_s": (7, 20)}, "vulkan": {"load_s": 13, "answer_s": (2, 12)}},
      "speed_note": "an answer in about 2-12 s on the reference PC's graphics (Iris Xe), 7-20 s on its processor; "
                    "the first question also loads it (about 13 s)", "builtin": False},
     # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
@@ -230,19 +235,20 @@ def talk_runtime(pc, data_dir=DATA_DIR):
     return "llama-vulkan" if pc.get("gpu") else "llama-cpu"
 
 
-SHARED_VRAM_GB = 1.0            # under this much dedicated video memory the graphics share the system RAM
+def talk_timing(m, runtime):
+    """(load_s, (fastest, slowest answer_s)) measured for this talk model on this runtime; (0, (0, 0)) if not."""
+    t = (m.get("timing") or {}).get("vulkan" if runtime == "llama-vulkan" else "cpu") or {}
+    lo, hi = t.get("answer_s") or (0, 0)
+    return int(t.get("load_s") or 0), (int(lo), int(hi))
 
 
-def talk_need_mb(m, runtime, pc):
-    """The talk model's measured memory need for this runtime: ram_mb on the processor; on Vulkan its vram_mb, or
-    max(ram_mb, vram_mb) on integrated graphics (shared memory, e.g. Intel Iris Xe: measured, Qwen3-VL on Vulkan
-    committed more system RAM than its graphics memory)."""
+def talk_need_mb(m, runtime):
+    """The talk model's measured memory need for this runtime: ram_mb on the processor, max(ram_mb, vram_mb) on
+    Vulkan (measured: on shared-memory graphics such as Iris Xe, Qwen3-VL on Vulkan committed more system RAM than
+    its graphics memory; DXGI can't tell shared from dedicated reliably, and the need only raises the worker
+    group's memory limit and sizes the out-of-memory note, so the bigger figure is used on every graphics card)."""
     ram, vram = int(m.get("ram_mb") or 0), int(m.get("vram_mb") or 0)
-    if runtime != "llama-vulkan":
-        return ram
-    if float(pc.get("vram_gb") or 0) < SHARED_VRAM_GB:
-        return max(ram, vram)
-    return vram or ram
+    return max(ram, vram) if runtime == "llama-vulkan" else ram
 
 
 def recommend(pc):

@@ -116,6 +116,24 @@ void main() {
     expect(state['llama-cpu'], ModelUseState.notDownloaded); // only the runtime this PC uses
   });
 
+  testWidgets('1.1: a runtime downloaded on its own names github.com and *.githubusercontent.com', (tester) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    final button = find.descendant(of: card('llama.cpp runtime (CPU)'), matching: find.text('Download…'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Download the llama.cpp runtime (CPU)?'), findsOneWidget);
+    expect(
+      find.text('llama.cpp runtime (CPU): 24 MB from github.com (llama.cpp releases, delivered by *.githubusercontent.com)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pinned release'), findsOneWidget);
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    expect(engine.modelsInfo.models.firstWhere((m) => m.id == 'llama-cpu').state, ModelUseState.downloading);
+  });
+
   testWidgets('1.1: a downloaded talk model or runtime has Remove', (tester) async {
     final engine = FakeEngine();
     engine.modelsInfo = ModelsInfo(

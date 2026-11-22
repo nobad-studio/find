@@ -23,7 +23,6 @@
   (with the same consent) and Remove.
 
 ## 1.0.0 · 2026-11-22
-## 1.0.0 · 2026-11-22
 
 ### Fixed
 - **Photo search finds the right photos more often.** A score cut-off threw away photos that clearly matched

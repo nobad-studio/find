@@ -501,7 +501,7 @@ class _Actions extends StatelessWidget {
     void fetch() => unawaited(
       x.feature == 'talk'
           ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt))
-          : m.download(x, consent: (y) => _consent(context, y)),
+          : m.download(x, consent: (y) => askRuntimeConsent(context, y)),
     );
     final List<Widget> buttons;
     if (busy) {

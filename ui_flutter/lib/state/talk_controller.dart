@@ -44,12 +44,14 @@ const unverifiedNote = 'may not be exact';
 
 final _devanagari = RegExp(r'[ऀ-ॿ]');
 
-/// Seconds the UI says, by the model's role. vision_state has no timings, so these come from the measured rows
-/// (docs/measurements.md 2026-11-22 1.1.0, reference PC, through the real worker): loading SmolVLM2-500M about
-/// 1-3 s and Qwen3-VL-2B about 12-13 s (its first word came 13-15 s after the first question, 2-5 s after later
-/// ones), a deeper answer about 2-7 s once loaded. The memory figure always comes from vision_state (`ram_mb`).
-const loadSeconds = {false: 2, true: 13};
-const deeperAnswerSeconds = 5;
+/// "about 2-12 s" / "about 3 s" from measured seconds (vision_state's `load_s` / `answer_s`, the catalog's figures
+/// for the runtime this PC uses); '' when nothing was measured: the UI never says a number of its own.
+String aboutSeconds(int lo, [int? hi]) {
+  final h = hi ?? lo;
+  if (lo <= 0 && h <= 0) return '';
+  if (lo <= 0 || lo == h) return 'about ${lo <= 0 ? h : lo} s';
+  return 'about $lo-$h s';
+}
 
 /// The talk model to offer a Download for after a refusal that lists [download] (vision_* `download`): the talk
 /// model it names, else (only the runtime is missing) the quick model, whose consent then names just the runtime.
@@ -126,11 +128,12 @@ class TalkController extends ChangeNotifier {
   /// "Keep this description": a finished Describe only.
   bool get canKeep => _phase == TalkPhase.done && _kind == TalkKind.describe && _text.trim().isNotEmpty;
 
-  /// "Loading SmolVLM2-500M… about 2 s" while the model loads.
+  /// "Loading SmolVLM2-500M… about 1 s" while the model loads (the engine's measured `load_s`).
   String get loadingLine {
     final m = _state?.byId(_model) ?? (_deeper ? _state?.deeper : _state?.quick);
     if (m == null) return _note.isEmpty ? 'Loading…' : '$_note…';
-    return 'Loading ${m.label}… about ${loadSeconds[m.deeper]} s';
+    final s = aboutSeconds(m.loadS);
+    return s.isEmpty ? 'Loading ${m.label}…' : 'Loading ${m.label}… $s';
   }
 
   /// Why nothing can start now (paused, the runtime downloading), or ''.
@@ -158,7 +161,9 @@ class TalkController extends ChangeNotifier {
       return (label: label, available: false, detail: why, download: null);
     }
     final gb = (d.ramMb / 1000).toStringAsFixed(1);
-    return (label: label, available: true, detail: 'about $deeperAnswerSeconds s, $gb GB while answering', download: null);
+    final s = aboutSeconds(d.answerS.$1, d.answerS.$2);
+    final detail = s.isEmpty ? '$gb GB while answering' : '$s, $gb GB while answering';
+    return (label: label, available: true, detail: detail, download: null);
   }
 
   /// Talk models (and runtimes) whose download this sheet started and that haven't finished.

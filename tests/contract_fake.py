@@ -371,9 +371,11 @@ class FakeApi:
     def vision_state(self):
         return {"ok": True, "not_now": "", "loaded": "", "busy": False, "job": 0, "running": False,
                 "models": [{"id": "smolvlm2-500m", "name": "SmolVLM2 500M", "deeper": False, "ready": True,
-                            "missing_mb": 0, "ram_mb": 1000, "vram_mb": 1200, "can_run": True, "why": ""},
+                            "missing_mb": 0, "ram_mb": 1000, "vram_mb": 1200, "load_s": 1, "answer_s": [1, 3],
+                            "can_run": True, "why": ""},
                            {"id": "qwen3vl-2b", "name": "Qwen3-VL 2B", "deeper": True, "ready": False,
-                            "missing_mb": 1800, "ram_mb": 3200, "vram_mb": 3500, "can_run": False,
+                            "missing_mb": 1800, "ram_mb": 3200, "vram_mb": 3500, "load_s": 13, "answer_s": [2, 12],
+                            "can_run": False,
                             "why": "Not enough free memory for this one right now."}],
                 "runtime": {"id": "llama-vulkan", "ready": True, "missing_mb": 0}}
 

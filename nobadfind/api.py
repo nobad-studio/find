@@ -1040,7 +1040,7 @@ class Api:
                                        for x in need]}
         vulkan = rid == "llama-vulkan"
         settings = dict(m["talk"])
-        settings["need_mb"] = models.talk_need_mb(m, rid, pc) or None
+        settings["need_mb"] = models.talk_need_mb(m, rid) or None
         mdir = models.model_dir(m["id"], d)
         talk = self._talker()
         job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
@@ -1122,9 +1122,11 @@ class Api:
         out = []
         for i, m in enumerate(models.talk_models()):
             ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
+            load_s, answer_s = models.talk_timing(m, rid)       # measured, for the runtime a question would use
             out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
                         "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
-                        "vram_mb": int(m.get("vram_mb") or 0), "can_run": ok, "why": why})
+                        "vram_mb": int(m.get("vram_mb") or 0), "load_s": load_s, "answer_s": list(answer_s),
+                        "can_run": ok, "why": why})
         st = self._talk.state() if self._talk is not None else {"loaded": "", "busy": False, "job": 0,
                                                                "running": False}
         return {"ok": True, "not_now": self._vision_not_now(), "models": out,

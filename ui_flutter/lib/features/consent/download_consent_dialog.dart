@@ -110,9 +110,7 @@ ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime) {
     ].join(' '),
     facts: [
       if (model) ('Model', '${m.name}: ${m.sizeMb.round()} MB from huggingface.co'),
-      if (rt != null)
-        ('Runtime', '${rt.name}: ${rt.sizeMb.round()} MB from github.com (llama.cpp releases, delivered by '
-            '*.githubusercontent.com)'),
+      if (rt != null) ('Runtime', _runtimeSource(rt)),
       ('Total', '${total.round()} MB, once'),
       ('Licence', rt == null ? m.licence : '${m.licence} (model), ${rt.licence} (runtime)'),
       if (m.ramMb > 0) ('Memory', 'About ${m.ramMb.round()} MB while answering'),
@@ -126,6 +124,31 @@ ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime) {
     ],
     source: '',
   );
+}
+
+String _runtimeSource(ModelInfo rt) =>
+    '${rt.name}: ${rt.sizeMb.round()} MB from github.com (llama.cpp releases, delivered by *.githubusercontent.com)';
+
+/// 1.1: a llama.cpp runtime downloaded on its own (Settings → Models): the same wording as in [talkOffer].
+ModelOffer runtimeOffer(ModelInfo rt) => ModelOffer(
+  id: rt.id,
+  title: 'Download the ${rt.name}?',
+  what: '${rt.improves.isNotEmpty ? rt.improves : featureLabel(rt.feature)}. Runs on this PC only.',
+  facts: [
+    ('Runtime', _runtimeSource(rt)),
+    ('Total', '${rt.sizeMb.round()} MB, once'),
+    ('Licence', rt.licence),
+    ('Checked', 'Pinned release, exact size and SHA-256; only the runtime\'s pinned files are kept'),
+  ],
+  source: '',
+);
+
+Future<bool> askRuntimeConsent(BuildContext context, ModelInfo rt) async {
+  final r = await showDialog<bool>(
+    context: context,
+    builder: (context) => ConsentDialog(offer: runtimeOffer(rt)),
+  );
+  return r ?? false;
 }
 
 Future<bool> askTalkConsent(BuildContext context, ModelInfo m, ModelInfo? runtime) async {

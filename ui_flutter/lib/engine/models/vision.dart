@@ -14,9 +14,17 @@ class VisionModel {
     this.missingMb = 0,
     this.ramMb = 0,
     this.vramMb = 0,
+    this.loadS = 0,
+    this.answerS = (0, 0),
     this.canRun = false,
     this.why = '',
   });
+
+  /// Measured seconds loading adds to the first question, on the runtime this PC uses (0 = not measured).
+  final int loadS;
+
+  /// Measured seconds an answer takes once loaded, (fastest, slowest), on that runtime ((0, 0) = not measured).
+  final (int, int) answerS;
 
   final String id;
   final String name;
@@ -39,7 +47,11 @@ class VisionModel {
     final m = jMap(json);
     final id = jStr(m['id']);
     if (id.isEmpty) return null;
+    final a = m['answer_s'] is List ? m['answer_s'] as List : const [];
+    int at(int i) => i < a.length && a[i] is num ? (a[i] as num).toInt() : 0;
     return VisionModel(
+      loadS: jInt(m['load_s']),
+      answerS: (at(0), at(1)),
       id: id,
       name: jStr(m['name']).isEmpty ? id : jStr(m['name']),
       deeper: jBool(m['deeper']),

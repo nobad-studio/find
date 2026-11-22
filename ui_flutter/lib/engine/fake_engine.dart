@@ -1333,26 +1333,39 @@ List<FileResult> demoFiles() => [
   ),
 ];
 
-/// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory).
-VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool deeperReady = true}) => VisionState(
-  notNow: notNow,
-  models: [
-    const VisionModel(id: 'smolvlm2-500m', name: 'SmolVLM2 500M', ready: true, ramMb: 942, vramMb: 658, canRun: true),
-    VisionModel(
-      id: 'qwen3vl-2b',
-      name: 'Qwen3-VL 2B',
-      deeper: true,
-      ready: deeperReady,
-      missingMb: deeperReady ? 0 : 1481,
-      ramMb: 2411,
-      vramMb: 2060,
-      canRun: deeperWhy.isEmpty,
-      why: deeperWhy,
-    ),
-  ],
-  runtimeId: 'llama-vulkan',
-  runtimeReady: true,
-);
+/// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory
+/// and timings: Vulkan on the reference PC's Iris Xe, or its processor with [cpu]).
+VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool deeperReady = true, bool cpu = false}) =>
+    VisionState(
+      notNow: notNow,
+      models: [
+        VisionModel(
+          id: 'smolvlm2-500m',
+          name: 'SmolVLM2 500M',
+          ready: true,
+          ramMb: 1031,
+          vramMb: 665,
+          loadS: cpu ? 3 : 1,
+          answerS: cpu ? (3, 7) : (1, 3),
+          canRun: true,
+        ),
+        VisionModel(
+          id: 'qwen3vl-2b',
+          name: 'Qwen3-VL 2B',
+          deeper: true,
+          ready: deeperReady,
+          missingMb: deeperReady ? 0 : 1481,
+          ramMb: 2483,
+          vramMb: 2062,
+          loadS: cpu ? 12 : 13,
+          answerS: cpu ? (7, 20) : (2, 12),
+          canRun: deeperWhy.isEmpty,
+          why: deeperWhy,
+        ),
+      ],
+      runtimeId: cpu ? 'llama-cpu' : 'llama-vulkan',
+      runtimeReady: true,
+    );
 
 List<FileResult> manyFiles(int n) => [
   for (var i = 0; i < n; i++)
