@@ -210,10 +210,12 @@ Extends `hardware.py` (already reads RAM, cores, AVX2/AVX-512, GPU via DXGI incl
 - **Keep getting smarter** (setting, off by default): enables L3 and lets L1 use the GPU at heavy-work times.
   Turning it on shows the §2 estimate first.
 
-## Release: everything ships together as NOBAD Find 1.0.0
+## Release: the vision engine ships together as NOBAD Find 1.1.0
 
-Maintainer decision 2026-11-21: all phases below land as separate PRs into a `find-1.0` integration branch and reach
-users together in one release, **1.0.0**. No intermediate public release carries part of the vision engine.
+Maintainer decision 2026-11-22 (replaces "everything ships as 1.0.0" from 2026-11-21): **1.0.0** is the release
+with photo ranking v2 and the SigLIP 2 fix (CHANGELOG 1.0.0). The vision engine's phases below still land as
+separate PRs into an integration branch (`find-1.0`, name kept) and reach users together in one later release,
+**1.1.0**. No intermediate public release carries part of the vision engine.
 
 **Download only what is needed, when it is needed.** The installer carries code only (plus the small CPU
 runtimes). Each model or GPU pack is fetched the first time a feature that needs it is turned on or used, after the
