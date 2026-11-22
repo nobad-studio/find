@@ -89,3 +89,15 @@ branch only until the maintainer says push.
 5. "Settings & apps" shows only launcher actions. "History" + "last week" shows only history visited in that range.
 6. The mixed-file regression check (`tools/eval_search.py`) and the photo evaluation are unchanged with the setting
    off.
+
+## 7. More 1.1.0 window changes (maintainer, 2026-11-22)
+
+1. **A single click previews, it doesn't open.** Clicking a result selects it and shows it in the detail pane. Opening
+   is deliberate: double-click, Enter, or the pane's Open button. Ctrl+Enter / Ctrl+click still reveal it in its
+   folder; right-click keeps the menu. Today `search_screen.dart` calls `select(i)` then `_open()` on every tap.
+2. **Space NOBAD Find uses.** On the Index page and in Settings > Models: the index database (+ WAL), each
+   downloaded model (text, photo, talk), the llama.cpp runtime, temp/cache folders, and the total, measured on disk
+   (engine method `storage_use`). "Free up" links to Settings > Models (Remove per model).
+3. **Searching indicator.** A small animated ring in the search box while a search runs, shown only after ~150 ms
+   (no flicker on instant answers), gone when results arrive or the search is cancelled. Respects "reduce motion"
+   (a static dot instead).
