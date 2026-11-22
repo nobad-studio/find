@@ -434,13 +434,22 @@ def test_recent_items_and_jump_lists_are_out_even_with_every_switch_on(path):
     assert r.category(path) == "other_profiles" and r.out(path), path
 
 
-def test_the_walk_never_lists_recent_items_with_secrets_on(tmp_path):
-    root = tmp_path / "r"
-    rec = root / "Microsoft" / "Windows" / "Recent"
-    rec.mkdir(parents=True)
+@pytest.mark.parametrize("apps", [False, True])
+def test_the_walk_never_lists_recent_items_with_secrets_on(tmp_path, apps):
+    """Recent items stay out with secrets and secret_app_files on (1.1.0: the opt-in never covers them)."""
+    prof = tmp_path / "me"
+    rec = prof / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Recent"
+    (rec / "AutomaticDestinations").mkdir(parents=True)
     (rec / "plan.docx.lnk").write_text("x")
-    (root / "notes.txt").write_text("x")
-    got = walk(root, include_secrets=True)
+    (rec / "AutomaticDestinations" / "x.automaticDestinations-ms").write_text("x")
+    off = prof / "AppData" / "Roaming" / "Microsoft" / "Office" / "Recent"
+    off.mkdir(parents=True)
+    (off / "pay.pdf.LNK").write_text("x")
+    (prof / "notes.txt").write_text("x")
+    seen = []
+    r = scope.Rules(secrets=True, apps=apps, profile=str(prof), others=())
+    Walker([str(prof)], gen=1, on_batch=seen.extend, rules=r).run()
+    got = {os.path.relpath(x[0], prof) for x in seen}
     assert "notes.txt" in got and not any("Recent" in g for g in got), got
 
 

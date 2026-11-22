@@ -45,6 +45,8 @@ class Settings {
     'bg_notice_seen': false,
     'welcome_seen': false,
     'search_history': true,
+    // 1.1.0: read command histories, saved logins and tool tokens (Settings > Privacy, after a confirm dialog)
+    'secret_app_files': false,
     'models_stay_loaded': false,
     'update_check': true,
   };

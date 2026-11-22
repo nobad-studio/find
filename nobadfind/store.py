@@ -345,12 +345,34 @@ class Store:
                         break
         return out
 
-    def needs_text(self, kinds_ext, max_bytes, limit=500, min_bytes=0):
+    def needs_text(self, kinds_ext, max_bytes, limit=500, min_bytes=0, names=(), env=False):
+        """Files to read, by extension; names: also these file names (lower case; text files without a readable
+        extension, like .bash_history), env: also .env and .env.* files (secret_app_files)."""
         marks = ",".join("?" * len(kinds_ext))
+        names = sorted(names)
+        which = f"f.ext IN ({marks})"
+        if names:
+            which += f" OR (f.kind != 'folder' AND lower(f.name) IN ({','.join('?' * len(names))}))"
+        if env:
+            which += " OR (f.kind != 'folder' AND (lower(f.name) = '.env' OR lower(f.name) LIKE '.env.%'))"
         return self._first(lambda extra: (
-            f"SELECT f.id, f.path, f.ext, f.size, f.mtime FROM files f WHERE f.ext IN ({marks}) AND f.size <= ? "
+            f"SELECT f.id, f.path, f.ext, f.size, f.mtime FROM files f WHERE ({which}) AND f.size <= ? "
             f"AND f.size >= ? AND (f.text_mtime IS NULL OR f.text_mtime <> f.mtime){extra} ORDER BY f.mtime DESC LIMIT ?"),
-            (*sorted(kinds_ext), max_bytes, min_bytes), limit)
+            (*sorted(kinds_ext), *names, max_bytes, min_bytes), limit)
+
+    def read_again(self, file_ids, mark):
+        """Files marked `mark` (names only) are read again: their text and photo marks go. Returns how many."""
+        ids = list(file_ids)
+        n = 0
+        with self.wlock:
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                marks = ",".join("?" * len(part))
+                n += self.db.execute(f"UPDATE files SET text_mtime = NULL, text_err = NULL WHERE text_err = ? AND id IN "
+                                     f"({marks})", (mark, *part)).rowcount
+                self.db.execute(f"DELETE FROM pvecs WHERE err = ? AND file_id IN ({marks})", (mark, *part))
+            self.db.commit()
+        return n
 
     def set_text(self, file_id, mtime, chunks, err=None):
         with self.wlock:

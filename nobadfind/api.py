@@ -312,7 +312,8 @@ class Api:
         if keep not in (self._settings.get("exclude") or []):
             return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
         self._store.forget_path(p)
-        return {"ok": True}
+        note = getattr(self._settings, "note", "")       # kept in memory only for now (the protected list failed)
+        return {"ok": True, "error": note} if note else {"ok": True}
 
     FORGOTTEN = "forgotten"                     # meta: the Never index entries Forget added (JSON list), for Wipe
 
@@ -335,6 +336,9 @@ class Api:
             cand = set(self._forgotten())
             cand |= {e for e in self._settings.get("exclude") or [] if not e.startswith("\\\\") and os.path.isfile(e)}
             n = self._settings.mark_forgotten(cand)
+            if not self._settings.forgotten_saved():
+                log("forgotten list move: the protected list couldn't be saved; tried again at the next start", "warn")
+                return                                   # some are still in settings.json: not done
             self._store.set_meta("forgotten_moved", "1")
             if n:
                 log(f"{n} forgotten entries moved out of settings.json")
@@ -356,7 +360,23 @@ class Api:
         st["drives"] = self._indexer.drive_list
         with self._slock:
             self._transparency(st)
+        self._retry_forgotten()
         return st
+
+    FORGOT_RETRY_S = 60
+
+    def _retry_forgotten(self):
+        """Forgotten entries kept only in memory (the protected list couldn't be saved): try again now and then."""
+        if not getattr(self._settings, "note", "") or not hasattr(self._settings, "retry_forgotten"):
+            return
+        now = time.time()
+        if now - getattr(self, "_forgot_retry_at", 0.0) < self.FORGOT_RETRY_S:
+            return
+        self._forgot_retry_at = now
+        try:
+            self._settings.retry_forgotten()
+        except Exception as e:
+            log(f"forgotten list retry failed: {type(e).__name__}", "warn")
 
     def _stats(self):
         """Store.stats (six COUNTs over the whole index: seconds on a whole PC), reused for STATS_TTL seconds or
@@ -624,7 +644,10 @@ class Api:
             self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):
             self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
-        if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets"}:
+        if "secret_app_files" in changed:            # 1.1.0: off takes out what was read, on reads them again
+            self._later(self._app_files_on if self._settings.get("secret_app_files") else self._purge_app_files)
+        if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets",
+                           "secret_app_files"}:
             self._indexer.rescan()
         for key, kind in (("index_removable", "removable"), ("index_network", "network")):
             if key in changed:
@@ -718,12 +741,58 @@ class Api:
             self._store.remove_paths(gone)
         return len(gone)
 
+    def _app_file_rows(self):
+        """(id, path) of the index's rows secret_app_files is about (scope.app_file): command histories, saved
+        sites, tool tokens, .env files and the folders that hold them. A range of names and folder runs, then the
+        rule itself on each candidate."""
+        from .const import APP_SECRET_FILES, APP_SECRET_PATHS, SECRET_FILES_IN
+
+        def esc(t):
+            return t.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        names = sorted(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
+        runs = ["%\\" + esc("\\".join(p)) for p in APP_SECRET_PATHS]
+        likes = [x for r in runs for x in (r, r + "\\%")]
+        cond = " OR ".join(["lower(path) LIKE ? ESCAPE '!'"] * len(likes))
+        rows = self._store.q(f"SELECT id, path FROM files WHERE lower(name) IN ({','.join('?' * len(names))}) OR "
+                             f"lower(name) = '.env' OR lower(name) LIKE '.env.%' OR {cond}", (*names, *likes))
+        return [(fid, p) for fid, p in rows if scope.app_file(p)]
+
+    def _purge_app_files(self):
+        """secret_app_files went off (1.1.0): what was read from those files leaves the index, and so do their rows
+        where the rules now leave them out (secrets off). Only those rows: nothing else is rebuilt or read again
+        (the targeted counterpart of Indexer._apply_new_rules). Returns (content dropped, rows removed)."""
+        from .indexer import NAMES_ONLY
+        rules = scope.Rules.from_settings(self._settings)
+        gone, quiet = [], []
+        for fid, p in self._app_file_rows():
+            if rules.out(p):
+                gone.append(p)
+            elif rules.names_only(p):
+                quiet.append(fid)
+        dropped = self._store.drop_content(quiet, NAMES_ONLY)
+        if gone:
+            self._store.remove_paths(gone)
+        log(f"app files off: content of {dropped} files dropped, {len(gone)} rows out of the index")
+        return (dropped, len(gone))
+
+    def _app_files_on(self):
+        """secret_app_files went on: the rows of those files kept as names only are read again (the walk adds the
+        ones that were out). Returns how many."""
+        from .indexer import NAMES_ONLY
+        rules = scope.Rules.from_settings(self._settings)
+        n = self._store.read_again([fid for fid, p in self._app_file_rows() if not rules.names_only(p)], NAMES_ONLY)
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()
+        return n
+
     SCOPE_FRESH_S = 300
 
     def _scope_key(self, drives):
         s = self._settings
         return json.dumps([[s.get(k) for k in ("scope", "roots", "exclude", "include_system", "include_caches",
-                                               "include_secrets", "index_removable", "index_network")],
+                                               "include_secrets", "secret_app_files", "index_removable",
+                                               "index_network")],
                            [(d.get("root"), d.get("type")) for d in drives]], default=str)
 
     def scope_info(self):

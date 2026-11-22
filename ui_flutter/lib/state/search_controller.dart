@@ -325,7 +325,8 @@ class FindController extends ChangeNotifier {
       _say(res.error.isNotEmpty ? res.error : 'Couldn\'t forget "${r.name}". It is still in the index.');
       return false;
     }
-    _say('Forgotten. Undo it in Settings → What to index → Never index.');
+    // ok with an error is a note (1.1.0): forgotten for now, the protected list couldn't be saved yet
+    _say(res.error.isNotEmpty ? res.error : 'Forgotten. Undo it in Settings → What to index → Never index.');
     if (!_disposed) await run();
     return true;
   }

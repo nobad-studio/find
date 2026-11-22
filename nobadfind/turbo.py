@@ -431,7 +431,7 @@ class Turbo:
         get = self.settings.get
         return {"t": "config", "roots": [r for r in roots if drive_of(r)], "exclude": list(get("exclude") or []),
                 "include_system": bool(get("include_system")), "include_caches": bool(get("include_caches")),
-                "include_secrets": bool(get("include_secrets"))}
+                "include_secrets": bool(get("include_secrets")), "secret_app_files": bool(get("secret_app_files"))}
 
     @staticmethod
     def _key(cfg):

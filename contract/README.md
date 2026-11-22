@@ -106,7 +106,9 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   photos, videos and PDFs, or `""` (keep the kind badge).
 - **`path_of`** `{id}` → `{path: string}`: for Copy path; `""` if the file is gone.
 - **`forget`** `{id}` → `Ok`: remove from the index and add to the excluded folders. `ok: false` with an `error`
-  the UI shows when it couldn't be kept out (the list holds at most 5000 entries; nothing is removed then).
+  the UI shows when it couldn't be kept out (the list holds at most 5000 entries; nothing is removed then). `ok:
+  true` with an `error` (1.1.0) is a note to show instead of "Forgotten": it is out, but the protected list of
+  forgotten files couldn't be saved, so it is kept in memory for now (the engine tries again).
 - **`here_folder`** `{}` → `{path: string}`: the File Explorer folder the hotkey was pressed in (what "here" means), or
   `""`. The `here` event brings the same value as soon as it is known.
 - **`to_main`** `{text?: string (≤ 2000)}` → `{ok: true}`: the bar's Alt+Enter. The engine sends `show {what: "main", text}`,
@@ -229,6 +231,11 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   its card, `why` the full explanation. `names_only` = `all` (only names are indexed, the contents are never read:
   `secrets`), `some` (part of it is names only: browser profiles and app databases in `caches`) or `none`. Show
   `name`, `summary`, `why` and `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
+  The one exception to "names only" is the setting **`secret_app_files`** (1.1.0, **off by default**, Settings >
+  Privacy after a confirm dialog): command histories, FTP/SSH tools' saved sites and logins, developer tool tokens
+  and `.env` files are then read into the encrypted index (`.env` files are names only until then). Turning it off
+  removes their content, and their rows while `include_secrets` is off, without a rebuild. Keys, browser passwords,
+  vaults, wallets and Recent items are never read.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string, helper: not_installed|installed|needs_update}`: the
   optional turbo index, an elevated helper that reads NTFS's own file list and change journal (names, sizes, times

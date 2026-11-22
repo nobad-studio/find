@@ -474,7 +474,8 @@ def _paths(v, what):
 def parse_config(msg):
     """The engine's scope for the helper (it can only narrow what's sent; the hard drops don't depend on it)."""
     out = {"roots": _paths(msg.get("roots"), "roots"), "exclude": _paths(msg.get("exclude"), "exclude")}
-    for k, d in (("include_system", True), ("include_caches", True), ("include_secrets", False)):
+    for k, d in (("include_system", True), ("include_caches", True), ("include_secrets", False),
+                 ("secret_app_files", False)):
         v = msg.get(k, d)
         if not isinstance(v, bool):
             raise ValueError(f"{k}: true or false")
@@ -1017,7 +1018,7 @@ def _rules_for(sid, cfg, profile=None, own=None):
         raise PermissionError("no profile for this account")
     others = [p for p in scope._profile_list() if p and _norm(p) != _norm(prof)]
     rules = scope.Rules(system=cfg["include_system"], caches=cfg["include_caches"], secrets=cfg["include_secrets"],
-                        profile=prof, others=others)
+                        profile=prof, others=others, apps=cfg.get("secret_app_files", False))
     if own:
         rules.own = scope.norm(own)          # as a service LOCALAPPDATA isn't the user's: their index folder
     return rules

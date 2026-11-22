@@ -2789,6 +2789,10 @@
           "type": "boolean",
           "description": "Keys, browser passwords/cookies/history, Windows Credentials, chat and developer tokens, password vaults, wallets: names only, never their content. Browser profiles and app databases are names only even with this off and caches on."
         },
+        "secret_app_files": {
+          "type": "boolean",
+          "description": "1.1.0, off by default: read what other programs record and developer tools' plain-text sign-ins (command histories, FileZilla/WinSCP saved sites and logins, GitHub CLI/npm/PyPI/git/Maven/Cargo/Terraform/Vault/PostgreSQL/S3 tokens, .env files) into the encrypted index; their content can appear in results. Off: they are secrets (out, or names only with include_secrets on) and .env files are names only. Turning it off removes what was read (and their rows while include_secrets is off). Keys, browser passwords, vaults, wallets and Recent items are never read."
+        },
         "turbo": {
           "type": "boolean",
           "description": "Read-only: the turbo index is turned on and off with turbo_set (it needs the permission prompt); set_settings ignores it."
@@ -2865,6 +2869,7 @@
         "include_system",
         "include_caches",
         "include_secrets",
+        "secret_app_files",
         "turbo",
         "tray",
         "text_model",
@@ -3000,6 +3005,9 @@
           "type": "boolean"
         },
         "include_secrets": {
+          "type": "boolean"
+        },
+        "secret_app_files": {
           "type": "boolean"
         },
         "tray": {

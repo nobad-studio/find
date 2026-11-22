@@ -73,7 +73,13 @@ Specific to this app:
   notifications (`watcher.py`); the turbo helper above is the one optional exception for names and changes.
   The one thing kept is the user's **own typed search questions** for autocomplete (maintainer decision 2026-11-19,
   `history.py`, setting `search_history`, on by default): inside the encrypted index, at most 200, "Clear search
-  history" in Settings > Privacy, off deletes them. Never read anything Windows or other programs record.
+  history" in Settings > Privacy, off deletes them. Never read anything Windows or other programs record. The one
+  exception is the user's **opt-in to read app files that hold secrets** (maintainer ruling 2026-11-22, setting
+  `secret_app_files`, **off by default**, `const.APP_SECRET_*`): command histories, FTP/SSH tools' saved sites and
+  logins, developer tool tokens and `.env` files, read into the encrypted index only after the confirm dialog in
+  Settings > Privacy that names them and says they may hold passwords and tokens and can appear in results; off
+  removes their content (and their rows while secrets are off) with a targeted purge (`Api._purge_app_files`), no
+  rebuild. Recent items and jump lists stay out whatever it says.
 - **Everything indexed is untrusted:** file names, folder names and file contents go to the UI only through
   `esc()`; FTS queries only through `store.fts_quote`; nothing builds a shell string; files are never executed
   except by the user's explicit Open (by result id, never a path from the page). Names, folders, snippets, drive
@@ -85,16 +91,19 @@ Specific to this app:
   keys, browser passwords/cookies/history, Windows Credentials/Vault/Protect, chat and developer tokens, wallets,
   and what other programs record: PowerShell/shell/REPL command histories, FileZilla/WinSCP
   saved sites, GitHub CLI/Maven/Cargo/Terraform tokens; security review 2026-11-22) are
-  off by default and **names only** when on (never read, never thumbnailed). The lists are data in `const`
-  (`SECRET_NAMES`, `SECRET_FILES`, `SECRET_FILES_IN`, `SECRET_PATHS`, `NAMES_ONLY_*`); growing one bumps
+  off by default and **names only** when on (never read, never thumbnailed), except the `APP_SECRET_*` part while
+  `secret_app_files` is on (above); `.env` files are names only until then. The lists are data in `const`
+  (`SECRET_NAMES`, `SECRET_FILES`, `SECRET_FILES_IN`, `SECRET_PATHS`, `APP_SECRET_*`, `NAMES_ONLY_*`); growing one bumps
   `scope.RULES_REV`, and the indexer then drops the content of the newly covered files once
   (`Indexer._apply_new_rules`, meta `scope_rules`) without rebuilding anything else. Browser profiles and app databases
   (`const.NAMES_ONLY_*`) are names only even with caches on, other people's files and
-  `const.FIXED_NAMES` and `const.ALWAYS_OUT_PATHS` (Windows' and Office's Recent items and jump lists: their
-  names are the activity history ruled out above) are always out. The walk, `Walker.excluded` (live changes) and the turbo helper's `ntfs.Filter`
+  `const.FIXED_NAMES` and `const.ALWAYS_OUT_PATHS` (Windows' and Office's Recent items and jump lists in the
+  user's profile, `Rules.always_out`: their names are the activity history ruled out above) are always out. The walk, `Walker.excluded` (live changes) and the turbo helper's `ntfs.Filter`
   all use `scope.Rules`; keep them in step. What Forget adds to `exclude` is never written in plain text: `Settings`
   keeps it in `forgotten.dat` next to settings.json, DPAPI-protected for the user (fix round 1, I5); in memory
-  `exclude` holds both, so the walk, the turbo filter and the Never index list see one list.
+  `exclude` holds both, so the walk, the turbo filter and the Never index list see one list. When that file
+  can't be read or written, new entries stay in memory (a note says so, every save tries again), never in
+  settings.json, and the one-time move isn't marked done while entries are still there.
 - OCR (`ocr.py`) uses only the Windows built-in `Windows.Media.Ocr` through the pinned `winrt-*` 3.2.1 packages
   (keep every winrt package on one version), inside the text worker processes. No OCR model downloads.
 - Call detection (`winapi.in_call`) reads the user's own CapabilityAccessManager records; stale records from

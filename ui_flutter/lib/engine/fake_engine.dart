@@ -75,6 +75,9 @@ class FakeEngine implements EngineApi {
 
   /// Not empty: forget refuses with this message (the Never index list is full).
   String forgetError = '';
+
+  /// ok with a note (1.1.0): forgotten, but the engine's protected list couldn't be saved yet.
+  String forgetNote = '';
   bool pickBusy = false;
   bool offline = false;
 
@@ -374,7 +377,7 @@ class FakeEngine implements EngineApi {
     forgotten.add(id);
     files.remove(f);
     _settings['exclude'] = [...Settings(_settings).list('exclude'), '${f.dir}\\${f.name}'];
-    return _ok;
+    return forgetNote.isEmpty ? _ok : ActionResult(true, forgetNote);
   });
 
   @override

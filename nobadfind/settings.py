@@ -80,11 +80,22 @@ def _unprotect(data):
     return dpapi_unprotect(data)
 
 
+# Said (Api.forget) while forgotten entries are kept only in memory: the protected file couldn't be read or written
+FORGOT_NOTE = ("Forgotten for now, but NOBAD Find couldn't save its protected list of forgotten files, so this one "
+               "may come back after a restart. It tries again at the next change.")
+
+
 class Settings:
     """The settings file, plus the files and folders Forget added to `exclude` (fix round 1, I5): those are kept
     apart in FORGOTTEN_FILE next to it, protected with DPAPI for this Windows account, never in settings.json.
     In memory `exclude` holds both (the walk, the turbo filter and the Never index list see one list); _save
-    splits them again. If DPAPI can't protect them, they stay in settings.json rather than coming back."""
+    splits them again. When the protected file can't be read (it is never overwritten then) or written (DPAPI, an
+    antivirus lock: tried FORGOT_TRIES times), new entries are kept in memory only, never in plain text, and every
+    later save tries again (`note` says so; 1.1.0, review minors (a) and (c)). Entries that were in settings.json
+    before they were kept apart stay there until the protected file holds them."""
+
+    FORGOT_TRIES = 3
+    FORGOT_WAIT_S = 0.1
 
     def __init__(self, path):
         self.path = path
@@ -92,6 +103,9 @@ class Settings:
         self.data = dict(DEFAULTS)
         self._forgot = set()
         self._forgot_read = False                       # until the protected file is read, _save leaves it alone
+        self._forgot_saved = True                       # the protected file holds every forgotten entry
+        self._plain = set()                             # exclude entries read from settings.json
+        self.note = ""                                  # FORGOT_NOTE while some are kept in memory only
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
         try:
             with open(path, encoding="utf-8") as f:
@@ -106,6 +120,7 @@ class Settings:
                     self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
                 rev = raw.get("settings_rev") if isinstance(raw.get("settings_rev"), int) else 0
                 self.data["settings_rev"] = rev
+                self._plain = set(self.data["exclude"])
                 self._migrate()
         except (OSError, ValueError):
             pass
@@ -120,12 +135,13 @@ class Settings:
             self._forgot_read = True
             return
         except (OSError, ValueError, UnicodeDecodeError):
-            from .log import log
-            log("the forgotten list couldn't be read; it is left as it is", "warn")
+            if not self.note:
+                from .log import log
+                log("the forgotten list couldn't be read; it is left as it is", "warn")
             return                                      # never overwritten: another account's or a broken copy
         self._forgot_read = True
         paths = _paths(got if isinstance(got, list) else [])
-        self._forgot = set(paths)
+        self._forgot |= set(paths)                      # (read again later: what was forgotten meanwhile stays)
         ex = list(self.data.get("exclude") or [])
         self.data["exclude"] = _paths(ex + [p for p in paths if p not in ex])
 
@@ -161,16 +177,33 @@ class Settings:
         with self._lock:
             ex = set(self.data.get("exclude") or [])
             new = {os.path.normpath(p) for p in paths if isinstance(p, str)} & ex - self._forgot
-            if not new:
+            if not new and self.forgotten_saved():
                 return 0
             old_forgot = set(self._forgot)
             self._forgot |= new
             try:
-                self._save()
+                self._save()                             # (an earlier move that wasn't saved is tried again)
             except Exception:
                 self._forgot = old_forgot
                 raise
         return len(new)
+
+    def forgotten_saved(self):
+        """True when the protected file holds every forgotten entry: none is only in memory or still in
+        settings.json (Api._migrate_forgotten is done only then)."""
+        return self._forgot_read and self._forgot_saved and not (self._forgot & self._plain)
+
+    def retry_forgotten(self):
+        """Save again if some forgotten entries are kept only in memory (the protected file couldn't be read or
+        written). True when they are all protected now."""
+        with self._lock:
+            if self.forgotten_saved():
+                return True
+            try:
+                self._save()
+            except OSError:
+                pass
+            return self.forgotten_saved()
 
     def _write_forgotten(self, paths):
         """True when the protected file holds exactly paths (or is gone because there are none)."""
@@ -183,14 +216,30 @@ class Settings:
         try:
             blob = _protect(json.dumps(paths).encode("utf-8"))
         except (OSError, AttributeError, NameError):
-            from .log import log
-            log("DPAPI couldn't protect the forgotten list; it stays in settings.json", "warn")
             return False
         tmp = self._fpath + ".tmp"
         with open(tmp, "wb") as f:
             f.write(blob)
         os.replace(tmp, self._fpath)
         return True
+
+    def _write_forgotten_retrying(self, paths):
+        """_write_forgotten, tried FORGOT_TRIES times (an antivirus or backup tool can hold the file for a moment).
+        False when it still didn't work: the caller keeps the entries in memory, never in settings.json."""
+        import time
+        for i in range(self.FORGOT_TRIES):
+            try:
+                if self._write_forgotten(paths):
+                    return True
+            except OSError:
+                pass
+            if i + 1 < self.FORGOT_TRIES:
+                time.sleep(self.FORGOT_WAIT_S * (i + 1))
+        try:
+            os.remove(self._fpath + ".tmp")
+        except OSError:
+            pass
+        return False
 
     def _migrate(self):
         """One-time changes to saved settings, each run once (settings_rev). Saved if anything ran."""
@@ -255,12 +304,25 @@ class Settings:
 
     def _save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        if not self._forgot_read:
+            self._load_forgotten()                      # unreadable before: maybe it can be read now (never overwritten)
         ex = list(self.data.get("exclude") or [])
         self._forgot &= set(ex)                         # taken out of Never index: no longer forgotten
+        self._plain &= set(ex)
         forgot = [e for e in ex if e in self._forgot]
         plain = dict(self.data)
-        if self._forgot_read and self._write_forgotten(forgot):               # first: a crash in between leaves both copies, never none
+        # the protected file first: a crash in between leaves both copies, never none
+        self._forgot_saved = self._forgot_read and self._write_forgotten_retrying(forgot)
+        if self._forgot_saved:
             plain["exclude"] = [e for e in ex if e not in self._forgot]
+            self._plain -= self._forgot
+            self.note = ""
+        else:                                           # in memory only; what settings.json already had stays there
+            plain["exclude"] = [e for e in ex if e not in self._forgot or e in self._plain]
+            if not self.note:
+                from .log import log
+                log("the forgotten list couldn't be saved protected; new entries are kept in memory", "warn")
+            self.note = FORGOT_NOTE
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plain, f, indent=1)

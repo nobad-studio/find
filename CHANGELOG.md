@@ -38,8 +38,19 @@
   Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
   when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
   the index stays as it is.
+- **New, off by default: "Read command histories, saved logins and tool tokens"** in Settings > Privacy. If you
+  want to search inside your command histories, FileZilla/WinSCP saved sites, developer tool tokens (GitHub CLI,
+  npm, Cargo and more) and .env files, turn it on: it asks first, because they may hold passwords and tokens, which
+  then stay in NOBAD Find's encrypted index on this PC and can show up in results. Turning it off removes them
+  again. Keys, browser passwords, password vaults and wallets are never read.
+- `.env` files (`.env`, `.env.local`, ...) are listed by name only; their contents are read only with that setting
+  on. What was read from them before is removed once after the update.
 - Windows' and Office's Recent items and jump lists (the lists of what you opened) are never indexed, not even
-  by name with "Keys and password stores" on; any already in the index are removed after the update.
+  by name with "Keys and password stores" or the new setting on; any already in the index are removed after the
+  update. A folder of your own that happens to be called `office\recent` is indexed as usual.
+- If the protected list of files you forgot can't be read or saved for a moment (an antivirus scan, say), a new
+  forget still works, says it may come back after a restart, and is never written to the settings file in plain
+  text; NOBAD Find saves it as soon as it can, and other settings keep saving.
 - Fixed: a change Windows reported with an old-style short name (`APPDAT~1\...\CREDEN~1`) could get a password
   store past those rules; such paths are now read by their full names first.
 - Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The

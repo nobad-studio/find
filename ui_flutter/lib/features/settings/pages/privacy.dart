@@ -13,6 +13,46 @@ import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
 import '../settings_parts.dart';
 
+/// The one exception to "names only" (setting `secret_app_files`, 1.1.0, off by default; const.APP_SECRET_* in
+/// the engine): what other programs record and developer tools' plain-text sign-ins. Turning it on asks once.
+class AppFilesSetting extends StatelessWidget {
+  const AppFilesSetting({super.key});
+
+  static const label = 'Read command histories, saved logins and tool tokens';
+  static const help =
+      'Off (the default): NOBAD Find doesn\'t read these files; with "Keys and password stores" on in What to '
+      'index it lists only their names. On: it reads what\'s inside them, in the folders it indexes: command '
+      'histories (PowerShell, bash, zsh, Python, database clients), saved-site and login files of FTP/SSH tools '
+      '(FileZilla, WinSCP, .netrc), developer tool tokens (GitHub CLI, npm, PyPI, git credentials, Maven, Cargo, '
+      'Terraform, Vault, PostgreSQL, S3 tools) and .env files (until then listed by name only). SSH and GPG keys, '
+      'browser passwords, password vaults, wallets, Windows\' saved credentials and Recent items are never read. '
+      'Turning it off removes what was read from the index.';
+  static const askTitle = 'Read these files?';
+  static const ask =
+      'Their contents may include passwords and tokens. They stay in NOBAD Find\'s encrypted index on this PC, '
+      'and they can appear in search results. Turn this off to remove them from the index again.';
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
+    final s = AppScope.of(context).settings;
+    return SettingRow(
+      label: label,
+      help: help,
+      control: NbSwitch(
+        value: s.settings.flag('secret_app_files'),
+        label: label,
+        onChanged: (v) async {
+          if (v && !await confirmDialog(context, title: askTitle, question: ask, yes: 'Read them')) return;
+          await s.set('secret_app_files', v);
+        },
+      ),
+    );
+  }
+}
+
 class PrivacyPage extends StatelessWidget {
   const PrivacyPage({super.key});
 
@@ -92,6 +132,7 @@ class PrivacyPage extends StatelessWidget {
             ),
           ],
         ),
+        const SettingsGroup('Files other programs keep', rows: [AppFilesSetting()]),
         SettingsGroup(
           'Your data',
           rows: [

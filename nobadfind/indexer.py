@@ -17,12 +17,16 @@ import numpy as np
 
 from . import embed, extract, models, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
+from .const import APP_SECRET_FILES, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
 from .log import log
 from .walker import Walker
 
 RESCAN_EVERY = 6 * 3600
 NAMES_ONLY = "names only"         # text_err / photo err of a secret: its content is never read (scope.Rules)
+# secret_app_files on: these names are read as text too, whatever their extension (.bash_history, .npmrc, Cargo's
+# "credentials"); .env files as well (Store.needs_text env)
+APP_READ_NAMES = frozenset(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
 DEBOUNCE = 2.0
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
 ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
@@ -168,6 +172,18 @@ class Indexer:
                 mark(r)
             else:
                 keep.append(r)
+        return keep
+
+    def _app_extras(self, rows, exts):
+        """Rows (id, path, ext, size, mtime) the text pass got by name (secret_app_files) rather than by extension
+        are read only when they are one of those files (scope.app_file): a "credentials" file elsewhere is an
+        ordinary file without readable text, marked read so it doesn't come back."""
+        keep = []
+        for r in rows:
+            if r[2] in exts or scope.app_file(r[1]):
+                keep.append(r)
+            else:
+                self.store.set_text(r[0], r[4], [], "not a text file")
         return keep
 
     def _apply_new_rules(self):
@@ -624,8 +640,10 @@ class Indexer:
                         queued = [self._suspects.pop(0)]
                 elif not queued and len(inflight) < limit:
                     skip = {job[0] for job, _t in inflight.values()}
+                    apps = not images and bool(self.settings.get("secret_app_files"))
                     todo = self._skip_secrets(
-                        self.store.needs_text(exts, max_bytes, limit=full * 16, min_bytes=min_bytes),
+                        self._app_extras(self.store.needs_text(exts, max_bytes, limit=full * 16, min_bytes=min_bytes,
+                                                               names=APP_READ_NAMES if apps else (), env=apps), exts),
                         lambda r: self.store.set_text(r[0], r[4], [], NAMES_ONLY))
                     queued = [(fid, p, ext, mt, max_bytes, use_ocr) for fid, p, ext, _size, mt in todo
                               if fid not in skip]

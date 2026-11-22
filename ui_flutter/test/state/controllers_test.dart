@@ -133,6 +133,19 @@ void main() {
       toasts.dispose();
     });
 
+    test('a forget kept in memory only shows the engine\'s note', () async {
+      final e = FakeEngine()..forgetNote = "Forgotten for now, but NOBAD Find couldn't save its protected list.";
+      final toasts = ToastController();
+      final f = FindController(e, debounce: Duration.zero, toasts: toasts);
+      f.setText('tax return');
+      await f.run();
+      expect(await f.forgetSelected((q) async => true), isTrue);
+      expect(e.forgotten, isNotEmpty);
+      expect(toasts.message, "Forgotten for now, but NOBAD Find couldn't save its protected list.");
+      f.dispose();
+      toasts.dispose();
+    });
+
     test('an open that fails says why', () async {
       final e = FakeEngine()..openOk = false;
       final toasts = ToastController();
