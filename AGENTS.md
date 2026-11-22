@@ -121,6 +121,14 @@ Specific to this app:
   its seconds are measured per runtime and level (`tools/measure_talk.py`, catalog `timing`, `models.talk_timing`)
   and the UI says only those. Talk models never use DirectML: `models.capable` has their own check.
   Photos reach it only by result id; it opens only the job's photos and the model / runtime files on disk.
+  **Release fix (maintainer requirements 2026-11-22):** its hang deadline counts only real progress, per phase
+  (`worker.PHASES`: llama's and mtmd's load fractions must grow, "still computing" from the encode / eval
+  callbacks is capped per phase, tokens while answering, fixed bounds where llama.cpp has no callback); never
+  turn the watchdog off or just raise a bound. Stop (and the engine's own stops) reach a load or an eval through
+  those callbacks. While a job runs the worker's memory and I/O priority are normal (`winapi.worker_activity`),
+  low again when it ends; its CPU priority, the job and the CPU cap never change. **Temporary:** until PR #16
+  (`capability.assess`) merges, `api.talk_assess` falls back to `models.capable` + free RAM (`talk_fits`);
+  delete that fallback when it lands (`tests/test_vlm_progress.py` checks the capability path is taken).
 - Typed network paths (\\server\share) are never looked up on disk (`search.folder_checker`): only folders already
   in the index or the folder list count, so typing one can't make Windows contact a server.
 - New setting: `const.DEFAULTS` + `settings.coerce` + a row on its Flutter Settings page
