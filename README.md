@@ -70,7 +70,7 @@ they're about, and tells you why each result matched.
 - **Its only other connections:** optional one-time model downloads from Hugging Face, each only when you say Download
   in Settings → Models, pinned to one revision and checked against its SHA-256 before use. The meaning-search
   models are all-MiniLM-L6-v2 (23 MB), GTE small (33 MB), BGE base (106 MB) and multilingual-e5 small and base
-  (129 / 282 MB); all MIT or Apache-2.0. The photo models are SigLIP base (211 MB) and SigLIP 2 base (393 MB), by
+  (129 / 282 MB); all MIT or Apache-2.0. The photo models are SigLIP base (211 MB) and SigLIP 2 base (481 MB), by
   Google, Apache-2.0. (Network drives, if you turn them on, are read over your
   own network like any other program opening files there.)
 
