@@ -56,12 +56,10 @@ def download_model(model_dir=PHOTO_DIR, progress=None):
 
 
 # ---------- images (in the worker process) ----------
-def decode_224(data):
-    """Encoded image bytes -> float32 (3, 224, 224) in the model's range, or None if it isn't a usable photo.
-    Windows decodes and scales it (BitmapDecoder + BitmapTransform), turned the way the camera held it."""
-    from winrt.windows.graphics.imaging import (BitmapAlphaMode, BitmapDecoder, BitmapInterpolationMode,
-                                                 BitmapPixelFormat, BitmapTransform, ColorManagementMode,
-                                                 ExifOrientationMode)
+def _open_decoder(data):
+    """Windows' decoder for encoded image bytes -> (decoder, oriented width, oriented height), or None when the
+    picture is too small or too large to use (short side under 64, or more than MAX_PIXELS)."""
+    from winrt.windows.graphics.imaging import BitmapDecoder
     from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
     stream = InMemoryRandomAccessStream()
     w = DataWriter(stream)
@@ -74,17 +72,55 @@ def decode_224(data):
     width, height = dec.oriented_pixel_width, dec.oriented_pixel_height
     if min(width, height) < 64 or width * height > MAX_PIXELS:
         return None
+    return dec, width, height
+
+
+def _scaled_rgba(dec, width, height):
+    """The decoder's picture scaled to width x height (FANT), RGBA8, upright, sRGB, as bytes."""
+    from winrt.windows.graphics.imaging import (BitmapAlphaMode, BitmapInterpolationMode, BitmapPixelFormat,
+                                                 BitmapTransform, ColorManagementMode, ExifOrientationMode)
     t = BitmapTransform()
-    t.scaled_width, t.scaled_height = SIDE, SIDE      # SigLIP squeezes to 224 x 224 (no crop)
+    t.scaled_width, t.scaled_height = width, height
     t.interpolation_mode = BitmapInterpolationMode.FANT
     px = dec.get_pixel_data_transformed_async(BitmapPixelFormat.RGBA8, BitmapAlphaMode.IGNORE, t,
                                               ExifOrientationMode.RESPECT_EXIF_ORIENTATION,
                                               ColorManagementMode.COLOR_MANAGE_TO_S_RGB).get()
-    raw = np.frombuffer(bytes(px.detach_pixel_data()), np.uint8)
+    return bytes(px.detach_pixel_data())
+
+
+def decode_224(data):
+    """Encoded image bytes -> float32 (3, 224, 224) in the model's range, or None if it isn't a usable photo.
+    Windows decodes and scales it (BitmapDecoder + BitmapTransform), turned the way the camera held it."""
+    opened = _open_decoder(data)
+    if opened is None:
+        return None
+    raw = np.frombuffer(_scaled_rgba(opened[0], SIDE, SIDE), np.uint8)   # SigLIP squeezes to 224 x 224 (no crop)
     if raw.size != SIDE * SIDE * 4:
         return None
     rgb = raw.reshape(SIDE, SIDE, 4)[:, :, :3].astype(np.float32)
     return ((rgb / 255.0 - 0.5) / 0.5).transpose(2, 0, 1)
+
+
+def decode_rgb(data, side):
+    """Encoded image bytes -> (RGB8 bytes, width, height) with the long side = side (aspect kept, never enlarged),
+    upright and sRGB, or None if it isn't a usable photo (empty, too big a file, too small or too many pixels).
+    For the picture-talking model; decoded by Windows like decode_224."""
+    if not data or len(data) > MAX_PHOTO_BYTES or side < 1:
+        return None
+    try:
+        opened = _open_decoder(data)
+        if opened is None:
+            return None
+        dec, width, height = opened
+        long_side = max(width, height)
+        if long_side > side:
+            width, height = max(1, round(width * side / long_side)), max(1, round(height * side / long_side))
+        raw = np.frombuffer(_scaled_rgba(dec, width, height), np.uint8)
+    except Exception:
+        return None
+    if raw.size != width * height * 4:
+        return None
+    return raw.reshape(-1, 4)[:, :3].tobytes(), width, height
 
 
 _vision = {}                                          # model folder -> its vision session (one per model)
