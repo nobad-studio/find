@@ -47,7 +47,31 @@ def _search_result(r):
                    if isinstance(best, dict) and best.get("id") in ids else None)
     if r.get("cancelled"):
         out["cancelled"] = True         # a newer search on the same channel replaced it: show nothing from it
+    # 1.0.1 fix: these two were dropped here, so the window never saw them ("open windows update" + Enter opened
+    # the first file, Settings' home, instead of the Windows Update page)
+    needs = [_need(n) for n in (r.get("needs") or []) if isinstance(n, dict) and n.get("model") in NEED_MODELS
+             and n.get("state") in NEED_STATES]
+    if needs:
+        out["needs"] = needs
+    actions = [_action(a) for a in (r.get("actions") or []) if isinstance(a, dict) and a.get("kind") in ACTION_KINDS
+               and isinstance(a.get("id"), str) and 0 < len(a["id"]) <= 200 and a.get("title")]
+    if actions:
+        out["actions"] = actions
     return out
+
+
+NEED_MODELS, NEED_STATES = {"photo", "meaning"}, {"missing", "off", "analyzing"}
+ACTION_KINDS = {"setting", "tool", "app"}
+
+
+def _need(n):
+    return {"model": n["model"], "state": n["state"], "id": str(n.get("id") or ""),
+            "size_mb": max(0, int(n.get("size_mb") or 0)), "done": max(0, int(n.get("done") or 0)),
+            "total": max(0, int(n.get("total") or 0)), "text": str(n.get("text") or "")}
+
+
+def _action(a):
+    return {"id": a["id"], "kind": a["kind"], "title": str(a["title"]), "subtitle": str(a.get("subtitle") or "")}
 
 
 PART_KINDS = {"folder", "drive", "kind", "time", "size", "sort", "meaning", "words"}
