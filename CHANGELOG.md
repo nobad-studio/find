@@ -1,6 +1,6 @@
 # NOBAD Find changelog
 
-## 1.1.0 · (in development)
+## 1.1.0 · 2026-11-22
 
 ### Talk about a photo
 - **Describe a photo, ask about it, or compare two,** on a photo's detail pane. The answer appears word by word,
@@ -73,6 +73,11 @@
   folders stay.
 - Fixed: when a talk model was slow to close, NOBAD Find could lower its memory limit while the model was still
   in memory, so indexing work could fail for a moment. The limit now comes down only once it has really closed.
+
+### Known
+- The installer is not code-signed yet, so Windows SmartScreen may warn before it runs.
+- The first question about a photo right after Windows starts can take longer than the times above: the model
+  files are read from disk then, and that case has not been measured yet.
 
 ## 1.0.1 · 2026-11-22
 

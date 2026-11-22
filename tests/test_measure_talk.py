@@ -4,7 +4,11 @@ import os
 
 import pytest
 
-PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "measure_talk.py")
+# the tool measures memory with psutil, a dev-only dependency (not in requirements-lock.txt, not in CI)
+pytestmark = pytest.mark.skipif(importlib.util.find_spec("psutil") is None,
+                                reason="psutil (dev dependency) not installed")
+
+PATH =os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "measure_talk.py")
 _spec = importlib.util.spec_from_file_location("measure_talk", PATH)
 measure_talk = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(measure_talk)
