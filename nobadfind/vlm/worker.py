@@ -69,21 +69,20 @@ ANSWER_S = 120                  # no token for this long while answering: the wo
 PHASE_ORDER = ("start", "prepare", "photo", "model", "context", "vision", "image", "answer")
 # phase: (seconds without progress, cap: seconds from the phase's start that "still computing" calls can't pass, or
 # None when such calls don't count). A phase without progress is a fixed bound.
-# PROVISIONAL (release fix, 2026-11-22): set before the full re-measurement through the worker (pending:
-# tools/measure_talk.py, docs/measurements.md). What was measured so far, SmolVLM2 through vlm.session on this PC
-# (CPU and Vulkan, normal free memory): longest gap between two load fractions 0.4-0.6 s, context 0.04-0.17 s,
-# vision part 0.1-0.2 s, "still computing" calls in the photo eval at most 0.24 s apart. 60 s is 100x those;
-# the cold Qwen load that stalled before (127 s without any message) had no progress reporting at all.
+# Measured (docs/measurements.md 2026-11-22 "release fix", tools/measure_talk.py through this worker under the
+# governor's caps: SmolVLM2 and Qwen3-VL, CPU and Vulkan, Full / Gentle / Very light, CPU runs twice, Qwen CPU also
+# 4x with ~3.8 GB free): the longest time without progress per phase, over all 21 timed runs, is next to each bound.
+# Every bound is at least 25x the worst measured value (most 60-1000x).
 PHASES = {
-    "start": (60, None),        # process start + the job read
-    "prepare": (60, None),      # the runtime's DLLs
-    "photo": (60, None),        # Windows decodes up to two photos
-    "model": (60, None),        # between two increases of llama's load fraction
-    "context": (60, None),      # llama_init_from_model (no callback)
-    "vision": (60, None),       # between two increases of mtmd's fraction (and after 1.0)
-    "image": (60, 600),         # between "still computing" calls; in all at most 600 s (slowest answer so far
-                                # 32 s: Qwen, CPU, Very light, 2026-11-22)
-    "answer": (ANSWER_S, None),
+    "start": (60, None),        # process start + the job read: measured <= 0.75 s
+    "prepare": (60, None),      # the runtime's DLLs: <= 0.83 s
+    "photo": (60, None),        # Windows decodes up to two photos: <= 0.36 s
+    "model": (60, None),        # between two increases of llama's load fraction: <= 0.88 s (low memory incl.)
+    "context": (60, None),      # llama_init_from_model (no callback): <= 0.06 s
+    "vision": (60, None),       # between increases of mtmd's fraction, and after 1.0: <= 0.25 s
+    "image": (60, 600),         # between "still computing" calls: <= 2.3 s (Vulkan, where the prompt eval sends
+                                # none); the whole phase <= 25 s (Qwen, CPU, Very light, Compare): cap 600 s
+    "answer": (ANSWER_S, None),  # between two tokens: <= 0.35 s
 }
 FRACTION_PHASES = ("model", "vision")
 STOPPING_NOTE_S = 1.0           # a new question still waiting for the last one to stop after this: say so

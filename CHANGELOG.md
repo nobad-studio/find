@@ -15,12 +15,16 @@
   NOBAD Find loads are kept (29 MB for the processor, 71 MB for the graphics card), never the llama.cpp programs,
   their tool libraries or its network backend.
 - **Measured on the reference PC (i5-12500H, Iris Xe), with NOBAD Find's own CPU limits in force:** SmolVLM2
-  answers in about 1-3 s on the graphics and 3-11 s on the processor, using about 1 GB of memory; Qwen3-VL in about
-  1-12 s on the graphics and 4-22 s on the processor once loaded (the first question also loads it, about
-  10-13 s), using about 2.5 GB. Talking about a photo follows NOBAD Find's level like the rest of its work: while
-  it runs very light (a game, a call, a busy PC), answers on the processor take longer (SmolVLM2 5-15 s, Qwen3-VL
-  7-32 s) and the photo pane says so ("Slower now: NOBAD Find is in Very light mode."); on the graphics the
-  level makes no difference.
+  answers in about 1-4 s on the graphics and 3-10 s on the processor, using about 1 GB of memory; Qwen3-VL in about
+  1-11 s on the graphics and 4-29 s on the processor once loaded (the first question also loads it: 1-3 s more
+  when its files were read before), using about 2.5 GB. Talking about a photo follows NOBAD Find's level like the
+  rest of its work: while it runs very light (a game, a call, a busy PC), answers on the processor take longer
+  (SmolVLM2 5-16 s, Qwen3-VL 8-46 s) and the photo pane says so ("Slower now: NOBAD Find is in Very light mode.");
+  on the graphics the level makes no difference.
+- **Loading shows how far it got, and Stop works at once:** "Loading Qwen3-VL 2B… 60 %", then its vision part;
+  Stop (or a new question) ends a load or the reading of the photo within about a second (measured 0.002-1.5 s).
+  A model that is slow to load but still loading is never ended as "stopped responding"; one that stops making
+  progress is.
 - **Deeper analysis is only offered when it fits:** it says its memory cost, or why not now (too little free
   memory, NOBAD Find paused). Qwen3-VL shows a warning on PCs below its tier (16 GB and 8 cores, or a graphics
   card with 2.1 GB of its own memory).

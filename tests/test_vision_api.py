@@ -315,20 +315,20 @@ def test_vision_state_sends_the_measured_timing_of_the_runtime_in_use(env):
             a._governor.decision = Decision("gentle", "Gentle: you are using the PC")
     assert a.vision_state()["runtime"]["id"] == "llama-cpu"
     st = state("full")
-    assert st[QWEN]["load_s"] == 12 and st[QWEN]["answer_s"] == [4, 22]          # measured on the CPU, Full
-    assert st[SMOL]["load_s"] == 3 and st[SMOL]["answer_s"] == [3, 11]
+    assert st[QWEN]["load_s"] == 3 and st[QWEN]["answer_s"] == [5, 29]          # measured on the CPU, Full
+    assert st[SMOL]["load_s"] == 2 and st[SMOL]["answer_s"] == [3, 9]
     assert st[QWEN]["slow_note"] == st[SMOL]["slow_note"] == ""
     st = state("light")                                                           # 15 % cap + efficiency mode
-    assert st[QWEN]["answer_s"] == [7, 32] and st[SMOL]["answer_s"] == [5, 15]
+    assert st[QWEN]["answer_s"] == [8, 46] and st[SMOL]["answer_s"] == [5, 16]
     assert st[QWEN]["slow_note"] == st[SMOL]["slow_note"] == "Slower now: NOBAD Find is in Very light mode."
     st = state("gentle")
-    assert st[SMOL]["answer_s"] == [3, 11] and st[SMOL]["slow_note"] == ""
+    assert st[SMOL]["answer_s"] == [3, 10] and st[SMOL]["slow_note"] == ""
     _put_files(env["data"], "llama-vulkan")
     st = state("full")
-    assert st[QWEN]["load_s"] == 13 and st[QWEN]["answer_s"] == [1, 12]         # measured on Vulkan (Iris Xe)
-    assert st[SMOL]["load_s"] == 1 and st[SMOL]["answer_s"] == [1, 3]
+    assert st[QWEN]["load_s"] == 3 and st[QWEN]["answer_s"] == [1, 11]         # measured on Vulkan (Iris Xe)
+    assert st[SMOL]["load_s"] == 2 and st[SMOL]["answer_s"] == [1, 4]
     st = state("light")
-    assert st[SMOL]["answer_s"] == [1, 3] and st[SMOL]["slow_note"] == ""     # the graphics do the work: no note
+    assert st[SMOL]["answer_s"] == [1, 4] and st[SMOL]["slow_note"] == ""     # the graphics do the work: no note
     assert st[QWEN]["slow_note"] == ""
 
 

@@ -104,8 +104,8 @@ CATALOG = [
     # system RAM too); vram_mb = its peak graphics memory on Vulkan (talk_need_mb picks between them).
     # timing, per runtime and governor level (talk_timing): the talk worker runs in the worker group under the
     # level's CPU hard cap (Gentle 35 %, Very light 15 % and efficiency mode), so each level was measured with that
-    # cap in force (tools/measure_talk.py; measurements.md 2026-11-22 "under the real limits"; CPU rows are two to
-    # four runs). load_s = what loading adds to the first question (cold first word minus a warm describe's, the
+    # cap in force (tools/measure_talk.py; measurements.md 2026-11-22 "release fix: progress, Stop, priority"; CPU
+    # rows are two runs, the worker at normal memory / I/O priority while a job runs). load_s = what loading adds to the first question (cold first word minus a warm describe's, the
     # median over the runs), answer_s = (fastest, slowest) finished answer once loaded (Ask, Compare, warm Describe,
     # over all runs); the UI's "about N s" comes only from these.
     {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
@@ -118,12 +118,12 @@ CATALOG = [
      "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
      "ram_mb": 1031, "vram_mb": 665,
-     "timing": {"cpu": {"full": {"load_s": 3, "answer_s": (3, 11)}, "gentle": {"load_s": 1, "answer_s": (3, 11)},
-                        "light": {"load_s": 1, "answer_s": (5, 15)}},
-                "vulkan": {"full": {"load_s": 1, "answer_s": (1, 3)}, "gentle": {"load_s": 1, "answer_s": (1, 3)},
-                           "light": {"load_s": 1, "answer_s": (1, 3)}}},
-     "speed_note": "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-11 s on its processor "
-                   "(5-15 s while NOBAD Find runs very light)",
+     "timing": {"cpu": {"full": {"load_s": 2, "answer_s": (3, 9)}, "gentle": {"load_s": 1, "answer_s": (3, 10)},
+                        "light": {"load_s": 3, "answer_s": (5, 16)}},
+                "vulkan": {"full": {"load_s": 2, "answer_s": (1, 4)}, "gentle": {"load_s": 1, "answer_s": (1, 4)},
+                           "light": {"load_s": 1, "answer_s": (1, 4)}}},
+     "speed_note": "an answer in about 1-4 s on the reference PC's graphics (Iris Xe), 3-10 s on its processor "
+                   "(5-16 s while NOBAD Find runs very light)",
      "builtin": False},
     {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
      "source": HF + "Qwen/Qwen3-VL-2B-Instruct-GGUF", "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
@@ -135,12 +135,13 @@ CATALOG = [
      "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
      "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
      "ram_mb": 2483, "vram_mb": 2062,
-     "timing": {"cpu": {"full": {"load_s": 12, "answer_s": (4, 22)}, "gentle": {"load_s": 28, "answer_s": (4, 29)},
-                        "light": {"load_s": 10, "answer_s": (7, 32)}},
-                "vulkan": {"full": {"load_s": 13, "answer_s": (1, 12)}, "gentle": {"load_s": 11, "answer_s": (1, 11)},
-                           "light": {"load_s": 11, "answer_s": (1, 11)}}},
-     "speed_note": "an answer in about 1-12 s on the reference PC's graphics (Iris Xe), 4-22 s on its processor "
-                   "(7-32 s while NOBAD Find runs very light); the first question also loads it (about 10-13 s)",
+     "timing": {"cpu": {"full": {"load_s": 3, "answer_s": (5, 29)}, "gentle": {"load_s": 2, "answer_s": (4, 18)},
+                        "light": {"load_s": 3, "answer_s": (8, 46)}},
+                "vulkan": {"full": {"load_s": 3, "answer_s": (1, 11)}, "gentle": {"load_s": 1, "answer_s": (1, 11)},
+                           "light": {"load_s": 2, "answer_s": (1, 11)}}},
+     "speed_note": "an answer in about 1-11 s on the reference PC's graphics (Iris Xe), 4-29 s on its processor "
+                   "(8-46 s while NOBAD Find runs very light); the first question also loads it (about 1-3 s "
+                   "measured with its files already read once)",
      "builtin": False},
     # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
     # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.

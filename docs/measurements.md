@@ -4,6 +4,96 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-22 (1.1.0): talk about a photo, release fix: progress, Stop, priority
+
+The hang deadline now counts only real progress, phase by phase (`vlm.worker.PHASES`), Stop reaches a load and
+the photo eval through llama.cpp's callbacks, and the worker has normal memory / I/O priority while a job runs
+(`winapi.worker_activity`; CPU priority, the worker group and the CPU cap unchanged). Measured with
+`tools/measure_talk.py` through the real `Talker` and worker, the same way as the section under this one (own worker
+group, the level's CPU cap checked, EcoQoS at Very light, the memory allowance), with the real `check_deadline`
+running every 0.25 s (it never fired). Same PC, photos and jobs; runtime folders as unpacked by the zips. The PC
+was idle (the maintainer's game had ended), 7.4-8.4 GB free, except the "low RAM" rows: a memory hog (a child of
+the script, given back below a 1,536 MB floor) left 3.8-3.9 GB free before the run. The runs were back to back,
+so every "cold" load found the model files already in Windows' file cache: a first load after a restart was not
+measured. Times are first word / finished answer, s; "load" is the cold job's model + context + vision part;
+"free" is before the run / lowest during it; "slowest phase gaps" lists any phase with 0.5 s or more without
+progress as the Talker counts it (the "image" figures are the 1 s rate of "still computing" messages).
+
+| model, runtime, level (run) | load | Describe (cold) | Ask | Compare | Describe (warm) | peak private | graphics | free | slowest phase gaps (s) |
+|---|---|---|---|---|---|---|---|---|---|
+| SmolVLM2 500M, CPU, Full (1) | 0.84 | 5.9 / 6.29 | 4.07 / 4.11 | 8.26 / 8.61 | 3.9 / 4.08 | 533 MB | - | 7,924 / 7,321 MB | prepare 0.6, image 1.2 |
+| SmolVLM2 500M, CPU, Full (2) | 0.21 | 5.1 / 5.54 | 3.91 / 3.94 | 7.95 / 8.35 | 3.94 / 4.09 | 534 MB | - | 8,382 / 7,633 MB | image 1.1 |
+| SmolVLM2 500M, CPU, Gentle (1) | 0.22 | 5.93 / 6.63 | 4.72 / 4.76 | 9.25 / 9.7 | 4.13 / 4.26 | 533 MB | - | 7,898 / 6,034 MB | image 1.2 |
+| SmolVLM2 500M, CPU, Gentle (2) | 0.21 | 4.91 / 5.36 | 3.7 / 3.73 | 7.41 / 7.84 | 4.6 / 4.75 | 533 MB | - | 8,215 / 7,541 MB | image 1.1 |
+| SmolVLM2 500M, CPU, Very light (1) | 0.24 | 7.72 / 8.79 | 7.83 / 8.11 | 14.41 / 15.05 | 6.4 / 6.52 | 533 MB | - | 7,790 / 6,188 MB | image 1.4 |
+| SmolVLM2 500M, CPU, Very light (2) | 0.19 | 9.63 / 10.28 | 6.21 / 6.25 | 11.56 / 12.42 | 5.56 / 5.93 | 534 MB | - | 8,363 / 7,502 MB | image 2.2 |
+| SmolVLM2 500M, Vulkan, Full | 0.54 | 3.11 / 3.53 | 1.38 / 1.42 | 2.57 / 3.11 | 1.33 / 1.51 | 1,029 MB | 663 MB shared | 7,446 / 6,559 MB | prepare 0.8, image 1.0 |
+| SmolVLM2 500M, Vulkan, Gentle | 0.35 | 2.41 / 2.85 | 1.34 / 1.39 | 2.58 / 3.05 | 1.36 / 1.54 | 1,029 MB | 663 MB shared | 7,517 / 6,654 MB | start 0.5, image 1.0 |
+| SmolVLM2 500M, Vulkan, Very light | 0.4 | 2.3 / 2.75 | 1.37 / 1.41 | 2.59 / 3.06 | 1.35 / 1.52 | 1,029 MB | 663 MB shared | 7,616 / 6,689 MB | image 1.0 |
+| Qwen3-VL 2B, CPU, Full (1) | 2.45 | 8.42 / 12.31 | 5.43 / 5.48 | 9.67 / 17.76 | 5.19 / 8.12 | 1,736 MB | - | 7,661 / 5,144 MB | model 0.9, image 1.1 |
+| Qwen3-VL 2B, CPU, Full (2) | 2.46 | 11.39 / 17.5 | 7.62 / 7.66 | 15.34 / 28.19 | 8.77 / 13.07 | 1,736 MB | - | 8,175 / 5,715 MB | start 0.7, model 0.5, image 1.2 |
+| Qwen3-VL 2B, CPU, Full, low RAM (1) | 1.81 | 11.82 / 17.87 | 8.44 / 8.54 | 15.29 / 28.18 | 8.45 / 12.8 | 1,736 MB | - | 3,845 / 1,554 MB | start 0.7, image 1.3 |
+| Qwen3-VL 2B, CPU, Gentle (1) | 1.23 | 7.01 / 10.42 | 5.53 / 5.61 | 9.65 / 17.43 | 5.31 / 8.24 | 1,736 MB | - | 7,633 / 5,032 MB | image 1.1 |
+| Qwen3-VL 2B, CPU, Gentle (2) | 1.18 | 7.15 / 10.55 | 4.46 / 4.5 | 8.82 / 16.03 | 4.62 / 7.19 | 1,736 MB | - | 8,181 / 5,855 MB | start 0.7, image 1.1 |
+| Qwen3-VL 2B, CPU, Gentle, low RAM (1) | 1.3 | 7.36 / 10.56 | 4.73 / 4.77 | 15.52 / 28.8 | 9.17 / 13.82 | 1,735 MB | - | 3,841 / 1,585 MB | image 1.3 |
+| Qwen3-VL 2B, CPU, Gentle, low RAM (2) | 1.91 | 12.27 / 18.71 | 8.68 / 8.73 | 9.66 / 16.59 | 4.99 / 7.52 | 1,736 MB | - | 3,830 / 1,525 MB | start 0.8, image 1.2 |
+| Qwen3-VL 2B, CPU, Gentle, low RAM (3) | 1.5 | 7.22 / 10.57 | 4.85 / 4.89 | 8.71 / 18.72 | 7.93 / 11.86 | 1,736 MB | - | 3,892 / 1,568 MB | image 1.3 |
+| Qwen3-VL 2B, CPU, Very light (1) | 1.74 | 10.73 / 16.61 | 8.77 / 8.83 | 15.62 / 27.96 | 8.24 / 12.31 | 1,736 MB | - | 7,621 / 5,201 MB | image 1.3 |
+| Qwen3-VL 2B, CPU, Very light (2) | 2.28 | 16.91 / 26.9 | 13.73 / 14.05 | 25.11 / 45.91 | 14.33 / 18.45 | 1,736 MB | - | 8,200 / 5,736 MB | start 0.7, model 0.5, image 1.4 |
+| Qwen3-VL 2B, Vulkan, Full | 1.5 | 4.59 / 8.19 | 1.84 / 1.88 | 3.24 / 10.5 | 1.83 / 4.77 | 2,478 MB | 2,058 MB shared | 8,319 / 6,062 MB | image 2.3 |
+| Qwen3-VL 2B, Vulkan, Gentle | 1.1 | 3.29 / 6.8 | 1.81 / 1.86 | 3.26 / 10.61 | 1.84 / 4.81 | 2,477 MB | 2,058 MB shared | 8,296 / 6,051 MB | image 1.6 |
+| Qwen3-VL 2B, Vulkan, Very light | 1.55 | 4.14 / 7.62 | 1.75 / 1.8 | 3.18 / 10.38 | 1.86 / 4.81 | 2,478 MB | 2,074 MB shared | 8,353 / 6,057 MB | image 1.6 |
+
+- **The 127 s case did not come back.** Qwen on the CPU with 3.8-3.9 GB free (3 runs at Gentle, 1 at Full,
+  free memory down to 1,525-1,585 MB during the run) loaded in 1.3-1.9 s and gave its first word in 7.2-12.3 s;
+  the longest time without progress in any phase was 1.3 s. Whether that is the normal memory / I/O priority or
+  the warm file cache can't be told apart from these runs (the stalled run in the section under this one had the
+  files cached too, but the PC was in use).
+- **Longest without progress, per phase, over all 21 runs** (the bounds in `vlm.worker.PHASES` are next to them):
+  start 0.75 s, prepare 0.83 s, photo 0.36 s, model 0.88 s, context 0.06 s, vision 0.25 s, image 2.3 s (Vulkan,
+  whose prompt eval sends no "still computing"), answer 0.35 s; the longest photo eval in all was 25 s (Qwen, CPU,
+  Very light, Compare). Bounds: 60 s for each step, 600 s cap on the photo eval, 120 s between two tokens.
+- **Stop, from `Talker.cancel` to the worker's "cancelled"** (every run with `--stops`; min-max over runs):
+
+  | phase stopped | SmolVLM2 CPU | SmolVLM2 Vulkan | Qwen CPU | Qwen Vulkan |
+  |---|---|---|---|---|
+  | model (llama's load) | (load done in 0.3 s: landed in vision) 0.011-0.084 | (landed in context / vision) 0.083-0.088 | 0.088-0.132 | 0.179-0.193 |
+  | vision part (mtmd's load) | 0.047-0.075 | 0.062-0.089 | 0.160-0.312 | 0.218-0.253 |
+  | reading the photo | 0.007-0.462 | 0.056-0.079 | 0.026-1.466 | 0.605-1.085 |
+  | answering | 0.003-0.194 | 0.010-0.020 | 0.002-0.043 | 0.001-0.041 |
+  | engine stop during the load (pause, memory, runtime swap), to the process's exit | 0.091-0.124 | 0.186-0.234 | 0.172-0.297 | 0.309-0.331 |
+
+  The engine's stop never had to terminate the worker (exit code 0 every time). Reading the photo on Vulkan takes
+  up to about 1 s to stop: the prompt eval there can't be aborted and runs to its end. A load stopped in "model"
+  or "vision" leaves nothing loaded; one stopped while reading the photo keeps the model. Not stoppable at all:
+  prepare, photo, context (each well under 1 s here).
+- **Low memory.**
+  - What the app says (`api.talk_assess`, the free-RAM fallback until PR #16) with the hog leaving 2,841 MB free:
+    deeper "Not now: only 2.8 GB free, Qwen3-VL needs about 2.4 GB plus margin", quick allowed; with the PC
+    itself at 233 MB free (a game running, no hog): both "Not now" (0.2 GB). At 3.8 GB both were allowed.
+  - A load that runs out under the worker group's limit (`--alloc-limit-mb`, the limit set low and not raised):
+    Qwen at 700 MB: llama's model load returned NULL and the job ended with the plain "Not enough memory right
+    now (needs about 2.4 GB). Close something or try again later." in 0.8 s; the same worker then answered with
+    the limit back up. SmolVLM2 at 300 MB: the model loaded, then ggml's `GGML_ASSERT(ctx->mem_buffer != NULL)`
+    in the vision part's load ended the worker process (llama.cpp aborts; Python can't catch it): the job showed
+    "The picture model stopped unexpectedly. Try again.", and the next question started a fresh worker and
+    answered. In the app the group's limit is raised by the model's measured need before the load, so this needs
+    Windows itself to run out of commit.
+  - Nothing else was killed. Processes older than a minute that had ended by the end of a run: Windows' own
+    short-lived ones (svchost.exe, WmiPrvSE.exe, audiodg.exe, backgroundTaskHost.exe) and, in 4 runs, a worker of
+    the installed NOBAD Find (`--multiprocessing-fork`, which it releases when idle). The installed Find's main
+    process ran through all the runs. The measuring script only ends its own worker group and hog.
+- **Catalog** (`models.CATALOG` `timing`, from these runs only, low-RAM rows left out, as before: `load_s` the
+  median of cold minus warm first word, `answer_s` fastest-slowest finished Ask / Compare / warm Describe):
+  SmolVLM2 CPU Full 2 / 3-9, Gentle 1 / 3-10, Very light 3 / 5-16; Vulkan 2 / 1-4, 1 / 1-4, 1 / 1-4. Qwen CPU
+  Full 3 / 5-29, Gentle 2 / 4-18, Very light 3 / 8-46; Vulkan 3 / 1-11, 1 / 1-11, 2 / 1-11. Very light on the CPU
+  is still the only "Slower now" (Qwen 1.59x, SmolVLM2 1.75x). Run 2 of Qwen CPU at Full and at Very light was
+  much slower than run 1 (a busier moment on the PC); every run is in the range. Memory unchanged within a few
+  MB (Qwen's Vulkan graphics memory once 2,074 MB against the catalog's 2,062; its need is the 2,483 MB of system
+  memory either way).
+- Overhead of the callbacks (A/B against the previous `session.py`, SmolVLM2 first word, median of 3): CPU 3.91 /
+  3.90 s new against 4.02 / 3.92 s old, Vulkan 1.33 / 1.33 s against 1.28 / 1.33 s: within the noise.
+
 ## 2026-11-22 (1.1.0): talk about a photo under the real limits (Full, Gentle, Very light)
 
 The talk worker runs in Find's worker group, so it gets the governor's CPU hard cap on that group (Full none,

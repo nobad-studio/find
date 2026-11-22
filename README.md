@@ -22,7 +22,7 @@ they're about, and tells you why each result matched.
 - **Talk about a photo (optional, 1.1).** Describe a photo, ask about it ("what's written here?") or compare
   two, with a small vision model that runs on your PC (SmolVLM2 500M, 520 MB; Qwen3-VL 2B, 1,481 MB, for deeper
   answers). One consent covers the model and the llama.cpp runtime it runs on. On the reference PC (i5-12500H,
-  Iris Xe) SmolVLM2 answers in about 1-3 s on the graphics and 3-11 s on the processor (5-15 s while NOBAD Find
+  Iris Xe) SmolVLM2 answers in about 1-4 s on the graphics and 3-10 s on the processor (5-16 s while NOBAD Find
   runs very light), with about 1 GB of memory ([measurements](docs/measurements.md)).
 - **Words in photos and scans.** Screenshots, photos of documents and scanned PDFs are read with the OCR built
   into Windows. Offline; it runs after everything else because it's slower.
