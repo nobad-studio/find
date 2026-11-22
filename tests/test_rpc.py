@@ -522,6 +522,39 @@ def test_this_test_process_passes_the_real_client_check():
 
 
 @win_only
+def test_one_client_has_at_most_max_inflight_requests_waiting():
+    """Security review 2026-11-22 (L2): past MAX_INFLIGHT the engine stops reading that client until answers go out;
+    then everything is answered."""
+    from nobadfind.rpc import server as srv
+    name = srv.pipe_name() + "-test-" + uuid.uuid4().hex[:8]
+    gate, started, lock = threading.Event(), [], threading.Lock()
+
+    def block(params, conn):
+        with lock:
+            started.append(params.get("i"))
+        gate.wait(10)
+        return {"ok": True}
+    s = srv.Server(methods={"block": block}, name=name)
+    s.slow = {"block"}                                   # a thread each: how many started is what was accepted
+    assert s.start()
+    try:
+        c = Client(name)
+        n = srv.MAX_INFLIGHT + 8
+        for i in range(n):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "block", "params": {"i": i}})
+        time.sleep(0.5)
+        with lock:
+            assert len(started) == srv.MAX_INFLIGHT
+        gate.set()
+        got = {c.line()["id"] for _ in range(n)}
+        assert got == set(range(n))
+        c.close()
+    finally:
+        gate.set()
+        s.stop()
+
+
+@win_only
 def test_a_refused_client_is_dropped_before_anything_is_read():
     from nobadfind.rpc.server import Server, pipe_name
     name = pipe_name() + "-test-" + uuid.uuid4().hex[:8]

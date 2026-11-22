@@ -33,6 +33,10 @@ SLOW_LOG_MS = 300                    # answers slower than this are logged (meth
 
 
 MAX_CLIENTS = 8
+# Requests one client may have waiting or running at once (security review 2026-11-22, L2): past this, the engine
+# stops reading from that client until some are answered, so a client writing as fast as it can doesn't queue
+# without bound. The UI has a handful in flight (a search, previews of the rows on screen, a status).
+MAX_INFLIGHT = 32
 BUF = 64 * 1024
 WRITE_TIMEOUT_MS = 5000
 
@@ -147,6 +151,7 @@ class Conn:
         pid = wintypes.DWORD()
         self.pid = pid.value if k.GetNamedPipeClientProcessId(handle, ctypes.byref(pid)) else 0
         self._closed = False
+        self.inflight = threading.BoundedSemaphore(MAX_INFLIGHT)
 
     def send(self, obj):
         data = encode(obj)
@@ -394,6 +399,9 @@ class Server:
                     linger = conn.send(error(None, INVALID_REQUEST, "Message too big"))   # it must get to read it
                     break
                 for line in got:
+                    while not conn.inflight.acquire(timeout=0.5):     # backpressure: wait for answers first
+                        if self._stop.is_set() or not conn.alive:
+                            return
                     if method_of(line) in self.slow:
                         threading.Thread(target=self._answer, args=(conn, line), daemon=True,
                                          name="rpc-slow").start()
@@ -401,6 +409,7 @@ class Server:
                     try:
                         self._pool.submit(self._answer, conn, line)
                     except RuntimeError:                       # the pool is shut down: stopping
+                        conn.inflight.release()
                         break
         except Exception as e:
             log(f"rpc connection ended: {type(e).__name__}", "warn")
@@ -413,6 +422,11 @@ class Server:
             self._answer1(conn, line)
         except Exception as e:                                 # in a pool thread nobody would see it
             log(f"rpc answer failed: {type(e).__name__}", "warn")
+        finally:
+            try:
+                conn.inflight.release()
+            except (AttributeError, ValueError):               # a test's Conn without one
+                pass
 
     def _answer1(self, conn, line):
         t0 = time.perf_counter()
