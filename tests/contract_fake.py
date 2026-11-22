@@ -372,7 +372,7 @@ class FakeApi:
         return {"ok": True, "not_now": "", "loaded": "", "busy": False, "job": 0, "running": False,
                 "models": [{"id": "smolvlm2-500m", "name": "SmolVLM2 500M", "deeper": False, "ready": True,
                             "missing_mb": 0, "ram_mb": 1000, "vram_mb": 1200, "can_run": True, "why": ""},
-                           {"id": "qwen3-vl-2b", "name": "Qwen3-VL 2B", "deeper": True, "ready": False,
+                           {"id": "qwen3vl-2b", "name": "Qwen3-VL 2B", "deeper": True, "ready": False,
                             "missing_mb": 1800, "ram_mb": 3200, "vram_mb": 3500, "can_run": False,
                             "why": "Not enough free memory for this one right now."}],
                 "runtime": {"id": "llama-vulkan", "ready": True, "missing_mb": 0}}
@@ -389,7 +389,7 @@ class FakeApi:
             return {"ok": False, "error": "Type a question.", "job": 0}
         if deeper:
             return {"ok": False, "job": 0, "error": "To talk about photos, download Qwen3-VL 2B first (1800 MB, once).",
-                    "download": [{"id": "qwen3-vl-2b", "name": "Qwen3-VL 2B", "size_mb": 1800}]}
+                    "download": [{"id": "qwen3vl-2b", "name": "Qwen3-VL 2B", "size_mb": 1800}]}
         return self._job("vision_ask", file_id, question, more)
 
     def vision_compare(self, a, b, question=None, deeper=False):

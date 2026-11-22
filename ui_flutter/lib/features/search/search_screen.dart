@@ -595,7 +595,10 @@ class _SearchScreenState extends State<SearchScreen> {
                           listenable: s.find,
                           builder: (context, _) => _DetailSheet(
                             open: _sheet && s.find.showingResults && s.find.current != null,
-                            onClose: () => setState(() => _sheet = false),
+                            onClose: () {
+                              unawaited(talk.stop()); // closing the sheet stops an answer nobody would see
+                              setState(() => _sheet = false);
+                            },
                             child: DetailPane(
                               engine: s.engine,
                               result: s.find.current,

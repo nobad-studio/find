@@ -1334,7 +1334,7 @@ List<FileResult> demoFiles() => [
 ];
 
 /// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory).
-VisionState demoVisionState({String deeperWhy = '', String notNow = ''}) => VisionState(
+VisionState demoVisionState({String deeperWhy = '', String notNow = '', bool deeperReady = true}) => VisionState(
   notNow: notNow,
   models: [
     const VisionModel(id: 'smolvlm2-500m', name: 'SmolVLM2 500M', ready: true, ramMb: 942, vramMb: 658, canRun: true),
@@ -1342,7 +1342,8 @@ VisionState demoVisionState({String deeperWhy = '', String notNow = ''}) => Visi
       id: 'qwen3vl-2b',
       name: 'Qwen3-VL 2B',
       deeper: true,
-      ready: true,
+      ready: deeperReady,
+      missingMb: deeperReady ? 0 : 1481,
       ramMb: 2411,
       vramMb: 2060,
       canRun: deeperWhy.isEmpty,

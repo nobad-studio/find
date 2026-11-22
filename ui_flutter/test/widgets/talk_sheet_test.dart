@@ -226,4 +226,41 @@ void main() {
     expect(find.text('To talk about photos, download SmolVLM2 500M first (520 MB, once).'), findsOneWidget);
     expect(find.text(talkLabel), findsNothing);
   });
+
+  testWidgets('a deeper model not downloaded yet shows the download line and is never sent', (tester) async {
+    final e = FakeEngine(files: demoFiles())..vision = demoVisionState(deeperReady: false);
+    await openPhoto(tester, engine: e);
+    expect(find.text('Deeper analysis (Qwen3-VL-2B)'), findsOneWidget);
+    expect(find.text('Needs a one-time download (1481 MB)'), findsOneWidget);
+    expect(find.text('about 5 s, 2.4 GB while answering'), findsNothing);
+    final sw = tester.widget<NbSwitch>(find.byType(NbSwitch));
+    expect(sw.value, isFalse); // off
+    expect(sw.onChanged, isNull); // and disabled
+    await tester.tap(find.byType(NbSwitch));
+    await tester.pump();
+    await ask(tester, 'What breed is the dog?');
+    expect(e.visionCalls.last.$2, {'file_id': 3, 'question': 'What breed is the dog?'}); // no deeper
+  });
+
+  testWidgets('narrow window: the sheet lays the talk panel out, and closing it stops the answer', (tester) async {
+    final e = FakeEngine(files: demoFiles());
+    await pumpApp(tester, e, size: const Size(860, 900));
+    await type(tester, 'jpg');
+    await tester.pumpAndSettle();
+    expect(find.text('Describe'), findsNothing); // no pane at this width
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pumpAndSettle();
+    expect(find.text('Describe'), findsOneWidget);
+    expect(find.text('Deeper analysis (Qwen3-VL-2B)'), findsOneWidget);
+    await describe(tester);
+    say(e, 'answering', text: 'Waves on a long sandy beach, people walking along the water at the edge.');
+    await tester.pumpAndSettle();
+    expect(find.text('Stop'), findsOneWidget);
+    expect(tester.takeException(), isNull); // laid out without overflow
+    await tester.tapAt(const Offset(240, 500)); // outside the sheet: it closes
+    await tester.pumpAndSettle();
+    expect(find.text('Describe'), findsNothing);
+    expect(e.visionCalls.last.$1, 'vision_cancel');
+  });
 }

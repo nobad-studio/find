@@ -352,7 +352,7 @@ void main() {
     expect(talk.state!.quick!.label, 'SmolVLM2-500M');
     expect(talk.deeperOffer!.label, 'Deeper analysis (Qwen3-VL-2B)');
     expect(talk.deeperOffer!.available, isFalse);
-    expect(talk.deeperOffer!.detail, 'Not now: Not enough free memory for this one right now.');
+    expect(talk.deeperOffer!.detail, 'Needs a one-time download (1800 MB)'); // not ready comes first
 
     // describe: loading, then the whole answer so far each time (replaced), then done
     await talk.describe();

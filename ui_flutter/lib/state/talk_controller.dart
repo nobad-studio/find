@@ -130,6 +130,11 @@ class TalkController extends ChangeNotifier {
     if (d == null) return null;
     final label = 'Deeper analysis (${d.label})';
     if (notNow.isNotEmpty) return (label: label, available: false, detail: _notNowText(notNow));
+    // not on this PC yet: the download (with its consent) comes first; asking deeper would only be refused
+    if (!d.ready) {
+      final mb = d.missingMb > 0 ? ' (${d.missingMb} MB)' : '';
+      return (label: label, available: false, detail: 'Needs a one-time download$mb');
+    }
     if (!d.canRun) {
       return (label: label, available: false, detail: _notNowText(d.why.isEmpty ? "it doesn't fit right now." : d.why));
     }
