@@ -124,10 +124,23 @@ def worker_hooks(pieces):
             obj = pieces.get(key)
             return default if obj is None else fn(obj)
         return call
-    return {"release": on("indexer", lambda i: i.release_models()),
+    def both(fn_ix, fn_api, merge=None):
+        """The indexer's part, then the talk worker's (Api.vision_*, pieces["api"]) when the Api exists."""
+        a, b = on("indexer", fn_ix, merge), on("api", fn_api, merge)
+
+        def call():
+            got, more = a(), b()
+            if merge is not None:
+                return {**(got or {}), **(more or {})}
+            return got
+        return call
+    # memory pressure and the governor's tick also reach the talk worker: it goes first (spec: the talk model
+    # always unloads first) and after IDLE seconds without a question
+    return {"release": both(lambda i: i.release_models(), lambda a: a.vision_stop(
+                "Stopped: NOBAD Find needed the memory. Try again.")),
             "recycle": on("indexer", lambda i: i.recycle_workers()),
-            "release_idle": on("indexer", lambda i: i.release_idle_models()),
-            "names": on("indexer", lambda i: i.worker_names(), {})}
+            "release_idle": both(lambda i: i.release_idle_models(), lambda a: a.vision_release_idle()),
+            "names": both(lambda i: i.worker_names(), lambda a: a.vision_pids(), {})}
 
 
 def show_requests(base, show, stop, make=winapi.show_event, wait=winapi.wait_any, spawn=None):
@@ -471,10 +484,12 @@ def run(stop=None, open_ui=None, lock=None):
     indexer.turbo = turbo
     stop = stop or threading.Event()
     api = Api(store, settings, indexer, vindex)
+    pieces["api"] = api                           # the talk worker's idle release and memory release (worker_hooks)
     api._governor, api._activity, api._apps = governor, activity, apps
     api._turbo = turbo
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
     turbo._push = rpc.events.turbo
+    api._on_vision = lambda ev: rpc.events.push("vision", ev)     # talk about a photo (vlm/worker.Talker)
     api._ui_pids = rpc.ui_pids                    # the Index page names the UIs connected to the pipe
     from .update import Updater
     updater = Updater(settings)
@@ -541,6 +556,7 @@ def run(stop=None, open_ui=None, lock=None):
         hk.stop()
     rpc.stop()
     turbo.stop()                    # the helper ends with the engine (it also watches the engine's process)
+    api.vision_stop()               # the talk worker and its model (the job object would end it too)
     indexer.stop()
     governor.stop()
     indexer.join(5)                 # database writes are committed first

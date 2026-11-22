@@ -31,6 +31,13 @@ STRUCTS = [
     (L.ChatMessage, "llama.h", "llama_chat_message"),
 ]
 
+# functions whose argument list is checked against the header (find 1.1: the log callbacks the talk worker sets)
+FUNCS = [
+    ("llama.h", "llama_log_set", L.LLAMA_FUNCS),
+    ("mtmd.h", "mtmd_log_set", L.MTMD_FUNCS),
+    ("mtmd-helper.h", "mtmd_helper_log_set", L.MTMD_FUNCS),
+]
+
 Field = namedtuple("Field", "name ctype line")
 
 
@@ -49,7 +56,7 @@ SCALARS = {
     "llama_token": ("int", 4, True), "llama_pos": ("int", 4, True), "llama_seq_id": ("int", 4, True),
 }
 POINTER_TYPEDEFS = {"ggml_backend_dev_t", "llama_progress_callback", "ggml_backend_sched_eval_callback",
-                    "ggml_abort_callback", "mtmd_progress_callback"}
+                    "ggml_abort_callback", "mtmd_progress_callback", "ggml_log_callback"}
 
 
 def _strip_comments(text):
@@ -80,6 +87,49 @@ def parse_struct(path, cname):
         m2 = re.fullmatch(r"(.*?)([A-Za-z_]\w*)", stmt)
         fields.append(Field(m2.group(2), " ".join(m2.group(1).replace("*", " * ").split()), line))
     return StructFields(fields, struct_line)
+
+
+def parse_func(path, name):
+    """(return C type, [argument C types], line) of the declaration `... name(args);` in the header at `path`."""
+    with open(path, encoding="utf-8") as f:
+        text = _strip_comments(f.read())
+    m = re.search(r"([A-Za-z_][\w\s\*]*?)\b" + re.escape(name) + r"\s*\(([^)]*)\)\s*;", text)
+    if not m:
+        raise ValueError(f"function {name} not found in {path}")
+    ret = " ".join(w for w in m.group(1).replace("*", " * ").split() if not w.endswith("_API"))
+    args = []
+    for a in m.group(2).split(","):
+        a = " ".join(a.replace("*", " * ").split())
+        if not a or a == "void":
+            continue
+        m2 = re.fullmatch(r"(.*?)\s*([A-Za-z_]\w*)", a)
+        typ = m2.group(1) if m2 and m2.group(1) and m2.group(1) not in ("const", "struct", "enum") else a
+        args.append(typ)
+    return ret, args, text.count("\n", 0, m.start()) + 1
+
+
+def _ctypes_kind(t):
+    """kind_of_ctypes, with a ctypes function-pointer type counted as a pointer."""
+    if isinstance(t, type) and issubclass(t, ctypes._CFuncPtr):
+        return PTR
+    return kind_of_ctypes(t)
+
+
+def check_funcs(headers):
+    """Mismatches between FUNCS' ctypes argtypes / restype and the header's declarations."""
+    problems = []
+    for header, name, table in FUNCS:
+        ret, args, line = parse_func(os.path.join(headers, header), name)
+        restype, argtypes = table[name]
+        if len(args) != len(argtypes):
+            problems.append(f"{name}: {len(argtypes)} ctypes args != header {len(args)} (line {line})")
+            continue
+        for i, (c, t) in enumerate(zip(args, argtypes)):
+            if kind_of_c(c) != _ctypes_kind(t):
+                problems.append(f"{name} arg {i}: ctypes {t.__name__} != header {c!r} (line {line})")
+        if (ret == "void") != (restype is None):
+            problems.append(f"{name}: returns {ret!r} in the header, ctypes {restype}")
+    return problems
 
 
 def kind_of_c(ctype):
@@ -177,6 +227,7 @@ def check(headers, verbose=False, use_compiler=False):
                 print(f"  {off:4d} {hoff:4d} {c_offs.get(name, '')!s:>4} {name:<28} {f.ctype:<45} line {f.line}")
         if ctypes.sizeof(cls) != ctypes.sizeof(hdr) or (c_size is not None and c_size != ctypes.sizeof(cls)):
             problems.append(f"{cname}: sizeof {ctypes.sizeof(cls)} != header {ctypes.sizeof(hdr)} / C {c_size}")
+    problems += check_funcs(headers)
     return problems
 
 
@@ -187,7 +238,7 @@ def main(argv):
     problems = check(argv[1], verbose=True, use_compiler=True)
     for p in problems:
         print("MISMATCH", p)
-    print("OK: every struct matches" if not problems else f"{len(problems)} mismatch(es)")
+    print("OK: every struct and checked function matches" if not problems else f"{len(problems)} mismatch(es)")
     return 1 if problems else 0
 
 

@@ -7,6 +7,8 @@ Tables
   nvecs   meaning-search vectors for file and folder names (so a photo or a bill is found by what its name means)
   pvecs   photo-meaning vectors (what's in the picture), with the file time they were made for
   search_history  the questions you typed yourself, for autocomplete (setting search_history; history.py)
+  vdesc   a photo description the user kept (talk about a photo, Keep this description), with the model that made
+          it; it is also one chunk of that photo (ord KEPT_ORD) so words and meaning search find it
 """
 import os
 import secrets
@@ -42,11 +44,13 @@ CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
   INSERT INTO names(rowid, name, dir) VALUES (new.id, new.name, new.dir); END;
 CREATE TABLE IF NOT EXISTS nvecs(file_id INTEGER PRIMARY KEY, v BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS pvecs(file_id INTEGER PRIMARY KEY, mtime REAL, v BLOB NOT NULL, err TEXT);
+CREATE TABLE IF NOT EXISTS vdesc(file_id INTEGER PRIMARY KEY, text TEXT NOT NULL, model TEXT, at REAL);
 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
   INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
   DELETE FROM chunks WHERE file_id = old.id;
   DELETE FROM nvecs WHERE file_id = old.id;
-  DELETE FROM pvecs WHERE file_id = old.id; END;
+  DELETE FROM pvecs WHERE file_id = old.id;
+  DELETE FROM vdesc WHERE file_id = old.id; END;
 CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF name, dir ON files
   WHEN old.name IS NOT new.name OR old.dir IS NOT new.dir BEGIN
   INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
@@ -95,6 +99,11 @@ TEXT_INDEX = "2"
 NAME_TOKENIZE = "unicode61 remove_diacritics 2 tokenchars ''" + DEVANAGARI_MARKS + "''"
 NAME_INDEX = "4"
 SCHEMA = SCHEMA.replace("@TEXT_TOKENIZE@", TEXT_TOKENIZE).replace("@NAME_TOKENIZE@", NAME_TOKENIZE)
+
+
+# chunks.ord of a kept description (vdesc): the file's read text (OCR) is ord 0, 1, ...; re-reading the file replaces
+# those and keeps this one
+KEPT_ORD = -1
 
 
 def fts_quote(term):
@@ -344,7 +353,7 @@ class Store:
 
     def set_text(self, file_id, mtime, chunks, err=None):
         with self.wlock:
-            self.db.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord IS NOT ?", (file_id, KEPT_ORD))
             self.db.executemany("INSERT INTO chunks(file_id, ord, body) VALUES(?,?,?)",
                                 [(file_id, i, c) for i, c in enumerate(chunks)])
             self.db.execute("UPDATE files SET text_mtime=?, text_err=? WHERE id=?", (mtime, err, file_id))
@@ -488,6 +497,37 @@ class Store:
             self.db.executemany(f"INSERT OR REPLACE INTO {t}(chunk_id, v) VALUES(?,?)", rows)
             self.db.commit()
 
+    # ---------- talk about a photo: what was read from it, and the description the user kept ----------
+    def read_text(self, file_id):
+        """The text read from inside a file (OCR for a photo), in order, when it was read from the file as it is now
+        (text_mtime = mtime); "" otherwise. A kept description is not part of it."""
+        if not self.one("SELECT 1 FROM files WHERE id=? AND text_mtime IS NOT NULL AND text_mtime = mtime",
+                        (file_id,)):
+            return ""
+        rows = self.q("SELECT body FROM chunks WHERE file_id=? AND ord IS NOT ? ORDER BY ord", (file_id, KEPT_ORD))
+        return "\n".join(r[0] for r in rows if r[0]).strip()
+
+    def keep_description(self, file_id, text, model=""):
+        """Store the user's kept description of a photo (vdesc) and make it that photo's KEPT_ORD chunk (searched by
+        words, and by meaning once the indexer gives it a vector). Replaces an earlier one."""
+        with self.wlock:
+            self.db.execute("INSERT OR REPLACE INTO vdesc(file_id, text, model, at) VALUES(?,?,?,?)",
+                            (file_id, text, model or "", time.time()))
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord=?", (file_id, KEPT_ORD))
+            self.db.execute("INSERT INTO chunks(file_id, ord, body) VALUES(?,?,?)", (file_id, KEPT_ORD, text))
+            self.db.commit()
+
+    def forget_description(self, file_id):
+        with self.wlock:
+            self.db.execute("DELETE FROM vdesc WHERE file_id=?", (file_id,))
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord=?", (file_id, KEPT_ORD))
+            self.db.commit()
+
+    def kept_description(self, file_id):
+        """{"text", "model", "at"} or None."""
+        r = self.q("SELECT text, model, at FROM vdesc WHERE file_id=?", (file_id,))
+        return {"text": r[0][0], "model": r[0][1] or "", "at": r[0][2] or 0.0} if r else None
+
     # ---------- forgetting ----------
     def forget_path(self, path):
         self.remove_paths([path])
@@ -495,7 +535,7 @@ class Store:
     def wipe(self):
         with self.wlock:
             for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "chunks", "files", "meta", "apps",
-                      "search_history"):
+                      "search_history", "vdesc"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT INTO names(names) VALUES('rebuild')")
             self.db.execute("INSERT INTO text(text) VALUES('rebuild')")

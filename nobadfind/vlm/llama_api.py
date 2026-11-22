@@ -170,6 +170,8 @@ class ChatMessage(ctypes.Structure):
 
 
 P = c_void_p                                            # opaque handles: model, context, vocab, sampler, ...
+# typedef void (*ggml_log_callback)(enum ggml_log_level level, const char * text, void * user_data); ggml.h:2715
+LOG_CALLBACK = ctypes.CFUNCTYPE(None, c_int, c_char_p, c_void_p)
 
 # name: (restype, [argtypes])
 GGML_FUNCS = {
@@ -203,6 +205,7 @@ LLAMA_FUNCS = {
     "llama_sampler_chain_add": (None, [P, P]),                         # llama.h:1483
     "llama_sampler_init_greedy": (P, []),                              # llama.h:1500
     "llama_sampler_sample": (llama_token, [P, P, c_int32]),            # llama.h:1666
+    "llama_log_set": (None, [LOG_CALLBACK, P]),                        # llama.h:1692 (also sets ggml's logger)
 }
 
 MTMD_FUNCS = {
@@ -220,6 +223,8 @@ MTMD_FUNCS = {
     "mtmd_tokenize": (c_int32, [P, P, POINTER(MtmdInputText), POINTER(c_void_p), c_size_t]),  # mtmd.h:336
     # mtmd-helper.h:166 (exported by mtmd.dll in b12602)
     "mtmd_helper_eval_chunks": (c_int32, [P, P, P, llama_pos, llama_seq_id, c_int32, c_bool, POINTER(llama_pos)]),
+    "mtmd_log_set": (None, [LOG_CALLBACK, P]),                         # mtmd.h:392 (mtmd and clip)
+    "mtmd_helper_log_set": (None, [LOG_CALLBACK, P]),                  # mtmd-helper.h:76 (the helper's own)
 }
 
 INCOMPLETE = "llama.cpp runtime incomplete"
@@ -280,8 +285,22 @@ def _backend_paths(runtime_dir, score=_cpu_score):
     return [os.path.join(runtime_dir, n) for n in out]
 
 
-def load(runtime_dir):
-    """Load (once per folder) the llama.cpp b12602 runtime in `runtime_dir`; returns a `Lib`."""
+@LOG_CALLBACK
+def _no_log(_level, _text, _user):
+    """Drops every llama.cpp / ggml / mtmd log line. Module-level, so it lives as long as the process."""
+
+
+def silence_logs(lib):
+    """No llama.cpp log output from now on (privacy: the prompt echo carries the user's question, and it must
+    never reach a log, a captured stderr or a pipe transcript). Call once per process, right after load()."""
+    lib.llama.llama_log_set(_no_log, None)
+    lib.mtmd.mtmd_helper_log_set(_no_log, None)         # also calls mtmd_log_set
+    lib.mtmd.mtmd_log_set(_no_log, None)
+
+
+def load(runtime_dir, quiet=False):
+    """Load (once per folder) the llama.cpp b12602 runtime in `runtime_dir`; returns a `Lib`. quiet: logging is
+    switched off (silence_logs) before the backends are registered, so not even their device lines are printed."""
     runtime_dir = os.path.abspath(runtime_dir)
     key = os.path.normcase(runtime_dir)
     with _lock:
@@ -299,6 +318,8 @@ def load(runtime_dir):
             _bind(ggml, GGML_FUNCS, "ggml.dll")
             _bind(llama, LLAMA_FUNCS, "llama.dll")
             _bind(mtmd, MTMD_FUNCS, "mtmd.dll")
+            if quiet:
+                silence_logs(Lib(runtime_dir, None, ggml, llama, mtmd))
             for path in _backend_paths(runtime_dir):
                 ggml.ggml_backend_load(os.fsencode(path))      # NULL when it has no device here (e.g. no Vulkan)
         except BaseException:

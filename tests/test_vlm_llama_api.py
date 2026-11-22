@@ -26,6 +26,37 @@ def test_structs_match_b12602_headers():
     assert header_check.check(HEADERS) == []
 
 
+@pytest.mark.skipif(not HEADERS, reason="NOBAD_FIND_LLAMA_HEADERS not set (dev only)")
+def test_log_functions_match_b12602_headers():
+    assert header_check.check_funcs(HEADERS) == []
+    assert {n for _h, n, _t in header_check.FUNCS} == {"llama_log_set", "mtmd_log_set", "mtmd_helper_log_set"}
+
+
+def test_the_function_check_finds_a_wrong_binding(tmp_path, monkeypatch):
+    (tmp_path / "llama.h").write_text("// x\nLLAMA_API void llama_log_set(ggml_log_callback cb, void * user_data);\n")
+    (tmp_path / "mtmd.h").write_text("MTMD_API void mtmd_log_set(ggml_log_callback log_callback, void * user_data);")
+    (tmp_path / "mtmd-helper.h").write_text("MTMD_API int mtmd_helper_log_set(ggml_log_callback cb);")
+    assert header_check.parse_func(str(tmp_path / "llama.h"), "llama_log_set") == (
+        "void", ["ggml_log_callback", "void *"], 2)
+    problems = header_check.check_funcs(str(tmp_path))
+    assert problems == ["mtmd_helper_log_set: 2 ctypes args != header 1 (line 1)"]
+
+
+def test_silence_logs_sets_a_no_op_callback_on_all_three():
+    calls = []
+
+    class Ns:
+        pass
+    lib = Ns()
+    lib.llama, lib.mtmd = Ns(), Ns()
+    lib.llama.llama_log_set = lambda cb, ud: calls.append(("llama", cb, ud))
+    lib.mtmd.mtmd_helper_log_set = lambda cb, ud: calls.append(("helper", cb, ud))
+    lib.mtmd.mtmd_log_set = lambda cb, ud: calls.append(("mtmd", cb, ud))
+    llama_api.silence_logs(lib)
+    assert [(w, cb, ud) for w, cb, ud in calls] == [(w, llama_api._no_log, None) for w in ("llama", "helper", "mtmd")]
+    llama_api._no_log(2, b"prompt with the user's question", None)      # callable, prints nothing
+
+
 def test_load_refuses_a_runtime_without_both_dlls(tmp_path):
     assert llama_api.LLAMA_BUILD == "b12602"
     with pytest.raises(RuntimeError, match="llama.cpp runtime incomplete"):

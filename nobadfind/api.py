@@ -19,6 +19,7 @@ from .kinds import READABLE_EXT
 from .log import log
 from .search import SORTS, search
 from .vlm import runtime as vlm_runtime
+from .vlm.worker import GONE as VISION_GONE, MAX_IMAGES
 
 MAX_QUERY = 500
 TOTALS_TTL = 10                  # seconds: the phase counts are COUNT queries, too heavy for every 2 s poll
@@ -59,6 +60,9 @@ class Api:
         self._folder_dialog = None        # engine.py: Windows' own folder dialog
         self._turbo = None                # engine.py: turbo.Turbo, the optional elevated NTFS index helper
         self._timer, self._exit = threading.Timer, os._exit     # tests replace them
+        self._talk = None                 # vlm.worker.Talker, made on the first talk-about-a-photo question
+        self._talk_lock = threading.Lock()
+        self._on_vision = None            # engine.py: push one `vision` event to the UI
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -349,6 +353,7 @@ class Api:
             known.update({pid: procs.WORKER_NAMES.get(n, "other") for pid, n in self._indexer.worker_names().items()})
         except Exception:
             pass
+        known.update({pid: "talk" for pid in self.vision_pids()})
         try:
             tpid = self._turbo.helper_pid() if self._turbo is not None else 0
         except Exception:
@@ -907,6 +912,9 @@ class Api:
                 if m["feature"] == "runtime":                   # the pinned zip, then only its pinned DLLs
                     def zprogress(_n, got, _size):
                         st["got"] = got
+                    # the folder is swapped by rename: the talk worker must not hold its DLLs (it refuses new
+                    # questions while this runtime downloads, _vision_not_now)
+                    self.vision_stop("Stopped: the picture runtime is being updated.")
                     vlm_runtime.install(mid, self._mdir(), zprogress)
                 else:
                     os.makedirs(d, exist_ok=True)
@@ -934,6 +942,200 @@ class Api:
         self._mdl_thread = threading.Thread(target=run, daemon=True, name="model-download")
         self._mdl_thread.start()
         return {"ok": True, "error": ""}
+
+    # ---------- talk about a photo (1.1, vlm/worker.py) ----------
+    # Every vision_* call answers at once {"ok", "error", "job"}; the answer comes as `vision` events
+    # {"job", "state": loading | answering | done | error | cancelled, "text", "model", "note"} (worker.Talker).
+    # One job at a time: a new one cancels the one streaming. Files only by result id.
+
+    def _talker(self):
+        with self._talk_lock:
+            if self._talk is None:
+                from .vlm import worker
+                self._talk = worker.Talker(self._vision_emit)
+            return self._talk
+
+    def _vision_emit(self, ev):
+        push = self._on_vision
+        if push is not None:
+            push(ev)
+
+    def _vision_file(self, file_id):
+        """(path, "") of a photo the talk model may look at, or (None, why not)."""
+        if not isinstance(file_id, int) or isinstance(file_id, bool):
+            return None, VISION_GONE
+        row = self._store.q("SELECT path, kind FROM files WHERE id=?", (file_id,))
+        if not row:
+            return None, VISION_GONE
+        path, kind = row[0]
+        if scope.Rules.from_settings(self._settings).names_only(path):
+            return None, "NOBAD Find keeps only the name of this file, so it doesn't look inside it."
+        if kind != "image":
+            return None, "Only photos can be described."
+        if not os.path.isfile(path):
+            return None, VISION_GONE
+        return path, ""
+
+    def _vision_not_now(self):
+        gov = self._governor
+        d = getattr(gov, "decision", None)
+        if d is not None and d.level == "paused":
+            why = d.reason.split(":", 1)[1].strip() if ":" in d.reason else ""
+            return "Not now: NOBAD Find is paused" + (f" ({why})." if why else ".")
+        busy = [mid for mid, st in getattr(self, "_mdl", {}).items()
+                if st.get("state") == "downloading" and (models.get(mid) or {}).get("feature") == "runtime"]
+        if busy:
+            return "Not now: the picture runtime is being downloaded. Try again when it's done."
+        return ""
+
+    def _vision_model(self, deeper):
+        """(catalog entry, "") of the talk model to use now, or (None, why not)."""
+        talk = models.talk_models()
+        m = talk[1] if deeper and len(talk) > 1 else talk[0]
+        gov = self._governor
+        sample = getattr(gov, "sample", None)
+        ok, why = talk_assess(m, sample, hw.scan()) if deeper else talk_fits(m, sample)
+        return (m, "") if ok else (None, why or f"Not now: {m['name']} can't run on this PC right now.")
+
+    def _vision_job(self, op, ids, question, deeper):
+        """The worker job for these photos and this model, or {"ok": False, ...} when it can't start."""
+        paths = []
+        for fid in ids:
+            p, why = self._vision_file(fid)
+            if p is None:
+                return None, {"ok": False, "error": why, "job": 0}
+            paths.append(p)
+        if len(paths) > MAX_IMAGES:
+            return None, {"ok": False, "error": "At most two photos at a time.", "job": 0}
+        if op == "ask":
+            from .vlm import prompts
+            try:
+                prompts.ask(question)
+            except ValueError:
+                return None, {"ok": False, "error": "Type a question.", "job": 0}
+        why = self._vision_not_now()
+        if why:
+            return None, {"ok": False, "error": why, "job": 0}
+        m, why = self._vision_model(deeper)
+        if m is None:
+            return None, {"ok": False, "error": why, "job": 0}
+        d = self._mdir()
+        rid = models.runtime_for("vulkan", d)
+        if not models.ready(rid, d):
+            rid = "llama-vulkan" if hw.scan().get("gpu") else "llama-cpu"
+        need = [x for x in (m, models.get(rid)) if not models.ready(x["id"], d)]
+        if need:
+            mb = sum(models.missing_mb(x["id"], d) for x in need)
+            names = " and ".join(x["name"] for x in need)
+            return None, {"ok": False, "job": 0,
+                          "error": f"To talk about photos, download {names} first ({mb} MB, once).",
+                          "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
+                                       for x in need]}
+        vulkan = rid == "llama-vulkan"
+        settings = dict(m["talk"])
+        settings["need_mb"] = int(m.get("vram_mb" if vulkan else "ram_mb") or 0) or None
+        mdir = models.model_dir(m["id"], d)
+        talk = self._talker()
+        job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
+               "model": {"id": m["id"], "model": os.path.join(mdir, "model.gguf"),
+                         "mmproj": os.path.join(mdir, "mmproj.gguf"), "runtime": models.model_dir(rid, d)},
+               "settings": settings, "gpu_layers": 99 if vulkan else 0, "files": list(ids)}
+        return (job, m["name"]), None
+
+    def _vision_start(self, op, ids, question=None, deeper=False):
+        got, refused = self._vision_job(op, ids, question, deeper)
+        if refused is not None:
+            return refused
+        job, name = got
+        talk = self._talker()
+        from .rpc.protocol import after_reply
+        after_reply(lambda: talk.submit(job, name))     # its events come after this answer, which names the job
+        return {"ok": True, "error": "", "job": job["job"]}
+
+    def vision_describe(self, file_id):
+        return self._vision_start("describe", [file_id])
+
+    def vision_ask(self, file_id, question, deeper=False, more=False):
+        """A question about one photo. A question about its writing ("what does the sign say?") gets the text read
+        from the photo (OCR) first, as a finished answer; the model is asked only with more=True."""
+        from .vlm import prompts
+        if not isinstance(question, str):
+            return {"ok": False, "error": "Type a question.", "job": 0}
+        if not more and prompts.is_text_question(question) and prompts.clean_question(question):
+            p, why = self._vision_file(file_id)
+            if p is None:
+                return {"ok": False, "error": why, "job": 0}
+            text = self._store.read_text(file_id)
+            if text:
+                talk = self._talker()
+                jid = talk.next_id()
+                ev = {"job": jid, "state": "done", "text": text[:MAX_READ_TEXT], "model": "",
+                      "note": "Text read from the photo"}
+                from .rpc.protocol import after_reply
+                after_reply(lambda: talk.emit_now(ev))
+                return {"ok": True, "error": "", "job": jid}
+        return self._vision_start("ask", [file_id], question, bool(deeper))
+
+    def vision_compare(self, a, b, question=None, deeper=False):
+        if a == b:
+            return {"ok": False, "error": "Pick a second, different photo to compare.", "job": 0}
+        if question is not None and not isinstance(question, str):
+            return {"ok": False, "error": "The question must be text.", "job": 0}
+        return self._vision_start("compare", [a, b], question, bool(deeper))
+
+    def vision_cancel(self):
+        if self._talk is not None:
+            self._talk.cancel()
+        return {"ok": True, "error": ""}
+
+    def vision_keep(self, file_id, text):
+        """Keep a description of a photo (the user's press): stored in vdesc and as one text chunk of that photo,
+        so words and meaning search find it ("your kept description matches"). Empty text forgets it."""
+        from .vlm import prompts
+        _p, why = self._vision_file(file_id)
+        if why:
+            return {"ok": False, "error": why}
+        if not isinstance(text, str):
+            return {"ok": False, "error": "The description must be text."}
+        t = prompts.clean_text(text, MAX_KEPT)
+        if not t:
+            self._store.forget_description(file_id)
+            return {"ok": True, "error": "", "kept": False}
+        model = self._talk.kept_model(file_id, t) if self._talk is not None else ""
+        self._store.keep_description(file_id, t, model)
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()                                  # its meaning vector is made by the indexer's next pass
+        return {"ok": True, "error": "", "kept": True}
+
+    def vision_state(self):
+        d = self._mdir()
+        rid = models.runtime_for("vulkan", d)
+        sample = getattr(self._governor, "sample", None)
+        out = []
+        for i, m in enumerate(models.talk_models()):
+            ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
+            out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
+                        "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
+                        "vram_mb": int(m.get("vram_mb") or 0), "can_run": ok, "why": why})
+        st = self._talk.state() if self._talk is not None else {"loaded": "", "busy": False, "job": 0,
+                                                               "running": False}
+        return {"ok": True, "not_now": self._vision_not_now(), "models": out,
+                "runtime": {"id": rid, "ready": models.ready(rid, d), "missing_mb": models.missing_mb(rid, d)},
+                **st}
+
+    # the engine's hooks (engine.worker_hooks, run): idle release, memory pressure, quitting
+    def vision_release_idle(self):
+        t = getattr(self, "_talk", None)
+        return t.release_if_idle() if t is not None else False
+
+    def vision_stop(self, why=""):
+        t = getattr(self, "_talk", None)
+        return t.stop(why) if t is not None else False
+
+    def vision_pids(self):
+        t = getattr(self, "_talk", None)
+        return t.pids() if t is not None else {}
 
     # ---------- updates (0.9.0, update.py) ----------
     def update_state(self):
@@ -993,6 +1195,8 @@ class Api:
             in_use.add(models.selected(self._settings, "photo"))
         if mid in in_use:
             return {"ok": False, "error": "NOBAD Find is using that model. Choose another one first."}
+        if m["feature"] in ("talk", "runtime"):
+            self.vision_stop("Stopped: that model is being removed.")     # its files are open in the talk worker
         d = models.model_dir(mid, self._mdir())
         for name in m["files"]:
             for p in (os.path.join(d, name), os.path.join(d, name + ".part"), os.path.join(d, name + ".dl.part")):
@@ -1090,6 +1294,39 @@ class Api:
         self._indexer.stop()
         self._indexer.join(5)                  # a database write in progress is committed first
         self._exit(0)
+
+
+MAX_READ_TEXT = 4000             # characters of a photo's read text (OCR) shown first for a question about writing
+MAX_KEPT = 2000                  # characters of a kept description
+TALK_MARGIN_MB, TALK_MARGIN_SHARE = 256, 0.25       # as capability.MARGIN_MB / MARGIN_SHARE (PR #16)
+
+
+def talk_fits(m, sample):
+    """(True, "") when the talk model's measured need (catalog ram_mb) plus the margin fits in free RAM now (the
+    governor's last sample, else Windows now); unknown free memory never refuses."""
+    free = getattr(sample, "free_mb", None) if sample is not None else None
+    if not free:
+        free = winapi.memory_status()[1]
+    need = int(m.get("ram_mb") or 0)
+    if free and need + TALK_MARGIN_MB + TALK_MARGIN_SHARE * need > free:
+        short = m["name"].split()[0]
+        return False, (f"Not now: only {free / 1024:.1f} GB free, {short} needs about {need / 1024:.1f} GB "
+                       "plus margin")
+    return True, ""
+
+
+def talk_assess(m, sample, pc):
+    """(can run now, why) for the deeper talk model. capability.assess (PR #16) when it is there; until it merges,
+    this fallback: models.capable (the installed PC) and talk_fits (free memory now). Delete the fallback then."""
+    try:
+        from . import capability
+    except ImportError:
+        capability = None
+    if capability is not None:
+        r = capability.assess(sample, pc, catalog=[m])
+        return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
+    ok, why = models.capable(m, pc)
+    return (ok, why) if not ok else talk_fits(m, sample)
 
 
 class DownloadRate:

@@ -32,6 +32,8 @@ ROLES = {
     "text": ("Text reader worker", "Reads the words inside documents, and inside pictures with Windows OCR."),
     "meaning": ("Meaning worker", "Runs the AI model for text, so you can search by what files mean."),
     "photo": ("Photo worker", "Runs the AI model for photos; Windows' own decoders open the pictures."),
+    "talk": ("Photo talk worker", "Runs the model that describes and answers questions about a photo you asked "
+             "about; it ends 3 minutes after the last question."),
     "window": ("The window", "NOBAD Find's window. Closing it ends this process."),
     "bar": ("The search bar", "The quick find bar you open with the hotkey."),
     "turbo": ("Turbo index helper (elevated)",
@@ -42,11 +44,11 @@ ROLES = {
     "client": ("Connected program", "A program of yours connected to NOBAD Find's private pipe."),
     "other": ("Helper", "A program NOBAD Find started."),
 }
-ORDER = ("engine", "window", "bar", "text", "meaning", "photo", "turbo", "open_with", "ending", "mp_helper",
+ORDER = ("engine", "window", "bar", "text", "meaning", "photo", "talk", "turbo", "open_with", "ending", "mp_helper",
          "client", "other")
 WORKER_ROLES = ("text", "meaning", "photo")
 # indexer.worker_names() -> role id
-WORKER_NAMES = {"text reader": "text", "meaning worker": "meaning", "photo worker": "photo"}
+WORKER_NAMES = {"text reader": "text", "meaning worker": "meaning", "photo worker": "photo", "talk worker": "talk"}
 
 
 # ---------- reading Windows (every function returns something empty when it can't) ----------
