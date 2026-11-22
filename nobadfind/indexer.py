@@ -1146,7 +1146,8 @@ class Indexer:
         rows = []
         w = Walker(self.roots(), exclude=self.settings.get("exclude"), gen=gen, rules=self.rules())
         for p in paths:
-            if w.excluded(p):
+            p = winapi.long_path(p)                 # a short "CREDEN~1" segment must not get past the rules (L5)
+            if p is None or w.excluded(p):
                 continue
             name, parent = os.path.basename(p), os.path.dirname(p)
             try:

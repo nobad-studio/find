@@ -1,6 +1,7 @@
 """Small Windows API wrappers (ctypes only; nothing here builds a shell string)."""
 import ctypes
 import os
+import re
 import subprocess
 import sys
 from ctypes import wintypes
@@ -34,6 +35,31 @@ def windows_dir():
 def system_dir():
     """System32, from Windows itself (GetSystemDirectoryW)."""
     return _win_folder("GetSystemDirectoryW", "C:\\Windows\\System32")
+
+
+_SHORT_SEGMENT = re.compile(r"~\d")
+
+
+def long_path(p):
+    """p with every 8.3 short segment ("APPDAT~1") in its long form, or None when it has one Windows can't expand
+    (gone, or no access). Folder-change notifications may name a path either way (ReadDirectoryChangesW), and the
+    scope rules match folder names as written: "CREDEN~1" must not slip past "Credentials" (security review
+    2026-11-22, L5). A path with no "~digit" in it is returned as it is, with no call."""
+    if not p or not _SHORT_SEGMENT.search(p):
+        return p
+    if not WIN:
+        return None
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetLongPathNameW(p, buf, 32768)
+    if n and n < 32768:
+        return buf.value
+    # gone (a delete): its folders still exist, so expand those; the last name stays as it came (a file really
+    # named "Report~1.docx" that was deleted still leaves the index)
+    parent, name = os.path.split(p)
+    if not name or parent == p:
+        return None
+    head = long_path(parent)
+    return None if head is None else os.path.join(head, name)
 
 
 _IN_WINDOWS_DIR = {"explorer.exe"}

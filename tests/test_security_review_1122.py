@@ -319,3 +319,58 @@ def test_no_path_gives_the_allowance_back_after_a_plain_join():
     assert "join(10)" not in src
 
 
+# ---------- L5: an 8.3 short name can't get a secret past the rules ----------
+def _short(p):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(p), buf, 32768)
+    return buf.value if n else str(p)
+
+
+def test_long_path_expands_short_segments_and_leaves_the_rest(tmp_path):
+    import pytest
+    from nobadfind import winapi
+    assert winapi.long_path(r"C:\Users\me\notes.txt") == r"C:\Users\me\notes.txt"      # no "~digit": no call
+    if not winapi.WIN:
+        return
+    d = tmp_path / "Credentials Of Mine"
+    d.mkdir()
+    f = d / "a long file name.txt"
+    f.write_text("x")
+    short = _short(f)
+    if "~" not in short:
+        pytest.skip("8.3 names are off on this volume")
+    assert winapi.long_path(short).lower() == str(f).lower()
+    gone = os.path.join(_short(d), "Report~1.docx")                    # a delete: the folder expands, the name stays
+    assert winapi.long_path(gone).lower() == os.path.join(str(d), "Report~1.docx").lower()
+
+
+def test_a_live_change_with_a_short_name_follows_the_rules_of_its_long_name(tmp_path, monkeypatch):
+    import pytest
+    from nobadfind import indexer, winapi
+    from nobadfind.store import Store
+    from test_scope_indexer import S
+    if not winapi.WIN:
+        return
+    psr = tmp_path / "Microsoft" / "Windows" / "PowerShell" / "PSReadLine"
+    psr.mkdir(parents=True)
+    f = psr / "ConsoleHost_history.txt"
+    f.write_text("secret token")
+    ok = tmp_path / "Ordinary Folder Name"
+    ok.mkdir()
+    g = ok / "plain notes file.txt"
+    g.write_text("x")
+    short_f, short_g = _short(f), _short(g)
+    if "~" not in short_f + short_g:
+        pytest.skip("8.3 names are off on this volume")
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ix = indexer.Indexer(s, S(scope="custom", roots=[str(tmp_path)]))
+    monkeypatch.setattr(indexer, "DEBOUNCE", 0)
+    ix._pending = {short_f: 1, short_g: 1}
+    ix._apply_changes()
+    paths = {r[0].lower() for r in s.q("SELECT path FROM files")}
+    assert str(g).lower() in paths                                     # stored by its long name
+    assert not any("consolehost" in p or "~" in p for p in paths), paths
+    s.close()
+
+

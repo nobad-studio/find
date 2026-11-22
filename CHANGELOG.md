@@ -38,6 +38,8 @@
   Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
   when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
   the index stays as it is.
+- Fixed: a change Windows reported with an old-style short name (`APPDAT~1\...\CREDEN~1`) could get a password
+  store past those rules; such paths are now read by their full names first.
 - Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The
   Never index list now holds 5000 entries; if it is ever full, Forget says so and leaves the file where it is.
 - The window now checks that it is talking to NOBAD Find's own engine (NobadFind.exe next to it, a normal user
