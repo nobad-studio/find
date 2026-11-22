@@ -78,6 +78,19 @@ def _under(n, prefix):
     return n == prefix or n.startswith(prefix.rstrip("\\") + "\\")
 
 
+def holders(n, folders):
+    """The folders of the set `folders` (normcased) that are n or hold it, shortest first. One set lookup per level
+    of n, so a long Never index list (settings.MAX_PATHS) costs nothing per file."""
+    parts = n.split("\\")
+    out = []
+    for i in range(1, len(parts) + 1):
+        p = "\\".join(parts[:i])
+        for q in (p, p + "\\"):
+            if q in folders and q not in out:
+                out.append(q)
+    return out
+
+
 def other_profiles(registry=None):
     """Profile folders of every other account Windows knows (HKLM ProfileList, readable by every user)."""
     if registry is None:

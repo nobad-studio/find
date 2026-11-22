@@ -299,8 +299,20 @@ class Api:
         p = self._store.one("SELECT path FROM files WHERE id=?", (file_id,))
         if not p:
             return {"ok": False}
+        from .settings import MAX_PATHS
+        keep = os.path.normpath(p)
+        old = list(self._settings.get("exclude") or [])
+        if keep not in old:
+            if len(old) >= MAX_PATHS:            # security review 2026-11-22 (M4): never ok without keeping it out
+                return {"ok": False, "error": f"The Never index list is full ({MAX_PATHS} entries). Remove some "
+                                              "in Settings > What to index, or forget the folder instead."}
+            try:
+                self._settings.update({"exclude": old + [keep]})
+            except OSError:
+                return {"ok": False, "error": "NOBAD Find couldn't save the Never index list."}
+            if keep not in (self._settings.get("exclude") or []):
+                return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
         self._store.forget_path(p)
-        self._settings.update({"exclude": self._settings.get("exclude") + [p]})
         return {"ok": True}
 
     # ---------- status and settings ----------

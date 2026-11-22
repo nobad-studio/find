@@ -72,6 +72,9 @@ class FakeEngine implements EngineApi {
   final settingsSet = <Map<String, Object?>>[];
   final calls = <String>[];
   bool openOk = true;
+
+  /// Not empty: forget refuses with this message (the Never index list is full).
+  String forgetError = '';
   bool pickBusy = false;
   bool offline = false;
 
@@ -367,6 +370,7 @@ class FakeEngine implements EngineApi {
   Future<ActionResult> forget(int id) => _answer('forget', () {
     final f = _file(id);
     if (f == null) return const ActionResult(false);
+    if (forgetError.isNotEmpty) return ActionResult(false, forgetError);
     forgotten.add(id);
     files.remove(f);
     _settings['exclude'] = [...Settings(_settings).list('exclude'), '${f.dir}\\${f.name}'];

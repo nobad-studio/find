@@ -38,6 +38,8 @@
   Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
   when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
   the index stays as it is.
+- Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The
+  Never index list now holds 5000 entries; if it is ever full, Forget says so and leaves the file where it is.
 
 ## 1.0.1 · 2026-11-22
 

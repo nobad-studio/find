@@ -105,7 +105,8 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`thumbnail`** `{id}` → `{url: string}`: `data:image/png;base64,…` (or jpeg/bmp) from Windows' thumbnail cache for
   photos, videos and PDFs, or `""` (keep the kind badge).
 - **`path_of`** `{id}` → `{path: string}`: for Copy path; `""` if the file is gone.
-- **`forget`** `{id}` → `Ok`: remove from the index and add to the excluded folders.
+- **`forget`** `{id}` → `Ok`: remove from the index and add to the excluded folders. `ok: false` with an `error`
+  the UI shows when it couldn't be kept out (the list holds at most 5000 entries; nothing is removed then).
 - **`here_folder`** `{}` → `{path: string}`: the File Explorer folder the hotkey was pressed in (what "here" means), or
   `""`. The `here` event brings the same value as soon as it is known.
 - **`to_main`** `{text?: string (≤ 2000)}` → `{ok: true}`: the bar's Alt+Enter. The engine sends `show {what: "main", text}`,

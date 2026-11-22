@@ -275,7 +275,7 @@
       }
     },
     "forget": {
-      "description": "Remove a result (file or folder) from the index and add it to the excluded folders.",
+      "description": "Remove a result (file or folder) from the index and add it to the excluded folders. ok false with an error (shown to the user) when it couldn't be kept out: the list holds at most 5000 entries; nothing is removed then.",
       "params": {
         "$ref": "#/$defs/id_params"
       },

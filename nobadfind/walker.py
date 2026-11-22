@@ -78,10 +78,9 @@ class Walker:
         base = self._base(n)
         if base is None:
             return True                                    # outside every root: not in the scope
-        for e in self.exclude:
-            if (n == e or n.startswith(e.rstrip("\\") + "\\")) and not (
-                    base.startswith(e.rstrip("\\") + "\\") or base == e):
-                return True
+        for e in scope.holders(n, self.exclude):
+            if not (base.startswith(e.rstrip("\\") + "\\") or base == e):
+                return True                                # (a root inside an excluded folder is still walked)
         # like the walk itself, only folders below the root that holds the path count
         return self.rules.out(path, base) or self.rules.skip_file(path)
 

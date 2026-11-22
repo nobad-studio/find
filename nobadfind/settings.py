@@ -9,16 +9,20 @@ from .const import DEFAULTS
 _HOTKEY = re.compile(r"^(?:(?:ctrl|alt|shift|win)\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$")
 WSEARCH_STARTS = ("", "auto", "delayed-auto", "demand", "disabled")
 SCOPES = ("whole_pc", "my_files", "custom")
+# At most this many folders in roots / exclude. Forget adds one path each time, so it is large (security review
+# 2026-11-22, M4: at 200, a newly forgotten file was silently dropped and came back). Api.forget refuses with a
+# message when the list is full; a longer list here keeps the newest entries (the end), never the oldest.
+MAX_PATHS = 5000
 
 
 def _paths(v):
     if not isinstance(v, list):
         return []
     out = []
-    for p in v[:200]:
+    for p in v[-MAX_PATHS * 4:]:
         if isinstance(p, str) and 2 < len(p) < 1024 and os.path.isabs(p) and "\x00" not in p:
             out.append(os.path.normpath(p))
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(out))[-MAX_PATHS:]
 
 
 def coerce(key, value):

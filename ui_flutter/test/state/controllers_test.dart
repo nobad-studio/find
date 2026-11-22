@@ -103,6 +103,20 @@ void main() {
       toasts.dispose();
     });
 
+    test('a forget the engine refuses says why and keeps the result', () async {
+      final e = FakeEngine()..forgetError = 'The Never index list is full (5000 entries).';
+      final toasts = ToastController();
+      final f = FindController(e, debounce: Duration.zero, toasts: toasts);
+      f.setText('tax return');
+      await f.run();
+      expect(await f.forgetSelected((q) async => true), isFalse);
+      expect(e.forgotten, isEmpty);
+      expect(toasts.message, 'The Never index list is full (5000 entries).');
+      expect(f.results, isNotEmpty);
+      f.dispose();
+      toasts.dispose();
+    });
+
     test('an open that fails says why', () async {
       final e = FakeEngine()..openOk = false;
       final toasts = ToastController();
