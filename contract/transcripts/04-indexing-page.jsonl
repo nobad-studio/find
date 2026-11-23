@@ -24,7 +24,7 @@
 {"send": {"jsonrpc": "2.0", "id": 8, "method": "reset_learned", "params": {}}}
 {"recv": {"jsonrpc": "2.0", "id": 8, "result": {"ok": true, "error": ""}}}
 {"send": {"jsonrpc": "2.0", "id": 9, "method": "hardware", "params": {}}}
-{"recv": {"jsonrpc": "2.0", "id": 9, "result": {"ram_gb": 15.7, "cores": 8, "threads": 16, "avx2": true, "avx512_vnni": false, "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1, "directml": false, "disk_free_gb": 120.5, "ssd": true}}}
+{"recv": {"jsonrpc": "2.0", "id": 9, "result": {"ram_gb": 15.7, "cores": 8, "threads": 16, "avx2": true, "avx512_vnni": false, "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1, "directml": false, "disk_free_gb": 120.5, "ssd": true, "gpus": [{"vendor": "intel", "name": "Intel(R) Iris(R) Xe Graphics", "dedicated_mb": 128, "shared_mb": 8038, "integrated": true}], "backends": {"onnx": ["cpu"], "llamacpp": ["vulkan", "cpu"]}}}}
 {"send": {"jsonrpc": "2.0", "id": 10, "method": "forget", "params": {"id": 7}}}
 {"recv": {"jsonrpc": "2.0", "id": 10, "result": {"ok": true, "error": ""}}}
 {"send": {"jsonrpc": "2.0", "id": 11, "method": "unsubscribe", "params": {"events": ["status_full"]}}}

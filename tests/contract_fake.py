@@ -159,7 +159,10 @@ class FakeApi:
     def hardware(self):
         return {"ram_gb": 15.7, "cores": 8, "threads": 16, "avx2": True, "avx512_vnni": False,
                 "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1, "directml": False, "disk_free_gb": 120.5,
-                "ssd": True}
+                "ssd": True,
+                "gpus": [{"vendor": "intel", "name": "Intel(R) Iris(R) Xe Graphics", "dedicated_mb": 128,
+                          "shared_mb": 8038, "integrated": True}],
+                "backends": {"onnx": ["cpu"], "llamacpp": ["vulkan", "cpu"]}}
 
     # settings
     def get_settings(self):

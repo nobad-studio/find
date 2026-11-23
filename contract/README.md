@@ -163,7 +163,9 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   NOBAD Find slowed down (program file names only).
 - **`reset_learned`** `{exe?: string (≤ 260)|null}` → `Ok`: forget one app, or every app (`exe` null or left out).
 - **`hardware`** `{}` → `{ram_gb, cores, threads, avx2, avx512_vnni, gpu, vram_gb, directml, disk_free_gb, ssd:
-  bool|null}`: the "Your PC" facts (measured once per engine run).
+  bool|null, gpus: [{vendor, name, dedicated_mb, shared_mb, integrated}], backends: {onnx: [...], llamacpp: [...]}}`:
+  the "Your PC" facts (measured once per engine run; every adapter listed, shared memory is never video memory;
+  a backend is listed only when installed and loadable).
 
 ### Settings and the index
 

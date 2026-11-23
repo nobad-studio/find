@@ -2477,6 +2477,59 @@
             "boolean",
             "null"
           ]
+        },
+        "gpus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "vendor": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "dedicated_mb": {
+                "type": "integer"
+              },
+              "shared_mb": {
+                "type": "integer"
+              },
+              "integrated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "vendor",
+              "name",
+              "dedicated_mb",
+              "shared_mb",
+              "integrated"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "backends": {
+          "type": "object",
+          "properties": {
+            "onnx": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "llamacpp": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "onnx",
+            "llamacpp"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

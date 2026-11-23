@@ -63,7 +63,7 @@ def adapters(full=False):
                     desc = _AdapterDesc1()
                     if _method(ad, 10, ctypes.POINTER(_AdapterDesc1))(ad, ctypes.byref(desc)) == 0:   # GetDesc1
                         if full:
-                            out.append({"name": desc.Description.strip(), "flags": int(desc.Flags),
+                            out.append({"name": desc.Description.strip(), "flags": int(desc.Flags), "vendor_id": int(desc.VendorId),
                                         "dedicated_mb": int(desc.DedicatedVideoMemory) // 1048576,
                                         "shared_mb": int(desc.SharedSystemMemory) // 1048576,
                                         "luid": f"0x{desc.LuidHigh & 0xFFFFFFFF:08x}_0x{desc.LuidLow:08x}"})
@@ -117,18 +117,58 @@ def gpu_memory_free(adapter, used):
     return {"kind": kind, "free_mb": max(0, budget - use), "used_mb": use, "budget_mb": budget}
 
 
+_VENDORS = {0x10DE: "nvidia", 0x1002: "amd", 0x1022: "amd", 0x8086: "intel"}
+
+
+def gpu_list():
+    """Every real graphics adapter (software ones left out), not only the biggest, for hybrid laptops:
+    [{"vendor": "nvidia" | "amd" | "intel" | "other", "name", "dedicated_mb", "shared_mb", "integrated"}].
+    shared_mb is system memory the adapter may borrow, never video memory. [] if Windows lists none."""
+    try:
+        real = [a for a in adapters(full=True) if not a["flags"] & _DXGI_SOFTWARE]
+    except Exception:
+        return []
+    return [{"vendor": _VENDORS.get(a.get("vendor_id"), "other"), "name": a["name"],
+             "dedicated_mb": a["dedicated_mb"], "shared_mb": a["shared_mb"],
+             "integrated": a["dedicated_mb"] < INTEGRATED_MB} for a in real]
+
+
+def _dml():
+    """True when the ONNX Runtime build in this process has the DirectML provider; False if unknown."""
+    try:
+        import onnxruntime
+        return "DmlExecutionProvider" in onnxruntime.get_available_providers()
+    except Exception:
+        return False
+
+
+def _llama_ready(rid):
+    from . import models
+    return models.ready(rid)
+
+
+def backends():
+    """The backends installed (not live), per family: {"onnx": [...], "llamacpp": [...]}. An unknown one is left out.
+    ONNX: cpu always; directml when this process's ONNX Runtime has it; cuda only with the NVIDIA GPU pack, which
+    does not exist yet, so it is never listed. llama.cpp: vulkan / cpu when that pinned runtime is on disk."""
+    onnx = ["cpu"] + (["directml"] if _dml() else [])
+    llama = []
+    for name, rid in (("vulkan", "llama-vulkan"), ("cpu", "llama-cpu")):
+        try:
+            if _llama_ready(rid):
+                llama.append(name)
+        except Exception:
+            pass
+    return {"onnx": onnx, "llamacpp": llama}
+
+
 def _gpu():
     """(name, vram_gb, directml) of the real adapter with the most video memory."""
     real = [a for a in adapters() if not a[2] & _DXGI_SOFTWARE]
     if not real:
         return "", 0.0, False
     name, vram, _flags = max(real, key=lambda a: a[1])
-    try:
-        import onnxruntime
-        dml = "DmlExecutionProvider" in onnxruntime.get_available_providers()
-    except Exception:
-        dml = False
-    return name.strip(), round(vram / 1073741824, 1), dml
+    return name.strip(), round(vram / 1073741824, 1), _dml()
 
 
 def _physical_cores(threads):
@@ -160,7 +200,8 @@ def _physical_cores(threads):
 def _scan():
     threads = os.cpu_count() or 1
     out = {"ram_gb": 0.0, "cores": threads, "threads": threads, "avx2": False, "avx512_vnni": False,
-           "gpu": "", "vram_gb": 0.0, "directml": False, "disk_free_gb": 0.0, "ssd": None}
+           "gpu": "", "vram_gb": 0.0, "directml": False, "disk_free_gb": 0.0, "ssd": None,
+           "gpus": [], "backends": {"onnx": ["cpu"], "llamacpp": []}}
     if winapi.WIN:
         m = winapi._MEMSTATUS()
         m.dwLength = ctypes.sizeof(m)
@@ -178,6 +219,8 @@ def _scan():
         except Exception:
             pass
         out["gpu"], out["vram_gb"], out["directml"] = _gpu()
+        out["gpus"] = gpu_list()
+    out["backends"] = backends()
     home = os.path.expanduser("~")
     try:
         out["disk_free_gb"] = round(shutil.disk_usage(home).free / 1073741824, 1)
@@ -201,5 +244,6 @@ def scan():
                 log(f"hardware check failed: {type(e).__name__}", "warn")
                 _cache = {"ram_gb": 0.0, "cores": os.cpu_count() or 1, "threads": os.cpu_count() or 1, "avx2": False,
                           "avx512_vnni": False, "gpu": "", "vram_gb": 0.0, "directml": False,
-                          "disk_free_gb": 0.0, "ssd": None}
+                          "disk_free_gb": 0.0, "ssd": None, "gpus": [],
+                          "backends": {"onnx": ["cpu"], "llamacpp": []}}
         return _cache
