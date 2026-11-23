@@ -745,8 +745,13 @@ def test_no_graphics_card_for_meaning_when_the_governor_says_so(monkeypatch):
     ix = indexer.Indexer(None, S(), governor=LimGov(g.FULL, {}, gpu=False))
     ix._vectors_in_worker = True
     ix.status["plan"] = {"text_workers": 2, "text_workers_idle": 4}
+    t = [0.0]
+    ix._clock = lambda: t[0]
     ix._encode(["a"])
     ix.governor = LimGov(g.FULL, {})
     ix._encode(["b"])
+    assert made == [False]                  # going up waits for indexer.UP_HOLD
+    t[0] = indexer.UP_HOLD + 1
+    ix._encode(["c"])
     assert made == [False, True]
     ix._end_meaning_pool()

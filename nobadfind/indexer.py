@@ -32,6 +32,8 @@ DEBOUNCE = 2.0
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
 ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
 MEANING_BACKOFF = (30, 1800)     # seconds before trying a failed meaning worker again: doubling, capped
+UP_HOLD = 120                    # seconds a higher meaning-worker configuration (graphics card, more threads) must hold
+RESTART_STORM = 12               # meaning-worker starts in an hour before one warning says so
 MEANING_TIMEOUT = 120           # seconds one batch of meaning vectors may take before its worker is replaced
 JOB_TIMEOUT = 300                # seconds one file may take before its reader is stopped
 REMOVABLE_RESCAN = 1800          # USB drives aren't watched (that would block "safely remove"): re-walk them
@@ -145,6 +147,8 @@ class Indexer:
         self._passage = {}               # model id -> in-process passage encoder (vectors_in_process only)
         self._notes = []                 # what _note said (tests read it)
         self._mpool, self._mpool_gpu, self._mpool_model = None, None, None
+        self._up_target = self._up_since = None     # a higher configuration waiting out UP_HOLD
+        self._mpool_starts, self._mpool_why, self._storm_warned = [], "first start", None
         self._text_pool, self._photo_pool = None, None   # for worker_names (the watchdog's messages)
         self.stop_ev = threading.Event()
         self.wake = threading.Event()
@@ -899,8 +903,9 @@ class Indexer:
         """Before each meaning batch. False: end this phase (stopping, or a long pause ended the worker)."""
         go = self._wait_while_paused(max_wait=RECYCLE_AFTER if self._mpool is not None else None)
         if go is RECYCLE:
+            why = "memory limit" if self._recycle_req else "paused"
             self._recycle(self._mpool, "meaning worker")
-            self._end_meaning_pool()
+            self._end_meaning_pool(why)
             return False
         return bool(go)
 
@@ -967,9 +972,10 @@ class Indexer:
         level = self.governor.decision.level if self.governor is not None else FULL
         gpu = text_gpu(level, self.governor.decision if self.governor is not None else None, self.settings)
         plan_now = self.status.get("plan") or {}
-        if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid
-                                        or getattr(self, "_mpool_plan", None) != plan_now.get("model_threads")):
-            self._end_meaning_pool()
+        if self._mpool is not None:
+            why = self._restart_reason(gpu, mid, plan_now.get("model_threads"))
+            if why:
+                self._end_meaning_pool(why)
         if self._mpool is None:
             plan_ = self.status.get("plan") or {}
             most = plan_.get("model_threads") or max(1, (os.cpu_count() or 2) // 2)
@@ -980,8 +986,10 @@ class Indexer:
                                                            threads, gpu, spec))
             self._mpool_gpu, self._mpool_model = gpu, mid
             self._mpool_plan = plan_.get("model_threads")
+            self._up_target = self._up_since = None
             log(f"meaning worker started ({'graphics card if there is one' if gpu else 'processor only'}, "
                 f"{threads} threads)")
+            self._count_start()
         texts = list(texts)
         try:
             fut = self._mpool.submit(embed.encode_job, texts)
@@ -989,10 +997,17 @@ class Indexer:
             if data is None:
                 return None                     # stopping: _end_meaning_pool ends the worker now
             if data is RECYCLE:
+                why = "memory limit" if self._recycle_req else "paused"
                 self._recycle(self._mpool, "meaning worker")    # the batch is done again after the pause
-                self._end_meaning_pool()
+                self._end_meaning_pool(why)
                 return None
         except Exception as e:
+            code = ""
+            if isinstance(e, cf.BrokenExecutor):
+                codes = [getattr(p, "exitcode", None) for p in list((getattr(self._mpool, "_processes", None)
+                                                                      or {}).values())]
+                codes = [c for c in codes if c is not None]
+                code = f", exit code {codes[0]}" if codes else ""
             self._meaning_fails += 1
             wait = min(MEANING_BACKOFF[1], MEANING_BACKOFF[0] * 2 ** (self._meaning_fails - 1))
             self._meaning_retry_at = self._clock() + wait
@@ -1005,14 +1020,71 @@ class Indexer:
                 else:
                     self._note("Restarted the meaning worker after it stopped unexpectedly")
             _kill_pool(self._mpool)
-            self._end_meaning_pool()
+            self._end_meaning_pool(f"failed ({type(e).__name__}{code})")
             return None
         self._meaning_fails = 0
         return np.frombuffer(data, np.float32).reshape(len(texts), -1)
 
-    def _end_meaning_pool(self):
+    def _restart_reason(self, gpu, mid, threads):
+        """Why the running meaning worker must be replaced for this batch, or "". Going down (the graphics card
+        only at Full, fewer threads) and another model are immediate; going up waits until the new configuration
+        has held UP_HOLD seconds, and the current worker (the lower configuration) keeps serving meanwhile."""
+        if self._mpool_model != mid:
+            return f"model {self._mpool_model}→{mid}"
+        old_t = getattr(self, "_mpool_plan", None)
+        down_gpu = bool(self._mpool_gpu) and not gpu
+        up_gpu = gpu and not self._mpool_gpu
+        if old_t == threads:
+            down_t = up_t = False
+        elif isinstance(old_t, int) and isinstance(threads, int):
+            down_t, up_t = threads < old_t, threads > old_t
+        else:
+            down_t, up_t = True, False                  # unknown on one side: don't wait
+        if down_gpu or down_t:
+            why = []
+            if down_gpu:
+                why.append("level: graphics card → processor")
+            if down_t:
+                why.append(f"threads {old_t}→{threads}")
+            return ", ".join(why)
+        if not (up_gpu or up_t):
+            self._up_target = self._up_since = None
+            return ""
+        now, target = self._clock(), (gpu, threads)
+        if self._up_target != target:
+            self._up_target, self._up_since = target, now
+            return ""
+        if now - self._up_since < UP_HOLD:
+            return ""
+        why = []
+        if up_gpu:
+            why.append("level: processor → graphics card")
+        if up_t:
+            why.append(f"threads {old_t}→{threads}")
+        return ", ".join(why)
+
+    def _count_start(self):
+        """Starts in the last hour: past RESTART_STORM, one warning an hour that says what mostly caused them."""
+        now = self._clock()
+        self._mpool_starts.append((now, self._mpool_why))
+        self._mpool_starts = [s for s in self._mpool_starts if now - s[0] <= 3600]
+        n = len(self._mpool_starts)
+        if n > RESTART_STORM and (self._storm_warned is None or now - self._storm_warned >= 3600):
+            self._storm_warned = now
+            kinds = {}
+            for _, w in self._mpool_starts:
+                k = w.split(" ")[0].rstrip(":,")
+                kinds[k] = kinds.get(k, 0) + 1
+            top = max(kinds, key=kinds.get)
+            log(f"The meaning worker restarted {n} times in the last hour: mostly {top}", "warn")
+
+    def _end_meaning_pool(self, why="idle"):
         pool, self._mpool, self._mpool_gpu, self._mpool_model = self._mpool, None, None, None
         if pool is not None:
+            if self.stop_ev.is_set():
+                why = "stopping"
+            self._mpool_why = why
+            log(f"meaning worker ended: {why}")
             if self.stop_ev.is_set():
                 _kill_pool(pool)                    # stopping: don't wait for the batch in flight
             pool.shutdown(wait=True, cancel_futures=True)
