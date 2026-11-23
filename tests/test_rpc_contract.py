@@ -284,9 +284,11 @@ def real(tmp_path, monkeypatch):
     a._governor, a._activity, a._apps = Gov(), Activity(), Apps()
     a._timer = lambda secs, fn: type("T", (), {"daemon": False, "start": lambda self: None})()
     a._exit = lambda code: None
+    a._models_dir = str(tmp_path)
     monkeypatch.setattr(wsearch, "state", lambda: {"start": "delayed-auto", "running": True})
     monkeypatch.setattr(wsearch, "request", lambda start: False)          # never a UAC prompt from a test
     monkeypatch.setattr(api_mod, "set_autostart", lambda on: None)
+    monkeypatch.setattr(api_mod, "open_folder", lambda path: True)       # never a real File Explorer window
     yield a
     s.close()
 
