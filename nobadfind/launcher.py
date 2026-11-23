@@ -16,6 +16,7 @@ wifi", "chrome", "open spotify".
 import bisect
 import difflib
 import json
+import ntpath
 import os
 import re
 import subprocess
@@ -313,7 +314,7 @@ class Launcher:
             with open(self.path, encoding="utf-8") as f:
                 d = json.load(f)
             if isinstance(d, dict) and isinstance(d.get("apps"), list):
-                self.apps = [a for a in d["apps"] if isinstance(a, dict) and a.get("name") and a.get("app_id")]
+                self.apps = [a for a in d["apps"] if isinstance(a, dict) and a.get("name") and (a.get("app_id") or a.get("exe"))]
                 self._at = float(d.get("at") or 0)
         except (OSError, ValueError):
             pass
@@ -355,6 +356,11 @@ class Launcher:
                 apps.append({"id": f"app:{i}:{_slug(name)}", "name": name, "app_id": app_id,
                              "version": extra.get("version", ""), "publisher": extra.get("publisher", ""),
                              "folder": extra.get("folder", "")})
+            known = {_norm(n) for n, _a in start}
+            entries, app_paths = _registry_apps()
+            for name, version, publisher, folder, exe in _registry_only(entries, app_paths, known):
+                apps.append({"id": f"app:{len(apps)}:{_slug(name)}", "name": name, "exe": exe, "version": version,
+                             "publisher": publisher, "folder": folder})
             with self._lock:
                 self.apps, self._at = apps, self._clock()
             tmp = self.path + ".tmp"
@@ -475,6 +481,10 @@ class Launcher:
                 a = next((x for x in self.apps if x["id"] == action_id), None)
             if a is None:
                 return {"ok": False, "error": "That app isn't in the Start list any more."}
+            if a.get("exe"):                            # registry-only: checked again, then the program itself
+                if not _safe_exe(a["exe"], a.get("folder", "")):
+                    return {"ok": False, "error": "That app can't be opened from here any more."}
+                return self._start([a["exe"]], a["name"])
             return self._start([_exe("explorer.exe"), "shell:AppsFolder\\" + a["app_id"]], a["name"])
         return {"ok": False, "error": "That isn't something NOBAD Find can open."}
 
@@ -522,17 +532,21 @@ def _start_apps():
     return out
 
 
-def _installed_info():
-    """{normalized name: {version, publisher, folder}} from the registry's installed-programs lists."""
-    out = {}
+_UNINSTALL = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+_APP_PATHS = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+
+
+def _registry_apps():
+    """([{name, version, publisher, location, icon}], {exe name: path}) from the installed-programs lists and
+    App Paths. Read only; nothing here is trusted until _safe_exe."""
+    entries, app_paths = [], {}
     try:
         import winreg
     except ImportError:
-        return out
-    roots = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-             (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")]
-    for hive, path in roots:
+        return entries, app_paths
+    for hive, path in ((winreg.HKEY_LOCAL_MACHINE, _UNINSTALL),
+                       (winreg.HKEY_LOCAL_MACHINE, _UNINSTALL.replace("SOFTWARE", r"SOFTWARE\WOW6432Node", 1)),
+                       (winreg.HKEY_CURRENT_USER, _UNINSTALL)):
         try:
             k = winreg.OpenKey(hive, path)
         except OSError:
@@ -548,14 +562,101 @@ def _installed_info():
                             except OSError:
                                 return ""
                         name = val("DisplayName")
-                        if not name:
-                            continue
-                        folder = val("InstallLocation").strip('"')
-                        if not folder:
-                            icon = val("DisplayIcon").split(",")[0].strip('"')
-                            folder = os.path.dirname(icon) if icon.lower().endswith(".exe") else ""
-                        out.setdefault(_norm(name), {"version": val("DisplayVersion"), "publisher": val("Publisher"),
-                                                     "folder": folder})
+                        if name:
+                            entries.append({"name": name, "version": val("DisplayVersion"),
+                                            "publisher": val("Publisher"), "location": val("InstallLocation"),
+                                            "icon": val("DisplayIcon")})
                 except OSError:
                     continue
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            k = winreg.OpenKey(hive, _APP_PATHS)
+        except OSError:
+            continue
+        with k:
+            for i in range(winreg.QueryInfoKey(k)[0]):
+                try:
+                    exe = winreg.EnumKey(k, i)
+                    with winreg.OpenKey(k, exe) as sub:
+                        v = winreg.QueryValueEx(sub, "")[0]
+                    if isinstance(v, str) and v.strip():
+                        app_paths.setdefault(exe.lower(), v.strip())
+                except OSError:
+                    continue
+    return entries, app_paths
+
+
+def _installed_info():
+    """{normalized name: {version, publisher, folder}} from the registry's installed-programs lists."""
+    out = {}
+    for e in _registry_apps()[0]:
+        folder = e["location"].strip('"')
+        if not folder:
+            icon = _icon_path(e["icon"])
+            folder = ntpath.dirname(icon) if icon.lower().endswith(".exe") else ""
+        out.setdefault(_norm(e["name"]), {"version": e["version"], "publisher": e["publisher"], "folder": folder})
+    return out
+
+
+def _icon_path(icon):
+    """DisplayIcon is 'path,index' (the path sometimes quoted)."""
+    icon = icon.strip()
+    if icon.startswith('"'):
+        return icon[1:].split('"', 1)[0].strip()
+    return icon.rsplit(",", 1)[0].strip() if re.search(r",\s*-?\d+$", icon) else icon
+
+
+def _is_file(path):
+    return os.path.isfile(path)
+
+
+def _program_roots():
+    roots = [os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")]
+    return [r for r in roots if r]
+
+
+def _inside(path, folder):
+    p, f = ntpath.normcase(ntpath.normpath(path)), ntpath.normcase(ntpath.normpath(folder))
+    if not f or ntpath.dirname(f) == f:                 # no folder, or a whole drive: not a boundary
+        return False
+    return p.startswith(f.rstrip("\\") + "\\")
+
+
+def _safe_exe(exe, folder):
+    """A registry-listed program may be opened only when it is an existing .exe inside its own install folder or
+    Program Files, and isn't an uninstaller, installer or updater."""
+    if not isinstance(exe, str) or not exe or "\x00" in exe or len(exe) > 520 or not ntpath.isabs(exe):
+        return False
+    exe = ntpath.normpath(exe)
+    base = ntpath.basename(exe).lower()
+    if not base.endswith(".exe") or base.startswith(("unins", "update")) or "setup" in base:
+        return False
+    if not (_inside(exe, folder or "") or any(_inside(exe, r) for r in _program_roots())):
+        return False
+    return bool(_is_file(exe))
+
+
+def _registry_only(entries, app_paths, known):
+    """[(name, version, publisher, folder, exe)] for installed programs that have no Start-list entry and whose
+    program is found by DisplayIcon or App Paths and passes _safe_exe."""
+    out, seen = [], set(known)
+    for e in sorted(entries, key=lambda x: x["name"].lower()):
+        n = _norm(e["name"])
+        if not n or n in seen:
+            continue
+        location = e["location"].strip().strip('"')
+        icon = _icon_path(e["icon"])
+        if icon and not ntpath.isabs(icon) and location:
+            icon = ntpath.join(location, icon)
+        folder = location or (ntpath.dirname(icon) if icon.lower().endswith(".exe") else "")
+        cands = [icon] if icon.lower().endswith(".exe") else []
+        for name, path in app_paths.items():
+            path = path.strip('"')
+            if ntpath.dirname(ntpath.normcase(path)) == ntpath.normcase(folder) or \
+                    _norm(ntpath.splitext(name)[0]) == n:
+                cands.append(path)
+        exe = next((c for c in cands if _safe_exe(c, folder)), None)
+        if exe:
+            seen.add(n)
+            out.append((e["name"], e["version"], e["publisher"], folder, ntpath.normpath(exe)))
     return out

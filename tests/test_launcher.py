@@ -61,6 +61,7 @@ def test_only_known_ids_run(tmp_path):
 
 def test_the_app_list_is_saved_and_read_back(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_start_apps", lambda: [("Brave", "Brave"), ("Calculator", "Microsoft.Calc!App")])
+    monkeypatch.setattr(launcher, "_registry_apps", lambda: ([], {}))
     monkeypatch.setattr(launcher, "_installed_info", lambda: {"brave": {"version": "1.2", "publisher": "Brave",
                                                                           "folder": "C:\\Brave"}})
     L = launcher.Launcher(str(tmp_path), run=lambda a: None)
@@ -219,3 +220,85 @@ def test_a_launch_question_doesnt_wait_for_meaning_search(tmp_path):
     a.search("tax report from the bank")
     assert asked                                                             # other questions still use meaning
     s.close()
+
+
+# ---------- Find 1.2: apps listed only in the registry ----------
+PF = r"C:\Program Files"
+
+
+def reg_entry(name, location="", icon=""):
+    return {"name": name, "version": "1.0", "publisher": "Acme", "location": location, "icon": icon}
+
+
+def fake_files(*present):
+    have = {p.lower() for p in present}
+    return lambda p: p.lower() in have
+
+
+def registry_only(monkeypatch, entries, app_paths, is_file, start=()):
+    monkeypatch.setattr(launcher, "_start_apps", lambda: list(start))
+    monkeypatch.setattr(launcher, "_installed_info", lambda: {})
+    monkeypatch.setattr(launcher, "_registry_apps", lambda: (entries, app_paths))
+    monkeypatch.setattr(launcher, "_is_file", is_file)
+    monkeypatch.setattr(launcher, "_program_roots", lambda: [PF])
+
+
+def test_registry_app_opens_by_install_location_and_icon(tmp_path, monkeypatch):
+    exe = PF + r"\Acme\acme.exe"
+    registry_only(monkeypatch, [reg_entry("Acme Tool", PF + r"\Acme", exe + ",0")], {}, fake_files(exe))
+    ran = []
+    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L.refresh()
+    assert [a["name"] for a in L.apps] == ["Acme Tool"]
+    assert L.run(L.apps[0]["id"])["ok"] is True
+    assert ran == [[exe]]                            # an argument list: the program itself, no shell string
+
+
+def test_registry_app_opens_by_app_paths(tmp_path, monkeypatch):
+    exe = r"D:\Zed\zed.exe"
+    registry_only(monkeypatch, [reg_entry("Zed", r"D:\Zed")], {"zed.exe": exe}, fake_files(exe))
+    ran = []
+    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L.refresh()
+    assert L.run(L.apps[0]["id"])["ok"] and ran == [[exe]]
+
+
+def test_registry_app_already_in_start_list_is_not_doubled(tmp_path, monkeypatch):
+    exe = PF + r"\Acme\acme.exe"
+    registry_only(monkeypatch, [reg_entry("Acme Tool", PF + r"\Acme", exe)], {}, fake_files(exe),
+                  start=[("Acme Tool", "AcmeId")])
+    L = launcher.Launcher(str(tmp_path), run=lambda a: None)
+    L.refresh()
+    assert [a["name"] for a in L.apps] == ["Acme Tool"] and "exe" not in L.apps[0]
+
+
+def test_registry_app_with_bad_path_is_not_offered(tmp_path, monkeypatch):
+    good = r"D:\Apps\Acme"
+    cases = {
+        "missing": (good, good + r"\acme.exe", False),
+        "notexe": (good, good + r"\acme.bat", True),
+        "outside": (good, r"C:\Users\x\evil.exe", True),
+        "uninstaller": (good, good + r"\unins000.exe", True),
+        "setup": (good, good + r"\AcmeSetup.exe", True),
+        "updater": (good, good + r"\update.exe", True),
+        "relative": ("", "acme.exe", True),
+        "dotdot": (good, good + r"\..\..\evil.exe", True),
+    }
+    for label, (folder, exe, exists) in cases.items():
+        registry_only(monkeypatch, [reg_entry("Acme", folder, exe)], {}, lambda p, ex=exists: ex)
+        (tmp_path / label).mkdir()
+        L = launcher.Launcher(str(tmp_path / label), run=lambda a: None)
+        L.refresh()
+        assert L.apps == [], label
+
+
+def test_a_stored_registry_app_is_checked_again_when_run(tmp_path, monkeypatch):
+    ran = []
+    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L.apps = [{"id": "app:0:acme", "name": "Acme", "exe": r"D:\Acme\acme.exe", "folder": r"D:\Acme",
+               "version": "", "publisher": ""}]
+    monkeypatch.setattr(launcher, "_is_file", lambda p: True)
+    monkeypatch.setattr(launcher, "_program_roots", lambda: [PF])
+    assert L.run("app:0:acme")["ok"] is True
+    L.apps[0]["exe"] = r"D:\Acme\unins000.exe"
+    assert L.run("app:0:acme")["ok"] is False and len(ran) == 1
