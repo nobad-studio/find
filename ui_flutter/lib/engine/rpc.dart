@@ -34,14 +34,36 @@ abstract class Transport {
 
 typedef Connector = Future<Transport> Function();
 
+/// The state reports the engine answers on its own small lane (contract/README.md; mirrors `STATUS_LANE` in
+/// nobadfind/rpc/handlers/__init__.py, tests/test_rpc.py keeps the two equal). Past a few waiting at once the
+/// engine answers one with "busy: try again": [RpcSession.call] asks again for these, a little later.
+const statusLane = {
+  'status',
+  'status_full',
+  'hardware',
+  'capability_state',
+  'models',
+  'scope_info',
+  'turbo_state',
+  'wsearch_state',
+  'performance_state',
+};
+
+const _defaultBusyRetry = [Duration(milliseconds: 250), Duration(milliseconds: 500), Duration(milliseconds: 1000)];
+
 /// One connection's request/response bookkeeping.
 class RpcSession {
   // ignore: prefer_initializing_formals
-  RpcSession(this._t, {required void Function(EngineEvent) onEvent}) : _onEvent = onEvent {
+  RpcSession(this._t, {required void Function(EngineEvent) onEvent, List<Duration> busyRetry = _defaultBusyRetry})
+    // ignore: prefer_initializing_formals
+    : _onEvent = onEvent,
+      // ignore: prefer_initializing_formals
+      _busyRetry = busyRetry {
     _sub = _t.lines.listen(_line, onDone: _closed, onError: (_) => _closed());
   }
 
   final Transport _t;
+  final List<Duration> _busyRetry;
   final void Function(EngineEvent) _onEvent;
   late final StreamSubscription<String> _sub;
   final _pending = <int, Completer<Object?>>{};
@@ -51,7 +73,19 @@ class RpcSession {
   Future<void> get done => _done.future;
   bool get isOpen => !_done.isCompleted;
 
-  Future<Object?> call(String method, [Map<String, Object?> params = const {}, Duration? timeout]) {
+  Future<Object?> call(String method, [Map<String, Object?> params = const {}, Duration? timeout]) async {
+    if (!statusLane.contains(method)) return _call(method, params, timeout);
+    for (var i = 0;; i++) {
+      try {
+        return await _call(method, params, timeout);
+      } on RpcException catch (e) {
+        if (e.code != -32603 || e.message != 'busy: try again' || i >= _busyRetry.length) rethrow;
+        await Future<void>.delayed(_busyRetry[i]);
+      }
+    }
+  }
+
+  Future<Object?> _call(String method, Map<String, Object?> params, Duration? timeout) {
     if (!isOpen) return Future.error(const EngineOffline());
     final id = _next++;
     final String line;

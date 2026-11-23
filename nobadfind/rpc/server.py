@@ -40,7 +40,7 @@ MAX_CLIENTS = 8
 MAX_INFLIGHT = 32
 # The status lane (1.2.0 S2): state reports (handlers.STATUS_LANE) run on STATUS_WORKERS threads of their own. One
 # client may have STATUS_WORKERS running + STATUS_WAITING waiting there; the next gets a "busy: try again" error at
-# once (the UI's status poll retries on its own schedule), so the lane's queue is bounded.
+# once (the UI retries it, rpc.dart), so the lane's queue is bounded. `inline` methods skip all of this.
 STATUS_WORKERS = 2
 STATUS_WAITING = 4
 BUF = 64 * 1024
@@ -257,6 +257,7 @@ class Server:
         self.on_drop = None                  # fn(conn) after a client is gone (pipe liveness: Rpc._dropped)
         self.slow = set()                    # method names answered on a thread of their own
         self.status_lane = set()             # state reports, answered on the small status pool
+        self.inline = set()                  # dict-read-only reports (the status beat), answered on the reader thread
         self.sid = user_sid()
         self.name = name or pipe_name(self.sid)
         self._stop = threading.Event()
@@ -426,7 +427,11 @@ class Server:
                         threading.Thread(target=self._answer, args=(conn, line), daemon=True,
                                          name="rpc-slow").start()
                         continue
-                    lane = method_of(line) in self.status_lane
+                    m = method_of(line)
+                    if m in self.inline:                       # never refused, never queued behind slow reports
+                        self._answer(conn, line)
+                        continue
+                    lane = m in self.status_lane
                     if lane and not self._lane_take(conn):
                         conn.inflight.release()
                         rid = _request_id(line)

@@ -32,9 +32,12 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
   that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`, `turbo_helper`) run on threads of their own
   and only one of each waits at a time, so search, status and quit always get an answer.
 - State reports (`status`, `status_full`, `hardware`, `capability_state`, `models`, `scope_info`, `turbo_state`,
-  `wsearch_state`, `performance_state`) run on a small pool of 2 threads of their own, so a slow one never makes a search
-  wait. One client may have 2 running and 4 waiting there; the next gets the JSON-RPC error `-32603` "busy: try again"
-  at once (poll again later; no schema change, any method may answer an error).
+  `wsearch_state`, `performance_state`; "reports", not "pure": a cold one may run the hardware scan, start a background
+  count, or retry saving the forgotten list) run on a small pool of 2 threads of their own, so a slow one never makes a
+  search wait. One client may have 2 running and 4 waiting there; the next gets the JSON-RPC error `-32603`
+  "busy: try again" at once (no schema change, any method may answer an error). The UI session asks such a call again
+  up to 3 times, after 250, 500 and 1000 ms. The cheap `status` beat is answered on the connection's reader thread:
+  never refused as busy, never queued behind the others.
 
 ### Start-up order for a UI
 
