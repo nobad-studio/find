@@ -103,8 +103,9 @@ graphics memory: its "video" memory is system RAM).
   (`encode_question`, uncached), then scored against the 500 vectors.
 - **Usefulness:** not measured by this benchmark. It comes from the recorded evaluation (`eval_photo_search`,
   2026-11-22 "SigLIP 2 base vs SigLIP base, side by side", result files `pm-s2-tq-v16.json` and
-  `pm-siglip-base.json`): Find's pipeline on the searches whose channels include V (look) or C (caption), weighted
-  by their counts (56 + 28). Nothing was tuned.
+  `pm-siglip-base.json`, their `by_channel.find` figures): Find's pipeline on the searches whose channels include
+  V (look) or C (caption), weighted by their counts (56 + 28). Nothing was tuned. A variant without its own
+  evaluation (fp32 vision) has no usefulness figure: it doesn't take fp16's.
 - **Memory:** worker peak = the whole process's peak private bytes. That is more than the vision-only 207 MB in
   the re-pin section, which was the vision session's own memory.
 
@@ -126,18 +127,19 @@ shape?" answered red, a compare that answers). The first job is the cold load.
 - **First word:** p95 by nearest rank (with 10 jobs, the slowest).
 - **Load:** model + context + vision part, in the cold job.
 - **Memory:** private, working set and shared graphics memory are listed separately. The shared memory is never
-  counted as graphics capacity. Private + shared is listed only as an upper bound for the RAM budget on this
-  integrated GPU; the two may overlap.
-- **Floor memory:** the biggest single figure, against 25 % of 16 GB = 4,096 MB. Qwen on Vulkan passes by that
-  figure (2,491 MB), but its upper bound (4,549 MB) is over the budget. If private and shared don't overlap, it
-  would fail.
+  counted as graphics capacity. The counters overlap on this integrated GPU, so they are never summed; the
+  private + shared column is a listed reading only, not a need.
+- **Floor memory:** the biggest single figure (`need_mb` in `models.MEASURED`, ruling 2026-11-23: max of private,
+  working set and shared, as `models.talk_need_mb`), against 25 % of 16 GB = 4,096 MB. Qwen on Vulkan passes by
+  that figure (2,491 MB). The sum (4,549 MB) would be over it if private and shared didn't overlap; the app
+  doesn't use the sum.
 
-| profile | model, runtime | runs done | first word p95 | cold first word | load | private / working set / shared graphics | private + shared (upper bound) | crashes / hang kills / watchdog kills | checks | Usefulness | Reliability | Responsiveness (≤ 15 s, ≤ 30 s) | Memory (≤ 4,096 MB) | Availability | Degradation |
+| profile | model, runtime | runs done | first word p95 | cold first word | load | private / working set / shared graphics | private + shared (listed only, never a need) | crashes / hang kills / watchdog kills | checks | Usefulness | Reliability | Responsiveness (≤ 15 s, ≤ 30 s) | Memory (≤ 4,096 MB) | Availability | Degradation |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | mid | SmolVLM2 500M, llama-cpu | 10/10 | 13.5 s | 7.9 s | 0.4 s | 535 / 628 / 0 MB | 535 MB | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass | pass | not measured |
 | mid | SmolVLM2 500M, llama-vulkan | 10/10 | 5.8 s | 5.1 s | 1.3 s | 1,033 / 786 / 663 MB | 1,696 MB | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass | pass (CPU path passed) | not measured |
 | mid | Qwen3-VL 2B, llama-cpu | 10/10 | **17.6 s** | 12.7 s | 3.9 s | 1,743 / 2,410 / 0 MB | 1,743 MB | 0 / 0 / 0 | 3/3 | pass | pass | **fail** (first word) | pass | pass | not measured |
-| mid | Qwen3-VL 2B, llama-vulkan | 10/10 | 12.1 s | 12.1 s | 6.2 s | 2,491 / 2,247 / 2,058 MB | 4,549 MB (over 4,096 if they don't overlap) | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass (biggest figure) | pass (CPU path passed) | not measured |
+| mid | Qwen3-VL 2B, llama-vulkan | 10/10 | 12.1 s | 12.1 s | 6.2 s | 2,491 / 2,247 / 2,058 MB | 4,549 MB | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass (biggest figure) | pass (CPU path passed) | not measured |
 | low, high | every talk model and runtime | not measured | | | | | | | | | | | | | |
 
 **Runs, in order:**

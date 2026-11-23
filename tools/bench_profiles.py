@@ -60,6 +60,7 @@ APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP)
 
 from nobadfind import governor, jobs, models  # noqa: E402
+from nobadfind.modelsuggest import FLOORS  # noqa: E402  (the one floor table)
 
 LEVEL = governor.GENTLE
 MIN_FREE_MB = 2560
@@ -70,12 +71,10 @@ PROFILES = {"low": {"threads": 4, "ram_mb": 8192, "cpu_only": True},
             "high": {"threads": None, "ram_mb": 16384, "cpu_only": False}}
 PHOTOS_N, SEARCHES_N = 500, 50
 RUN_TIMEOUT_S = 2400
-# the floor (constraints, "The floor is a guaranteed experience"; Task 5 keeps the app's copy in one table)
-FLOORS = {"photo_search": {"ndcg10": 0.60, "recall10": 0.70, "query_p95_ms": 300, "items_s": 0.35,
-                           "ram_share": 0.10, "photos": PHOTOS_N, "searches": SEARCHES_N},
-          "photo_talk": {"checks": 3, "first_word_p95_s": 15, "load_s": 30, "ram_share": 0.25, "runs": 10}}
+# the floor: modelsuggest.FLOORS, the app's one table (constraints, "The floor is a guaranteed experience")
 # Usefulness: the recorded evaluation (tools/eval_photo_search.py, 556 photos / 155 searches, 2026-11-22 "SigLIP 2
-# base vs SigLIP base, side by side"; results files pm-siglip-base.json and pm-s2-tq-v16.json), Find's pipeline,
+# base vs SigLIP base, side by side"; results files pm-siglip-base.json and pm-s2-tq-v16.json, their
+# by_channel.find figures per channel: nDCG@10, recall@10, searches), Find's pipeline,
 # the searches whose channels include V (look) or C (caption): the visual / described categories. Nothing tuned.
 USEFULNESS = {
     ("siglip-base", "8bit"): {"V": (0.778, 0.860, 56), "C": (0.771, 0.849, 28)},
@@ -91,8 +90,9 @@ TALK_PHOTOS = ("dog-01.jpg", "dog-02.jpg", "sign-01.jpg", "cat-01.jpg")
 
 def usefulness(mid, variant):
     """{"visual_ndcg10", "visual_recall10", "n"} over the V and C searches (weighted by their counts), or None.
-    fp32 vision: the same vectors as fp16 (cosine 1.00000 on 50 photos), so fp16's figures."""
-    u = USEFULNESS.get((mid, "fp16-vision" if (mid, variant) == ("siglip2-base", "fp32-vision") else variant))
+    Only a variant's own evaluation counts: fp32 vision gave fp16's vectors on 50 photos, but it doesn't take fp16's
+    figures until the spec's 200-input equivalence check and its own evaluation are run."""
+    u = USEFULNESS.get((mid, variant))
     if not u:
         return None
     n = sum(c[2] for c in u.values())
@@ -585,10 +585,11 @@ def report(results):
                "ws_mb": r.get("worker_peak_ws_mb") if s["workload"] == "photo_search" else r.get("peak_ws_mb"),
                "vram_mb": 0 if s["workload"] == "photo_search" else (r.get("gpu_dedicated_mb") or 0),
                "floor": v, "source": "measurements.md 2026-11-23: reference-profile benchmark"}
+        # the need the floor and modelsuggest read: the biggest single figure (counters overlap; never summed)
+        row["need_mb"] = max(row["ram_mb"] or 0, row["ws_mb"] or 0, r.get("gpu_shared_mb") or 0)
         if s["workload"] == "photo_talk":
             row.update(first_word_s=r.get("first_word_p95_s"), load_s=r.get("load_s"),
-                       shared_mb=r.get("gpu_shared_mb") or 0,
-                       ram_upper_bound_mb=max(r.get("peak_ws_mb") or 0, r.get("private_plus_shared_mb") or 0))
+                       shared_mb=r.get("gpu_shared_mb") or 0)
         print(f"    {(s['model'], s['variant'], s['backend'], s['profile'])!r}: {json.dumps(row)},")
     print("\nruns: " + ", ".join(f"{x['key']} {x['seconds']} s" for x, _v in rows))
     print(f"total PC time: {sum(x['seconds'] for x, _v in rows) / 60:.1f} min")

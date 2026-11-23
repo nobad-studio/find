@@ -12,6 +12,8 @@ import time
 from collections import deque
 
 from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
+from . import modelsuggest
+from . import profile as profile_mod
 from . import governor as governor_mod
 from . import hardware as hw
 from .const import APP_VER, COUNT_SHARE, DEFAULTS, SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
@@ -1218,11 +1220,25 @@ class Api:
             return "active" if self._settings.get("semantic") and in_use == m["id"] else "ready"
         return "active" if models.selected(self._settings, "photo") == m["id"] else "ready"
 
+    def _suggestions(self, pc, focus):
+        """modelsuggest.for_pc for this PC: its classes (with the user's overrides), the governor's last reading of
+        free memory and graphics memory, the goal, and the talk runtime this PC uses (or would download)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        b = capability.budget(sample, pc)
+        live = {"runtime": {"photo_talk": "vulkan" if models.talk_runtime(pc, self._mdir()) == "llama-vulkan"
+                            else "cpu"}}
+        if b["free_mb"]:
+            live["free_ram_mb"] = b["free_mb"]
+        if b["gpu_kind"] == "dedicated" and b["gpu_free_mb"] is not None:
+            live["gpu_free_mb"] = b["gpu_free_mb"]
+        classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
+        return modelsuggest.for_pc(pc, classes, live, self._settings.get("performance_goal") or "balanced", focus)
+
     def models(self):
         pc = hw.scan()
         focus = self._focus()
         rec = models.recommend(pc)
-        choice = models.tier_choice(rec, focus)
+        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))
         out = []
         rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
@@ -1612,8 +1628,9 @@ class Api:
         return {"ok": True, "error": ""}
 
     def auto_configure(self):
-        tier = models.recommend(hw.scan())
-        choice = models.tier_choice(tier, self._focus())
+        pc, focus = hw.scan(), self._focus()
+        tier = models.recommend(pc)
+        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))     # never a talk model
         changes = {"text_model": choice["text"], "semantic": True, "ocr": True}
         changes.update({"photo_model": choice["photo"], "photo_meaning": True} if choice["photo"] else
                        {"photo_meaning": False})

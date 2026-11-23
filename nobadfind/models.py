@@ -244,8 +244,10 @@ def variants(mid):
 # docs/measurements.md "2026-11-23: reference-profile benchmark (mid measured)" lists every run. A combination missing here was
 # NOT measured: it is never suggested. "floor" is each floor dimension's verdict: pass | fail | not measured.
 # ram_mb = the worker's whole-process peak private bytes; ws_mb its peak working set. On Vulkan (Iris Xe: shared
-# memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own, and
-# ram_upper_bound_mb = private + shared is only the upper bound for the RAM budget (the two may overlap).
+# memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own. The counters
+# overlap on shared-memory graphics, so they are never summed: need_mb, the memory the floor and the budget read, is
+# the biggest single figure, max(ram_mb, ws_mb, shared_mb) (ruling 2026-11-23, as models.talk_need_mb).
+# Usefulness (photo_search) is the recorded evaluation's by_channel.find figures (pm-s2-tq-v16.json), V and C.
 # Measured 2026-11-23 on mid only (8 threads by job affinity, Gentle): the low and high runs were stopped by memory
 # pressure on the PC and are not measured; degradation needs them, so it is "not measured" everywhere.
 _BENCH = "measurements.md 2026-11-23: reference-profile benchmark (mid)"
@@ -253,31 +255,31 @@ _NOT_DEGR = {"degradation": "not measured"}
 MEASURED = {
     ("siglip2-base", "fp16-vision", "cpu", "mid"): {
         "workload": "photo_search", "items_s": 1.416, "query_ms": 196.5, "query_p50_ms": 179.6, "ram_mb": 598,
-        "ws_mb": 621, "vram_mb": 0, "shared_mb": 0, "first_vector_s": 5.4, "photos": 500, "searches": 50,
+        "ws_mb": 621, "vram_mb": 0, "shared_mb": 0, "need_mb": 621, "first_vector_s": 5.4, "photos": 500, "searches": 50,
         "crashes": 0, "kills": 0, "visual_ndcg10": 0.812, "visual_recall10": 0.866,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("smolvlm2-500m", "q8_0", "cpu", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 13.53, "cold_first_word_s": 7.94,
-        "load_s": 0.38, "ram_mb": 535, "ws_mb": 628, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 628,
+        "load_s": 0.38, "ram_mb": 535, "ws_mb": 628, "vram_mb": 0, "shared_mb": 0, "need_mb": 628,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("smolvlm2-500m", "q8_0", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 5.77, "cold_first_word_s": 5.14,
-        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "ram_upper_bound_mb": 1696,
+        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "need_mb": 1033,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("qwen3vl-2b", "q4_k_m", "cpu", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 17.62, "cold_first_word_s": 12.74,
-        "load_s": 3.87, "ram_mb": 1743, "ws_mb": 2410, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 2410,
+        "load_s": 3.87, "ram_mb": 1743, "ws_mb": 2410, "vram_mb": 0, "shared_mb": 0, "need_mb": 2410,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="fail", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("qwen3vl-2b", "q4_k_m", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 12.08, "cold_first_word_s": 12.08,
-        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "ram_upper_bound_mb": 4549,
+        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "need_mb": 2491,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
@@ -430,13 +432,30 @@ def talk_need_mb(m, runtime):
 
 
 def recommend(pc):
-    """light | balanced | best for this PC (the spec's table)."""
+    """light | balanced | best for this PC (the spec's table). The models it picks are recommend_choice's, which
+    delegates photo to the measured floors (modelsuggest)."""
     ram, cores = float(pc.get("ram_gb") or 0), int(pc.get("cores") or 1)
     if ram < NEEDS["balanced"][0] or cores <= 4:
         return "light"
     if (ram >= NEEDS["best"][0] and cores >= NEEDS["best"][1]) or (pc.get("directml") and pc.get("vram_gb", 0) >= 4):
         return "best"
     return "balanced"
+
+
+def recommend_choice(pc, focus="multilingual", suggestions=None):
+    """{"text", "photo", "ocr"} for auto_configure and the models page: the tier's choice (recommend), with photo
+    delegated to the floors (modelsuggest.for_pc's "photo_search"): the suggested model; "" when models were measured
+    for this PC and none meets the floor (no photo model that would thrash); the tier's model only when nothing
+    was measured for a PC like this one. Text keeps the tier (no text floor yet). Talk is never in it: it is offered,
+    and downloaded only when the user ticks it."""
+    c = tier_choice(recommend(pc), focus)
+    entries = (suggestions or {}).get("photo_search") or []
+    pick = next((e["model"] for e in entries if e.get("outcome") == "suggested"), None)
+    if pick:
+        c["photo"] = pick
+    elif any(e.get("outcome") != "not_measured" for e in entries):
+        c["photo"] = ""
+    return c
 
 
 def capable(m, pc, vectors=0):

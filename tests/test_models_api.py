@@ -239,3 +239,37 @@ def test_keep_models_loaded_skips_the_idle_release(tmp_path):
     assert freed == [None]                     # kept loaded
     ix.release_models()                        # the window closed: always freed
     assert freed == [None, 0]
+
+
+def test_auto_configure_and_models_take_the_photo_suggestion(a, monkeypatch):
+    """Task 5: the photo model comes from the measured floors (modelsuggest), the text model from the tier; talk is
+    offered there but never configured or downloaded with the others."""
+    seen = {}
+
+    def fake(facts, classes, live, goal, focus, **_kw):
+        seen.update(goal=goal, live=live, classes=classes)
+        return {"text": [], "photo_talk": [{"model": "smolvlm2-500m", "outcome": "suggested"}],
+                "photo_search": [{"model": "siglip-base", "outcome": "suggested"}]}
+
+    monkeypatch.setattr(api_mod.modelsuggest, "for_pc", fake)
+    r = a.auto_configure()
+    assert r["tier"] == "best" and a._settings.get("photo_model") == "siglip-base"
+    assert {s["feature"] for s in r["steps"]} == {"text", "photo", "ocr"}
+    assert seen["goal"] == a._settings.get("performance_goal") and seen["live"]["runtime"] == {
+        "photo_talk": "vulkan"} and "gpu" in seen["classes"]
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["siglip-base"]["recommended"] and not by["siglip2-base"]["recommended"]
+    assert not by["smolvlm2-500m"]["recommended"]
+
+
+def test_auto_configure_turns_photo_off_when_no_measured_model_fits(a, monkeypatch):
+    monkeypatch.setattr(api_mod.modelsuggest, "for_pc", lambda *x, **k: {
+        "text": [], "photo_talk": [], "photo_search": [{"model": "siglip2-base", "outcome": "not_recommended"}]})
+    r = a.auto_configure()
+    assert a._settings.get("photo_meaning") is False
+    assert next(s for s in r["steps"] if s["feature"] == "photo")["id"] == ""
+
+
+def test_real_suggestion_on_the_reference_pc_keeps_siglip2(a):
+    assert a.auto_configure()["tier"] == "best"
+    assert a._settings.get("photo_model") == "siglip2-base" and a._settings.get("photo_meaning") is True
