@@ -50,7 +50,7 @@ class _CardShell extends StatelessWidget {
       builder: (context, lift, parallax) => Glass(
         radius: radius,
         lift: selected ? 1 : lift,
-        fill: selected ? c.orangeA(c.isDark ? .13 : .10) : (lift > .05 ? Color.lerp(c.card, c.cardHover, lift) : null),
+        fill: selected ? c.orangeA(c.isDark ? .13 : .10) : (lift > .05 ? Color.lerp(c.card, c.cardLift, lift) : null),
         rim: selected ? c.orangeA(.55) : null,
         padding: padding,
         child: builder(context, parallax, selected || lift > .5),

@@ -21,7 +21,7 @@ abstract class WindowControl {
   void fitBar(int rows);
   void front();
 
-  /// Dark or light title bar, Mica glass on or off. True when Windows took the glass.
+  /// Dark or light title bar, Acrylic (or Mica) glass on or off. True when Windows took the glass.
   bool look({required bool dark, required bool glass, required int canvasRgb});
 
   /// Close the window, which ends this UI process (the engine keeps running).

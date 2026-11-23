@@ -14,6 +14,7 @@ import '../../../engine/models/format.dart';
 import '../../../engine/models/settings.dart';
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 
 class PerformancePage extends StatelessWidget {
@@ -30,6 +31,7 @@ class PerformancePage extends StatelessWidget {
       children: [
         SettingsGroup(
           'Speed',
+          icon: NbGlyph.gauge,
           rows: [
             if (perf != null)
               const ChoiceSetting(
@@ -61,6 +63,7 @@ class PerformancePage extends StatelessWidget {
         if (perf != null) const OverridesGroup(),
         const SettingsGroup(
           'Staying out of your way',
+          icon: NbGlyph.moon,
           rows: [
             ChoiceSetting(
               'games_mode',
@@ -99,6 +102,7 @@ class PerformancePage extends StatelessWidget {
         ),
         SettingsGroup(
           'Apps NOBAD Find has learned',
+          icon: NbGlyph.apps,
           rows: [
             SettingRow(
               label: 'Apps that slowed your PC down',
@@ -300,6 +304,7 @@ class OverridesGroup extends StatelessWidget {
     final s = AppScope.of(context).settings;
     return SettingsGroup(
       'Your choices',
+      icon: NbGlyph.sliders,
       rows: [
         const _OverrideChoice(
           'gpu_background',

@@ -13,6 +13,7 @@ import '../../../app/theme/typography.dart';
 import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
 import '../../../widgets/motion.dart';
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 import '../update_progress.dart';
 
@@ -31,6 +32,7 @@ class AboutPage extends StatelessWidget {
       children: [
         SettingsGroup(
           'NOBAD Find',
+          icon: NbGlyph.info,
           rows: [
             Padding(
               padding: const EdgeInsets.all(NbSpace.x5),
@@ -88,6 +90,7 @@ class AboutPage extends StatelessWidget {
         const UpdatesGroup(),
         SettingsGroup(
           'Quit',
+          icon: NbGlyph.power,
           rows: [
             SettingRow(
               label: 'Quit NOBAD Find',
@@ -158,6 +161,7 @@ class _UpdatesGroupState extends State<UpdatesGroup> {
         };
         return SettingsGroup(
           'Updates',
+          icon: NbGlyph.sync,
           rows: [
             const SwitchSetting(
               'update_check',

@@ -142,6 +142,7 @@ class _IndexingPageState extends State<IndexingPage> {
       children: [
         SettingsGroup(
           'Where',
+          icon: NbGlyph.folderShut,
           rows: [
             SettingRow(
               label: 'What to index',
@@ -186,6 +187,7 @@ class _IndexingPageState extends State<IndexingPage> {
         ),
         SettingsGroup(
           'What is included',
+          icon: NbGlyph.list,
           rows: [
             Container(
               alignment: Alignment.centerLeft,
@@ -204,6 +206,7 @@ class _IndexingPageState extends State<IndexingPage> {
         ),
         const SettingsGroup(
           'Reading files',
+          icon: NbGlyph.textDoc,
           rows: [
             SwitchSetting(
               'content',
@@ -227,6 +230,7 @@ class _IndexingPageState extends State<IndexingPage> {
         if (turbo != null)
           SettingsGroup(
             'Turbo index',
+            icon: NbGlyph.bolt,
             rows: [
               _TurboCard(
                 turbo,
@@ -608,6 +612,7 @@ class _Older extends StatelessWidget {
           ),
         const SettingsGroup(
           'What to search',
+          icon: NbGlyph.search,
           rows: [
             FoldersSetting(
               'roots',

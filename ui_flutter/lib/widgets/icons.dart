@@ -6,6 +6,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../app/theme/colors.dart';
+
 enum NbGlyph {
   search,
   rings,
@@ -39,6 +41,29 @@ enum NbGlyph {
   bell,
   warning,
   error,
+  // the content pane: Settings groups, model rows, this PC's tiles (D1)
+  folderShut,
+  list,
+  palette,
+  power,
+  openFile,
+  bolt,
+  memory,
+  processor,
+  graphics,
+  scan,
+  chat,
+  textDoc,
+  translate,
+  moon,
+  apps,
+  archive,
+  window,
+  sync,
+  remove,
+  battery,
+  pc,
+  pulse,
 }
 
 /// Windows 11's own outline icons (the Segoe Fluent Icons font that ships with Windows; nothing bundled), one set
@@ -86,6 +111,28 @@ class NbIcon extends StatelessWidget {
     NbGlyph.warning: 0xE7BA,
     NbGlyph.error: 0xEA39, // ErrorBadge
     NbGlyph.more: 0xE712,
+    NbGlyph.folderShut: 0xE8B7, // Folder
+    NbGlyph.list: 0xE8FD, // BulletedList
+    NbGlyph.palette: 0xE790, // Color
+    NbGlyph.power: 0xE7E8, // PowerButton
+    NbGlyph.openFile: 0xE8E5, // OpenFile
+    NbGlyph.bolt: 0xE945, // LightningBolt
+    NbGlyph.memory: 0xE964, // Memory
+    NbGlyph.processor: 0xE950, // Processing
+    NbGlyph.graphics: 0xF211, // a graphics card
+    NbGlyph.scan: 0xEE6F, // a scan frame: words read from pictures
+    NbGlyph.chat: 0xE8BD, // Message
+    NbGlyph.textDoc: 0xF000, // a page of text
+    NbGlyph.translate: 0xF2B7, // Translate
+    NbGlyph.moon: 0xE708, // QuietHours
+    NbGlyph.apps: 0xECAA, // AppIconDefault
+    NbGlyph.archive: 0xE7B8, // a box of kept files
+    NbGlyph.window: 0xE737, // a window
+    NbGlyph.sync: 0xE895, // Sync: updates
+    NbGlyph.remove: 0xE74D, // Delete
+    NbGlyph.battery: 0xE83F, // Battery
+    NbGlyph.pc: 0xE977, // a PC and its screen
+    NbGlyph.pulse: 0xE9D9, // Diagnostic
   };
 
   @override
@@ -102,6 +149,38 @@ class NbIcon extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// An icon in a small frosted tile (32 px, the glyph at 16): Settings group headers, model rows, this PC's tiles.
+/// Cool tint and a cool white glyph; [accent] (the selected or suggested one) takes the orange.
+class GlyphTile extends StatelessWidget {
+  const GlyphTile(this.glyph, {super.key, this.accent = false, this.size = 32});
+  final NbGlyph glyph;
+  final bool accent;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final r = BorderRadius.circular(size * .3125);
+    final tint = accent ? c.orangeA(c.isDark ? .14 : .11) : c.iceTile;
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: r,
+        // frost lit from the top: a little brighter at the top edge, fading down
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [tint.withValues(alpha: (tint.a * 1.5).clamp(0, 1)), tint.withValues(alpha: tint.a * .7)],
+        ),
+        border: Border.all(color: tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)), width: .8),
+      ),
+      child: NbIcon(glyph, size: size / 2, color: accent ? c.orange : c.iceGlyph),
+    );
+  }
 }
 
 class LevelGlyph extends StatelessWidget {

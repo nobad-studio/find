@@ -13,13 +13,15 @@ import '../../app/theme/typography.dart';
 import '../../engine/models/safe_text.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/glass.dart';
-import '../../widgets/panels.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
 class SettingsGroup extends StatelessWidget {
-  const SettingsGroup(this.title, {super.key, required this.rows});
+  const SettingsGroup(this.title, {super.key, required this.icon, required this.rows});
   final String title;
+
+  /// What the group is about, in a small frosted tile before its title.
+  final NbGlyph icon;
   final List<Widget> rows;
 
   @override
@@ -31,8 +33,19 @@ class SettingsGroup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 6),
-            child: Semantics(header: true, child: Text(title, style: sectionStyle(c))),
+            padding: const EdgeInsets.only(left: 2, bottom: 8),
+            child: Row(
+              children: [
+                GlyphTile(icon),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(title, style: NbType.text(13.5, c.text, weight: FontWeight.w600, height: 1.3)),
+                  ),
+                ),
+              ],
+            ),
           ),
           Glass(
             radius: 18,

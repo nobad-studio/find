@@ -125,7 +125,7 @@ class _ActionChip extends StatelessWidget {
         height: 28,
         padding: EdgeInsets.symmetric(horizontal: compact || glyph == null ? 8 : 10),
         decoration: BoxDecoration(
-          color: primary ? (p.lit ? c.orange : c.orangeA(.85)) : (p.lit ? c.cardHover : c.card),
+          color: primary ? (p.lit ? c.orange : c.orangeA(.85)) : (p.lit ? c.cardLift : c.card),
           border: Border.all(color: primary ? c.orange : c.line2),
           borderRadius: NbRadius.pillAll,
         ),

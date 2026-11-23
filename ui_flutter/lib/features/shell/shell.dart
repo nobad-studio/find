@@ -85,7 +85,7 @@ class _ShellState extends State<Shell> {
       color: const Color(0x00000000),
       child: Stack(
         children: [
-          const Positioned.fill(child: Backdrop()), // painted once; Mica shows through it
+          const Positioned.fill(child: Backdrop()), // painted once; Windows' Acrylic shows through it
           Positioned.fill(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,

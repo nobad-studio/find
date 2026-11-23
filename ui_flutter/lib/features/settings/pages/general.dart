@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/widgets.dart';
 
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 
 class GeneralPage extends StatelessWidget {
@@ -14,21 +15,24 @@ class GeneralPage extends StatelessWidget {
     children: [
       SettingsGroup(
         'Look',
+        icon: NbGlyph.palette,
         rows: [
           SwitchSetting(
             'glass',
             'See-through window',
-            "Windows 11 Mica behind the window, while Windows' own Transparency effects switch is on "
-                '(Settings > Personalization > Colors). With that off the window stays solid.',
+            "Windows 11 frosted glass (Acrylic) behind the window, while Windows' own Transparency effects switch "
+                'is on (Settings > Personalization > Colors). With that off the window stays solid.',
           ),
         ],
       ),
       SettingsGroup(
         'Start',
+        icon: NbGlyph.power,
         rows: [SwitchSetting('autostart', 'Start with Windows', 'Starts hidden; the hotkey opens it.')],
       ),
       SettingsGroup(
         'Notifications',
+        icon: NbGlyph.bell,
         rows: [
           SwitchSetting(
             'notify_toasts',

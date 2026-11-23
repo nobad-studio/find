@@ -12,6 +12,7 @@ import '../../../app/theme/typography.dart';
 import '../../../engine/models/settings.dart' show appFilesConsent;
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 
 /// The one exception to "names only" (setting `secret_app_files`, 1.1.0, off by default; const.APP_SECRET_* in
@@ -104,10 +105,12 @@ class PrivacyPage extends StatelessWidget {
       children: [
         SettingsGroup(
           'Windows Search',
+          icon: NbGlyph.search,
           rows: [SettingRow(label: 'Use NOBAD Find instead of Windows Search', helpWidget: wsHelp, control: wsControl)],
         ),
         SettingsGroup(
           'Search history',
+          icon: NbGlyph.clock,
           rows: [
             const SwitchSetting(
               'search_history',
@@ -135,9 +138,10 @@ class PrivacyPage extends StatelessWidget {
             ),
           ],
         ),
-        const SettingsGroup('Files other programs keep', rows: [AppFilesSetting()]),
+        const SettingsGroup('Files other programs keep', icon: NbGlyph.archive, rows: [AppFilesSetting()]),
         const SettingsGroup(
           'Notifications',
+          icon: NbGlyph.bell,
           rows: [
             SwitchSetting(
               'notify_show_names',
@@ -150,6 +154,7 @@ class PrivacyPage extends StatelessWidget {
         ),
         SettingsGroup(
           'Your data',
+          icon: NbGlyph.shield,
           rows: [
             SettingRow(
               label: 'Delete the whole index',

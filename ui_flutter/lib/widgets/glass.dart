@@ -1,12 +1,12 @@
 /// Frosted spatial glass: the backdrop and the three layers that float over it.
 ///
-/// - [Backdrop]: the window's deep (or pale) base with two soft glows, painted once into its own layer. Over the
-///   Windows Mica system backdrop (composited by Windows, free for this process) it is translucent.
+/// - [Backdrop]: the window's deep (or pale) base with soft glows, painted once into its own layer. Over Windows'
+///   Acrylic system backdrop (composited by Windows, free for this process) it is translucent.
 /// - [Glass]: a floating layer with continuous (superellipse) corners, a translucent fill, a 1 px light rim on the
 ///   top edge fading down the sides, and a soft large shadow. Real blur ([GlassLevel.blur]) only for dialogs,
 ///   which float over content. Measured (docs/measurements.md): a blurred palette cost 40-135 MB at 1080p while
 ///   only the still backdrop was behind it, so the palette, the detail pane and the cards take their frost from
-///   Windows' Mica, the fill and the rim instead.
+///   Windows' Acrylic, the fill and the rim instead.
 library;
 
 import 'dart:ui' as ui;
@@ -47,8 +47,8 @@ class _BackdropPainter extends CustomPainter {
     final r = Offset.zero & size;
     canvas.drawRect(r, Paint()..color = c.canvas);
     final big = size.longestSide;
-    // soft coloured light behind the glass (like a macOS wallpaper seen through frosted panes): the NOBAD orange
-    // high on the left, a magenta in the middle, an indigo low on the right. Painted once into its own layer.
+    // soft coloured light behind the glass. Solid: the NOBAD orange high on the left, a magenta in the middle, an
+    // indigo low on the right. Painted once into its own layer.
     void glow(double x, double y, double radius, Color col) => canvas.drawRect(
       r,
       Paint()
@@ -59,6 +59,16 @@ class _BackdropPainter extends CustomPainter {
           const [0, .45, 1],
         ),
     );
+    if (c.glass) {
+      // over Windows' Acrylic: cold light, like a winter sky seen through frosted ice. Glacier cyan, large, from
+      // the top left; deep ice low on the right; a pale haze across the middle; the orange only a small ember
+      // (it belongs to actions)
+      glow(.06, -.04, .62, c.glowGlacier);
+      glow(.50, .42, .55, c.glowHaze);
+      glow(.98, 1.04, .62, c.glowCool);
+      glow(.92, .02, .20, c.glowWarm);
+      return;
+    }
     glow(.10, .05, .55, c.glowWarm);
     glow(.55, .55, .45, c.glowMagenta);
     glow(.95, 1.0, .60, c.glowCool);
@@ -107,7 +117,7 @@ class Glass extends StatelessWidget {
         switch (level) {
           GlassLevel.card => c.card,
           GlassLevel.panel => c.panel,
-          GlassLevel.blur => c.panel,
+          GlassLevel.blur => c.dialog,
         };
     final shadow = switch (level) {
       GlassLevel.card => [

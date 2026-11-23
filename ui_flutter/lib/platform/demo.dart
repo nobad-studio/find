@@ -150,7 +150,7 @@ class Demo {
     if (dir == null || dir.isEmpty || ro is! RenderRepaintBoundary) return;
     try {
       final shot = await ro.toImage(pixelRatio: 1);
-      // over glass the window is see-through (Mica behind it): put the picture on the theme's base colour
+      // over glass the window is see-through (Acrylic behind it): put the picture on the theme's base colour
       final ctx = shotBoundary.currentContext;
       final base = ctx != null && ctx.mounted ? NbColors.of(ctx).bg : const Color(0xFF000000);
       final rec = ui.PictureRecorder();

@@ -12,6 +12,7 @@ import '../features/notifications/notification_bell.dart';
 import '../state/toast_controller.dart';
 import 'controls.dart';
 import 'glass.dart';
+import 'icons.dart';
 
 /// A grouped surface. [live] gives it the orange edge (the thing that's working now).
 class NbPanel extends StatelessWidget {
@@ -156,40 +157,55 @@ class PageHeader extends StatelessWidget {
   }
 }
 
-/// A number with what it is: "186 MB" over "Memory".
+/// A number with what it is: "186 MB" over "Memory", after an [icon] in a small frosted tile when given.
 class StatTile extends StatelessWidget {
-  const StatTile({super.key, required this.value, required this.label, this.live = false});
+  const StatTile({super.key, required this.value, required this.label, this.live = false, this.icon});
   final String value;
   final String label;
   final bool live;
+  final NbGlyph? icon;
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    final glyph = icon;
+    final text = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          // a number reads as data; a long name (a graphics card) reads better as text
+          style: value.length > 12
+              ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
+              : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: NbType.text(NbSize.small, c.dim, height: 1.35),
+        ),
+      ],
+    );
     return NbPanel(
       padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            // a number reads as data; a long name (a graphics card) reads better as text
-            style: value.length > 12
-                ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
-                : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: NbType.text(NbSize.small, c.dim, height: 1.35),
-          ),
-        ],
-      ),
+      child: glyph == null
+          ? text
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: GlyphTile(glyph, accent: live),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: text),
+              ],
+            ),
     );
   }
 }
@@ -307,7 +323,9 @@ class _NbSweepState extends State<NbSweep> with SingleTickerProviderStateMixin {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       borderRadius: NbRadius.pillAll,
-                      gradient: LinearGradient(colors: [c.orange.withValues(alpha: 0), c.orange, c.orange.withValues(alpha: 0)]),
+                      gradient: LinearGradient(
+                        colors: [c.orange.withValues(alpha: 0), c.orange, c.orange.withValues(alpha: 0)],
+                      ),
                     ),
                   ),
                 );

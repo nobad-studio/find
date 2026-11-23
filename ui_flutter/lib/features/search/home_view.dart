@@ -231,7 +231,7 @@ class _Tile extends StatelessWidget {
         height: 40,
         padding: const EdgeInsets.fromLTRB(6, 0, 14, 0),
         decoration: BoxDecoration(
-          color: on ? c.orangeA(c.isDark ? .12 : .09) : (p.lit ? c.cardHover : c.card),
+          color: on ? c.orangeA(c.isDark ? .12 : .09) : (p.lit ? c.cardLift : c.card),
           border: Border.all(color: on || p.lit ? c.orangeA(.55) : c.line),
           borderRadius: NbRadius.rowAll,
         ),

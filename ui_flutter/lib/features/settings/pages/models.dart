@@ -89,6 +89,7 @@ class _Catalogue extends StatelessWidget {
         _PcAndTier(m),
         const SettingsGroup(
           'Memory',
+          icon: NbGlyph.memory,
           rows: [
             SwitchSetting(
               'models_stay_loaded',
@@ -101,6 +102,7 @@ class _Catalogue extends StatelessWidget {
         if (focus != null)
           SettingsGroup(
             'Languages',
+            icon: NbGlyph.translate,
             rows: [
               SettingRow(
                 label: 'What your files are in',
@@ -120,6 +122,7 @@ class _Catalogue extends StatelessWidget {
           ),
         _FeatureGroup(
           title: 'Meaning search',
+          icon: NbGlyph.textDoc,
           switchKey: 'semantic',
           switchLabel: 'Search by meaning',
           switchHelp: 'Finds “lease agreement” when you type “rent”. Runs on this PC only.',
@@ -140,6 +143,7 @@ class _Catalogue extends StatelessWidget {
         ),
         _FeatureGroup(
           title: 'Photos by what is in them',
+          icon: NbGlyph.image,
           switchKey: 'photo_meaning',
           switchLabel: "Find photos by what's in them",
           switchHelp: '“Dog on a beach” finds IMG_0042.jpg. The first pass is slow, in the background.',
@@ -148,6 +152,7 @@ class _Catalogue extends StatelessWidget {
         ),
         _FeatureGroup(
           title: 'Words in pictures',
+          icon: NbGlyph.scan,
           switchKey: 'ocr',
           switchLabel: 'Read words in screenshots and scans',
           switchHelp: 'Uses Windows OCR, after everything else is indexed.',
@@ -157,6 +162,7 @@ class _Catalogue extends StatelessWidget {
         // 1.1: not part of a tier; a photo's Describe / Ask / Compare offers the same download
         _FeatureGroup(
           title: 'Talk about photos',
+          icon: NbGlyph.chat,
           about:
               'Describe a photo, ask about it, or compare two, on its detail pane. The models run on this PC only, '
               'on the llama.cpp runtime; each download asks first.',
@@ -182,6 +188,7 @@ class _PcAndTier extends StatelessWidget {
     final matches = rec.isNotEmpty && rec == now;
     return SettingsGroup(
       'Your PC',
+      icon: NbGlyph.pc,
       rows: [
         Padding(padding: const EdgeInsets.all(12), child: HardwareTiles(info.pc)),
         if (m.capability != null)
@@ -229,6 +236,7 @@ String tierWhy(String tier) => switch (tier) {
 class _FeatureGroup extends StatelessWidget {
   const _FeatureGroup({
     required this.title,
+    required this.icon,
     this.switchKey,
     this.switchLabel = '',
     this.switchHelp = '',
@@ -237,6 +245,7 @@ class _FeatureGroup extends StatelessWidget {
     required this.m,
   });
   final String title;
+  final NbGlyph icon;
 
   /// The feature's setting (null: a feature with no switch, talk about photos).
   final String? switchKey;
@@ -255,6 +264,7 @@ class _FeatureGroup extends StatelessWidget {
     final key = switchKey;
     return SettingsGroup(
       title,
+      icon: icon,
       rows: [
         if (key != null) SwitchSetting(key, switchLabel, switchHelp),
         if (about.isNotEmpty)
@@ -384,39 +394,23 @@ class _ModelRow extends StatelessWidget {
   }
 }
 
-/// A coloured tile for what the model does: Aa (meaning), a picture (photos), a page (words in pictures).
+/// What the model does, as a glyph in a frosted tile: a page of text (meaning), a photo, a scan (words in
+/// pictures), a chat bubble (talk), a processor (the runtime). Orange for the one in use or recommended.
 class _Avatar extends StatelessWidget {
   const _Avatar(this.x);
   final ModelInfo x;
 
+  static NbGlyph glyphOf(String feature) => switch (feature) {
+    'photo' => NbGlyph.image,
+    'ocr' => NbGlyph.scan,
+    'talk' => NbGlyph.chat,
+    'runtime' => NbGlyph.processor,
+    _ => NbGlyph.textDoc,
+  };
+
   @override
-  Widget build(BuildContext context) {
-    final c = NbColors.of(context);
-    final (Color a, Color b) = switch (x.feature) {
-      'photo' => (const Color(0xFF4F5DFF), const Color(0xFFD0347A)),
-      'ocr' => (const Color(0xFF2B8A6E), const Color(0xFF4F5DFF)),
-      'talk' => (const Color(0xFFD0347A), const Color(0xFF4F5DFF)),
-      'runtime' => (const Color(0xFF5B6270), const Color(0xFF2B8A6E)),
-      _ => (c.orange, const Color(0xFFD0347A)),
-    };
-    final glyph = switch (x.feature) {
-      'photo' || 'talk' => NbGlyph.image,
-      'runtime' => NbGlyph.chip,
-      _ => NbGlyph.doc,
-    };
-    return Container(
-      width: 44,
-      height: 44,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]),
-      ),
-      child: x.feature == 'text'
-          ? Text('Aa', style: NbType.text(16, const Color(0xFFFFFFFF), weight: FontWeight.w700, height: 1))
-          : NbIcon(glyph, size: 20, color: const Color(0xFFFFFFFF)),
-    );
-  }
+  Widget build(BuildContext context) =>
+      GlyphTile(glyphOf(x.feature), accent: x.state == ModelUseState.active || x.recommended);
 }
 
 /// Everything else about the model, plainly: how fast, how it measured, where it comes from, where it lives.
@@ -522,15 +516,33 @@ class _Actions extends StatelessWidget {
     } else if (talk) {
       buttons = [
         if (x.onDisk)
-          NbButton('Remove', small: true, kind: NbButtonKind.quiet, onPressed: () => unawaited(m.remove(x)))
+          NbButton(
+            'Remove',
+            small: true,
+            kind: NbButtonKind.quiet,
+            icon: NbGlyph.remove,
+            onPressed: () => unawaited(m.remove(x)),
+          )
         else
-          NbButton(x.capable ? 'Download…' : 'Download anyway…', small: true, kind: NbButtonKind.ghost, onPressed: fetch),
+          NbButton(
+            x.capable ? 'Download…' : 'Download anyway…',
+            small: true,
+            kind: NbButtonKind.ghost,
+            icon: NbGlyph.download,
+            onPressed: fetch,
+          ),
       ];
     } else if (x.onDisk) {
       buttons = [
         NbButton('Use', small: true, onPressed: use),
         if (!x.builtin)
-          NbButton('Remove', small: true, kind: NbButtonKind.quiet, onPressed: () => unawaited(m.remove(x))),
+          NbButton(
+            'Remove',
+            small: true,
+            kind: NbButtonKind.quiet,
+            icon: NbGlyph.remove,
+            onPressed: () => unawaited(m.remove(x)),
+          ),
       ];
     } else {
       buttons = [
@@ -538,6 +550,7 @@ class _Actions extends StatelessWidget {
           x.capable ? 'Download…' : 'Download anyway…',
           small: true,
           kind: x.capable && x.recommended ? NbButtonKind.primary : NbButtonKind.ghost,
+          icon: NbGlyph.download,
           onPressed: use,
         ),
       ];
@@ -590,10 +603,12 @@ class _Legacy extends StatelessWidget {
           ),
         SettingsGroup(
           'Your PC',
+          icon: NbGlyph.pc,
           rows: [Padding(padding: const EdgeInsets.all(12), child: HardwareTiles(s.settings.hardware))],
         ),
         const SettingsGroup(
           'Meaning search',
+          icon: NbGlyph.textDoc,
           rows: [
             SwitchSetting(
               'allow_model_download',
@@ -612,6 +627,7 @@ class _Legacy extends StatelessWidget {
         ),
         const SettingsGroup(
           'Photo meaning',
+          icon: NbGlyph.image,
           rows: [
             SwitchSetting(
               'allow_photo_model_download',
@@ -666,6 +682,7 @@ class _LegacyModelRow extends StatelessWidget {
           : NbButton(
               'Download',
               small: true,
+              icon: NbGlyph.download,
               onPressed: () {
                 unawaited(s.settings.download(id, consent: (x) => askConsentFor(context, id, x)));
               },
@@ -704,25 +721,33 @@ class LiveTiles extends StatelessWidget {
           min: 130,
           children: [
             StatTile(
+              icon: NbGlyph.memory,
               value: mb(b.freeMb),
               label: 'Memory free${b.installedMb != null ? ' of ${mb(b.installedMb)}' : ''}, '
                   '${mb(b.reserveMb)} kept for Windows',
             ),
             StatTile(
+              icon: NbGlyph.pulse,
               value: b.commitPct == null ? '–' : '${b.commitPct!.round()}%',
               label: 'Of the memory Windows can promise programs',
             ),
             StatTile(
+              icon: NbGlyph.graphics,
               value: mb(b.gpuFreeMb),
               label: b.gpuKind == null
                   ? 'Graphics memory free'
                   : (shared ? 'Graphics memory free (shared with the PC)' : 'Video memory free'),
             ),
             StatTile(
+              icon: NbGlyph.battery,
               value: b.batterySaver ? 'Battery saver' : (b.battery ? 'On battery' : 'Plugged in'),
               label: 'Power',
             ),
-            StatTile(value: '$runs of ${cap.canRun.isEmpty ? models : cap.canRun.length}', label: 'Models that can run now'),
+            StatTile(
+              icon: NbGlyph.processor,
+              value: '$runs of ${cap.canRun.isEmpty ? models : cap.canRun.length}',
+              label: 'Models that can run now',
+            ),
           ],
         ),
       ],
@@ -749,16 +774,25 @@ class HardwareTiles extends StatelessWidget {
     return TileGrid(
       min: 130,
       children: [
-        StatTile(value: gb(h.ramGb), label: 'Memory'),
-        StatTile(value: '${groupDigits(h.cores)} cores', label: '${groupDigits(h.threads)} threads'),
+        StatTile(value: gb(h.ramGb), label: 'Memory', icon: NbGlyph.memory),
         StatTile(
+          value: '${groupDigits(h.cores)} cores',
+          label: '${groupDigits(h.threads)} threads',
+          icon: NbGlyph.processor,
+        ),
+        StatTile(
+          icon: NbGlyph.graphics,
           value: h.gpu.isEmpty ? 'None found' : h.gpu,
           label: h.gpu.isEmpty
               ? 'Graphics card'
               : '${h.vramGb > 0 ? '${gb(h.vramGb)} video memory' : 'Graphics card'}${h.directml ? ', usable for models' : ''}',
         ),
-        StatTile(value: fast.isEmpty ? 'Standard' : fast, label: 'Processor speed-ups'),
-        StatTile(value: drive, label: h.diskFreeGb > 0 ? '${gb(h.diskFreeGb)} free' : 'Drive type'),
+        StatTile(value: fast.isEmpty ? 'Standard' : fast, label: 'Processor speed-ups', icon: NbGlyph.bolt),
+        StatTile(
+          value: drive,
+          label: h.diskFreeGb > 0 ? '${gb(h.diskFreeGb)} free' : 'Drive type',
+          icon: NbGlyph.drive,
+        ),
       ],
     );
   }
