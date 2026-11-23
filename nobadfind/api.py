@@ -67,8 +67,6 @@ class Api:
         self._wall = time.time            # epoch seconds for totals_at / counts_at (tests replace it)
         self._stats_info = (None, "")     # (epoch seconds of the last successful count, why the last one failed)
         self._counts_info = (None, "")
-        self._stats_stale = self._counts_stale = False       # mark_counts_stale
-        self._seen_phase = None           # the indexer's phase at the last status(): a change marks the counts stale
         self._clock = time.monotonic      # tests replace it
         self._prev = None                 # (time, cpu_seconds, read_bytes) of the last status() call
         self._sampler = procs.Sampler()   # Find's own processes, what each is and what it uses
@@ -387,10 +385,6 @@ class Api:
     # ---------- status and settings ----------
     def status(self):
         st = dict(self._indexer.status)
-        phase = st.get("phase")
-        if self._seen_phase is not None and phase != self._seen_phase:
-            self.mark_counts_stale()                        # a phase ended (or began): the counts moved
-        self._seen_phase = phase
         counted = self._stats()
         if counted is None:
             # no count is in yet: the indexer's own numbers (its live files count, and its own last count of the
@@ -450,12 +444,11 @@ class Api:
         so searches timed out. One count runs at a time, in its own thread; a poll returns what is known at once."""
         at, ttl, cached = self._stats_cache
         now = self._clock()
-        # a stale mark (a phase ended, a rescan or wipe) never brings a count forward: the full ttl (the floor or
-        # COUNT_SHARE times the last count, whichever is longer) always holds, so the 5 %-of-a-core rule does too
+        # the full ttl (the floor or COUNT_SHARE times the last count, whichever is longer) always holds, so the
+        # 5 %-of-a-core rule does too, whatever just happened (a phase ended, a rescan or wipe)
         if at is None or now - at >= ttl:
             with self._stats_lock:
                 if not (self._stats_thread and self._stats_thread.is_alive()):
-                    self._stats_stale = False
                     self._stats_thread = threading.Thread(target=self._count_stats, daemon=True, name="stats")
                     self._stats_thread.start()
         return cached
@@ -471,12 +464,6 @@ class Api:
             self._stats_info = (self._stats_info[0], count_reason(e))
         took = self._clock() - t0
         self._stats_cache = (t0, max(STATS_TTL, COUNT_SHARE * took), cached)
-
-    def mark_counts_stale(self):
-        """A phase ended, or a rescan or wipe happened: both snapshots are counted again at the next poll that finds
-        them due, i.e. once the full ttl (max of the floor and COUNT_SHARE times the last count) has passed. The mark
-        never brings a refresh forward."""
-        self._stats_stale = self._counts_stale = True
 
     def _snapshot_fields(self, st, prefix, running, info, have):
         """{prefix}_at / _state / _error for a snapshot: the last successful count (epoch seconds or None), whether
@@ -583,7 +570,6 @@ class Api:
         # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
         due = not counts or k != key or now - at >= ttl
         if due and not (self._refresher and self._refresher.is_alive()):
-            self._counts_stale = False
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")
             self._refresher.start()                         # the COUNT queries never hold up a status poll
         return counts
@@ -1031,7 +1017,6 @@ class Api:
 
     def rescan(self):
         self._indexer.rescan()
-        self.mark_counts_stale()
         return {"ok": True}
 
     def wipe(self, confirm):
@@ -1047,7 +1032,6 @@ class Api:
         exclude = list(self._settings.get("exclude") or [])
         keep = [e for e in exclude if e not in forgot and (e.startswith("\\\\") or not os.path.isfile(e))]
         self._store.wipe()                      # the index first: a crash after it can't leave forgotten files out
-        self.mark_counts_stale()
         if keep != exclude:                     # of exclude with the old index still there (review N7)
             self._settings.update({"exclude": keep})
         self._store.remove_aside_copies()
