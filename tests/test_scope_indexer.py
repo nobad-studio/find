@@ -170,9 +170,35 @@ def test_the_watching_loop_counts_the_index_at_most_every_half_minute(tmp_path):
     s.close()
 
 
+def test_a_slow_index_count_waits_twenty_times_as_long_before_the_next(tmp_path):
+    """1.1.1: on a 10 GB index one count took 10 s; counting again every 30 s stalled the watching loop a third of
+    the time. The next count comes after max(STATS_EVERY, COUNT_SHARE x the last count's time)."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ix = indexer.Indexer(s, S())
+    now = [1000.0]
+    ix._clock = lambda: now[0]
+    calls = []
+
+    def slow_stats():
+        calls.append(1)
+        now[0] += 10.0                          # a big index: 10 s to count
+        return {"files": len(calls)}
+    s.stats = slow_stats
+    ix._refresh_stats()
+    assert len(calls) == 1
+    now[0] += 30
+    ix._refresh_stats()                         # 40 s after the count started: far less than 20 x 10 s
+    assert len(calls) == 1
+    now[0] += 200
+    ix._refresh_stats()
+    assert len(calls) == 2 and ix.status["files"] == 2
+    s.close()
+
+
 def test_status_counts_cost_at_most_a_twentieth_of_a_core(tmp_path):
     """A whole PC is about a million rows: every COUNT reads the whole table. The Indexing page polls status every
-    2 s, so the counts are cached for 10 s, or 20 times as long as they took (5% of one core at most)."""
+    2 s, so the counts are cached for 10 s, or 20 times as long as they took (5% of one core at most). They run in
+    the background (1.1.1): each poll waits here for the count it started, as the next poll would see it."""
     a, s = make_api(tmp_path)
     now = [100.0]
     a._clock = lambda: now[0]
@@ -185,18 +211,23 @@ def test_status_counts_cost_at_most_a_twentieth_of_a_core(tmp_path):
         now[0] += took[0]                       # the counting itself takes time on the clock
         return real()
     s.stats = slow_stats
-    a._stats()
-    a._stats()
+
+    def poll():
+        a._stats()
+        if a._stats_thread is not None:
+            a._stats_thread.join(10)
+    poll()
+    poll()
     assert len(calls) == 1
     now[0] += api_mod.STATS_TTL + 0.1
     took[0] = 3.0                               # a big index: 3 s to count
-    a._stats()
+    poll()
     assert len(calls) == 2
     now[0] += 30                                # within 20 x 3 s of the last count
-    a._stats()
+    poll()
     assert len(calls) == 2
     now[0] += 31
-    a._stats()
+    poll()
     assert len(calls) == 3
     s.close()
 

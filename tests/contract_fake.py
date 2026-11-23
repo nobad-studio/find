@@ -494,6 +494,7 @@ STATUS_FULL = {
     "plan": {"cpu": 16, "ssd": True, "walk_threads": 32, "text_workers": 8, "text_workers_idle": 15},
     "last_scan": 1763400000.0,
     "with_text": 310, "chunks": 900, "name_vectors": 0, "photo_vectors": 0, "encrypted": True, "db_bytes": 5242880,
+    "counting_totals": False,
     "version": "0.7.0",
     "model": {"state": "missing", "got": 0, "size": 0, "error": ""},
     "photo_model": {"state": "missing", "got": 0, "size": 0, "error": ""},

@@ -163,6 +163,8 @@ class _IndexingScreenState extends State<IndexingScreen> {
   List<Widget> _details(BuildContext context, AppScope s, IndexDetails d) {
     final r = d.resources;
     final phaseLabel = s.status.status?.phaseLabel ?? '';
+    // 1.1.1: the engine counts the index totals in the background; until the first count is in, it says so
+    String total(int n) => d.countingTotals ? 'Counting…' : groupDigits(n);
     return [
       const SectionTitle('What it is doing', top: NbSpace.x4),
       TileGrid(min: 270, children: [for (final p in d.phases) _PhaseCard(p)]),
@@ -202,10 +204,10 @@ class _IndexingScreenState extends State<IndexingScreen> {
               live: s.status.status?.phase != 'watching'),
           NbStat(hue: NbHue.folder, glyph: NbGlyph.folder, value: groupDigits(s.status.status?.files ?? 0),
               label: 'Files and folders'),
-          NbStat(hue: NbHue.text, glyph: NbGlyph.doc, value: groupDigits(d.withText), label: 'With readable text'),
-          NbStat(hue: NbHue.meaning, glyph: NbGlyph.search, value: groupDigits(d.vectors + d.nameVectors),
+          NbStat(hue: NbHue.text, glyph: NbGlyph.doc, value: total(d.withText), label: 'With readable text'),
+          NbStat(hue: NbHue.meaning, glyph: NbGlyph.search, value: total(d.vectors + d.nameVectors),
               label: 'Understood by meaning'),
-          NbStat(hue: NbHue.photo, glyph: NbGlyph.image, value: groupDigits(d.photoVectors),
+          NbStat(hue: NbHue.photo, glyph: NbGlyph.image, value: total(d.photoVectors),
               label: 'Photos understood'),
           NbStat(
             hue: NbHue.use,

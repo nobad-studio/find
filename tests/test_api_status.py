@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 
 import pytest
 
@@ -429,4 +431,87 @@ def test_capability_state_uses_the_governors_last_reading(tmp_path, monkeypatch)
     r = a.capability_state()
     assert r["budget"]["free_mb"] == 1700 and r["can_run"]["multilingual-e5-base"] is False
     assert r["can_run"]["windows-ocr"] is True
+    s.close()
+
+
+# ---------- 1.1.1: the index totals (Store.stats) are counted in the background, one count at a time ----------
+class SlowStats:
+    """Store.stats as on a big index: six COUNTs that take seconds. Each count waits for `go` (when given)."""
+
+    def __init__(self, go=None):
+        self.go, self.calls, self.n = go, 0, 0
+        self.lock = threading.Lock()
+
+    def __call__(self):
+        with self.lock:
+            self.calls += 1
+        if self.go is not None:
+            assert self.go.wait(10)
+        self.n += 100
+        return {"files": 3, "with_text": self.n, "chunks": 9, "vectors": 7, "name_vectors": 5, "photo_vectors": 1,
+                "encrypted": False, "db_bytes": 1}
+
+
+def stats_counted(a):
+    t = a._stats_thread
+    if t is not None:
+        t.join(10)
+        assert not t.is_alive()
+
+
+def test_status_never_counts_inline(tmp_path):
+    a, s = make(tmp_path)
+    go = threading.Event()
+    s.stats = SlowStats(go)
+    t0 = time.monotonic()
+    st = a.status()                                              # even the first time
+    assert time.monotonic() - t0 < 0.2
+    assert st["counting_totals"] is True                         # the UI says "Counting..." for these
+    assert (st["files"], st["with_text"], st["chunks"], st["name_vectors"], st["photo_vectors"]) == (3, 0, 0, 0, 0)
+    assert st["db_bytes"] == sum(os.path.getsize(p) for p in (s.db_path, s.db_path + "-wal") if os.path.exists(p))
+    go.set()
+    stats_counted(a)
+    st = a.status()
+    assert st["counting_totals"] is False and st["with_text"] == 100 and st["photo_vectors"] == 1
+    assert st["db_bytes"] > 1                                    # the size is always the file's, never the cache's
+    s.close()
+
+
+def test_concurrent_status_calls_start_one_count(tmp_path):
+    a, s = make(tmp_path)
+    go = threading.Event()
+    s.stats = slow = SlowStats(go)
+    out = []
+    polls = [threading.Thread(target=lambda: out.append(a.status())) for _ in range(4)]
+    for t in polls:
+        t.start()
+    for t in polls:
+        t.join(10)
+    assert len(out) == 4 and all(st["counting_totals"] for st in out)
+    assert slow.calls == 1
+    go.set()
+    stats_counted(a)
+    a.status()
+    assert slow.calls == 1                                       # just counted: no second count
+    s.close()
+
+
+def test_stats_refresh_after_ttl(tmp_path):
+    a, s = make(tmp_path)
+    now = [100.0]
+    a._clock = lambda: now[0]
+    s.stats = slow = SlowStats()
+    a.status()
+    stats_counted(a)
+    assert a.status()["with_text"] == 100 and slow.calls == 1
+    now[0] += api_mod.STATS_TTL - 1
+    assert a.status()["with_text"] == 100 and slow.calls == 1    # fresh: reused
+    go = slow.go = threading.Event()
+    now[0] += 2                                                  # stale
+    st = a.status()
+    assert st["with_text"] == 100 and st["counting_totals"] is False      # the old totals at once
+    assert a.status()["with_text"] == 100 and slow.calls == 2    # one refresh, however many polls
+    go.set()
+    stats_counted(a)
+    assert a.status()["with_text"] == 200 and slow.calls == 2
     s.close()

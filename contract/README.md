@@ -155,7 +155,11 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   (2026-11-21: how many of each operation may run at once now, `{walk, readers, photo, vision}`, each `{effective,
   user, cpu, memory, governor, gpu?, by}`: `effective` is the smallest of what the user set, the processor, free
   memory and the governor's level (vision: and the graphics card), `by` names which one set it; recomputed every
-  2 s). Other keys may appear (indexer details); ignore them.
+  2 s). Other keys may appear (indexer details); ignore them. It answers at once (1.1.1): the index totals (`with_text chunks
+  vectors name_vectors photo_vectors`) are counted in the background, one count at a time; until the first count
+  is in, `counting_totals` is `true` and they are the indexer's own running numbers or `0` (the Index page says
+  "Counting…" for them); `files` is the indexer's live count, and `db_bytes` is always current.
+  An engine before 1.1.1 sends no `counting_totals`.
 - **`pause_for`** `{seconds: int ≥ 1}` → `Ok`: pause indexing (at most 24 hours; less than 1 is `-32602`).
 - **`resume`** `{}` → `Ok`: end a pause now.
 - **`learned_apps`** `{}` → `{apps: [{exe, seen: int, lag_events: int, worst_cpu: number|null, worst_gpu:

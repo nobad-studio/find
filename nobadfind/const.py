@@ -3,6 +3,9 @@ import os
 
 APP_NAME = "NOBAD Find"
 APP_VER = "1.1.0"
+# A count over the whole index (Store.stats, the phase counts) is reused at least this many times as long as it
+# took: <= 5% of a core on a big index (api.Api._stats / _counts, indexer.Indexer._refresh_stats)
+COUNT_SHARE = 20
 
 # NOBAD Find runs as the normal user, so its data lives in the user's own profile (not readable by other users).
 DATA_DIR = os.environ.get("NOBAD_FIND_DATA_DIR") or os.path.join(

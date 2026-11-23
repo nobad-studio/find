@@ -46,6 +46,15 @@
 - Notifications never name a file or show a path, unless "Show file names in notifications" (Settings > Privacy &
   data, off) is on. The last 100 are kept encrypted inside the index.
 
+## 1.1.1 · (in development)
+
+### Fixed
+- **The Index, Models and What to index pages open at once on a big index,** and searching no longer stops with
+  "The engine took too long to answer" while they load. The index totals were counted while you waited, up to four
+  times at once (10 s for one count on a 950,000-file index, up to 70 s with four). They are now counted in the
+  background, once at a time, and the Index page says "Counting…" for them until the first count is in; it asks
+  the engine for its details once instead of again every 3 seconds.
+
 ## 1.1.0 · 2026-11-22
 
 ### Talk about a photo

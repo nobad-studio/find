@@ -648,9 +648,12 @@ class _LegacyModelRow extends StatelessWidget {
     final s = AppScope.of(context);
     final m = s.status.model(id);
     final photos = s.status.details?.photoVectors ?? 0;
+    final counting = s.status.details?.countingTotals ?? false;
     final help = m.ready
         ? (id == 'photo'
-              ? 'Downloaded and verified. ${groupDigits(photos)} photos understood so far.'
+              ? (counting
+                    ? 'Downloaded and verified. Counting the photos understood so far…'
+                    : 'Downloaded and verified. ${groupDigits(photos)} photos understood so far.')
               : 'Downloaded and verified.')
         : m.downloading
         ? 'Downloading… ${m.percent}%'
