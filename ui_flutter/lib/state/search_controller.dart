@@ -266,7 +266,7 @@ class FindController extends ChangeNotifier {
   Future<bool> copyNameSelected() async {
     final r = current;
     if (r == null) return false;
-    await _copy(r.name);
+    await _copy(r.rawName); // the real name, not the one drawn with [U+202E] marks
     _say('Name copied.');
     return true;
   }
@@ -314,14 +314,19 @@ class FindController extends ChangeNotifier {
     final r = current;
     if (r == null) return false;
     if (!await confirm('Forget "${r.name}" and keep it out of the index from now on?')) return false;
-    var ok = false;
+    var res = const ActionResult(false);
     try {
-      ok = (await engine.forget(r.id)).ok;
+      res = await engine.forget(r.id);
     } on Object {
-      ok = false;
+      res = const ActionResult(false);
     }
-    if (!ok) return false;
-    _say('Forgotten. Undo it in Settings → What to index → Never index.');
+    if (!res.ok) {
+      // the engine says why (the Never index list is full, it couldn't be saved): the file is still in the index
+      _say(res.error.isNotEmpty ? res.error : 'Couldn\'t forget "${r.name}". It is still in the index.');
+      return false;
+    }
+    // ok with an error is a note (1.1.0): forgotten for now, the protected list couldn't be saved yet
+    _say(res.error.isNotEmpty ? res.error : 'Forgotten. Undo it in Settings → What to index → Never index.');
     if (!_disposed) await run();
     return true;
   }

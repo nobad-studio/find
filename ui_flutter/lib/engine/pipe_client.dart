@@ -4,6 +4,9 @@
 ///   whatever is at the other end can't act as this user.
 /// - Checks the pipe's owner is this user before sending anything: another account on the PC that created the name
 ///   first gets no search words.
+/// - Checks the process serving it is NOBAD Find's engine (security review 2026-11-22, M1): this user, medium
+///   integrity, no AppContainer, and NobadFind.exe next to this window (from source: Python). A sandboxed or
+///   low-integrity process that took the name first gets nothing either ([engineProblem], [Link.untrusted]).
 /// - Reads in a small background isolate (blocking on its own OVERLAPPED), writes from the UI isolate; the handle is
 ///   overlapped so both can be in flight at once. Lines are capped at [maxMessage].
 library;
@@ -11,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io' show File, Platform;
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -183,11 +187,188 @@ bool _ownedByMe(int handle) {
   }
 }
 
-class PipeNotOwned implements Exception {
-  const PipeNotOwned();
-  @override
-  String toString() => 'The NOBAD Find pipe belongs to another account; not connecting.';
+class PipeNotOwned extends EngineUntrusted {
+  const PipeNotOwned() : super('the pipe belongs to another account');
 }
+
+// ---------- who serves the pipe (security review 2026-11-22, M1: pipe squatting) ----------
+final _getNamedPipeServerProcessId = _k32
+    .lookupFunction<Int32 Function(IntPtr, Pointer<Uint32>), int Function(int, Pointer<Uint32>)>(
+      'GetNamedPipeServerProcessId',
+    );
+final _openProcess = _k32.lookupFunction<IntPtr Function(Uint32, Int32, Uint32), int Function(int, int, int)>(
+  'OpenProcess',
+);
+final _queryFullProcessImageName = _k32
+    .lookupFunction<
+      Int32 Function(IntPtr, Uint32, Pointer<Utf16>, Pointer<Uint32>),
+      int Function(int, int, Pointer<Utf16>, Pointer<Uint32>)
+    >('QueryFullProcessImageNameW');
+final _getSidSubAuthorityCount = _adv
+    .lookupFunction<Pointer<Uint8> Function(Pointer<Void>), Pointer<Uint8> Function(Pointer<Void>)>(
+      'GetSidSubAuthorityCount',
+    );
+final _getSidSubAuthority = _adv
+    .lookupFunction<Pointer<Uint32> Function(Pointer<Void>, Uint32), Pointer<Uint32> Function(Pointer<Void>, int)>(
+      'GetSidSubAuthority',
+    );
+
+const _processQueryLimited = 0x1000;
+const _tokenIntegrityLevel = 25;
+const _tokenIsAppContainer = 29;
+const integrityMedium = 0x2000;
+const integrityHigh = 0x3000;
+
+/// What Windows says about the process serving a pipe (GetNamedPipeServerProcessId, its image and token).
+class ServerProcess {
+  const ServerProcess({
+    required this.image,
+    required this.integrity,
+    required this.appContainer,
+    required this.sameUser,
+  });
+
+  /// Windows couldn't say (the process can't be opened, or its token read).
+  static const unknown = ServerProcess(image: '', integrity: -1, appContainer: false, sameUser: false);
+
+  /// Full path of its exe ('' when unknown).
+  final String image;
+
+  /// Mandatory integrity level RID: 0x1000 low, 0x2000 medium, 0x3000 high; -1 unknown.
+  final int integrity;
+  final bool appContainer;
+
+  /// Its token's user is this window's user.
+  final bool sameUser;
+}
+
+String _plainPath(String p) {
+  var s = p.replaceAll('/', r'\');
+  if (s.startsWith(r'\\?\')) s = s.substring(4);
+  return s.toLowerCase();
+}
+
+String _dirOf(String p) {
+  final s = p.replaceAll('/', r'\');
+  final i = s.lastIndexOf(r'\');
+  return i < 0 ? '' : s.substring(0, i);
+}
+
+String _nameOf(String p) {
+  final s = p.replaceAll('/', r'\');
+  return s.substring(s.lastIndexOf(r'\') + 1).toLowerCase();
+}
+
+/// The engine exe the installed app has: NobadFind.exe next to this window's exe (nobad_find.exe).
+String installedEngine(String uiExe) => '${_dirOf(uiExe)}\\NobadFind.exe';
+
+/// Why the process serving the pipe isn't NOBAD Find's engine, or null when it is. [uiExe] is this window's exe.
+/// Installed, the engine is exactly [installedEngine]; with no NobadFind.exe there (running from source) it is the
+/// Python that runs the source tree (python.exe / pythonw.exe) or a frozen NobadFind.exe. Either way it runs as
+/// this user at medium integrity, outside any AppContainer: a sandboxed or low-integrity process that took the
+/// name first (pipe squatting) is refused, and the window sends it nothing.
+///
+/// The installed engine is compared by file identity ([sameFile]: volume serial + file index), not by spelling:
+/// Windows reports an image started through an 8.3 path (`NOBADF~1`) in that short form (fix round 1, I3).
+String? engineProblem(
+  ServerProcess p, {
+  required String uiExe,
+  required bool Function(String path) exists,
+  bool Function(String a, String b) sameFile = samePathText,
+}) {
+  if (p.integrity < 0 || p.image.isEmpty) return "Windows can't say which program serves the pipe";
+  if (!p.sameUser) return 'it runs as another account';
+  if (p.appContainer) return 'it runs in an app sandbox (AppContainer)';
+  if (p.integrity < integrityMedium) return 'it runs at low integrity';
+  if (p.integrity >= integrityHigh) return 'it runs as administrator, which the engine never does';
+  final engine = installedEngine(uiExe);
+  if (exists(engine)) {
+    return sameFile(p.image, engine) ? null : "it isn't the NobadFind.exe next to this window";
+  }
+  return const {'python.exe', 'pythonw.exe', 'nobadfind.exe'}.contains(_nameOf(p.image))
+      ? null
+      : "it isn't NOBAD Find's engine";
+}
+
+/// The same path text (case, `/`, a `\\?\` prefix aside): the fallback when the files can't be opened.
+bool samePathText(String a, String b) => _plainPath(a) == _plainPath(b);
+
+final _getFileInformationByHandle = _k32
+    .lookupFunction<Int32 Function(IntPtr, Pointer<Uint8>), int Function(int, Pointer<Uint8>)>(
+      'GetFileInformationByHandle',
+    );
+
+/// (volume serial, file index) of a file, or null when it can't be opened.
+(int, int, int)? _fileId(String path) => using((arena) {
+  final h = _createFile(
+    path.toNativeUtf16(allocator: arena),
+    0, // no access needed for its identity
+    7, // share read, write and delete: never in the way of the running exe
+    nullptr,
+    _openExisting,
+    0x02000000, // FILE_FLAG_BACKUP_SEMANTICS
+    0,
+  );
+  if (h == _invalidHandle) return null;
+  try {
+    final info = arena<Uint8>(52); // BY_HANDLE_FILE_INFORMATION
+    if (_getFileInformationByHandle(h, info) == 0) return null;
+    final d = info.asTypedList(52).buffer.asByteData();
+    return (d.getUint32(28, Endian.little), d.getUint32(44, Endian.little), d.getUint32(48, Endian.little));
+  } finally {
+    _closeHandle(h);
+  }
+});
+
+/// The same file on disk (volume serial + file index), whatever the spelling: long or 8.3 short names, case. When
+/// either can't be opened, the path texts decide.
+bool sameFileOnDisk(String a, String b) {
+  final x = _fileId(a), y = _fileId(b);
+  if (x == null || y == null) return samePathText(a, b);
+  return x == y;
+}
+
+/// The process serving the pipe at [handle], as Windows sees it.
+ServerProcess serverProcess(int handle) => using((arena) {
+  final pid = arena<Uint32>();
+  if (_getNamedPipeServerProcessId(handle, pid) == 0 || pid.value == 0) return ServerProcess.unknown;
+  final hp = _openProcess(_processQueryLimited, 0, pid.value);
+  if (hp == 0) return ServerProcess.unknown;
+  try {
+    const cap = 32768;
+    final buf = arena<Uint16>(cap).cast<Utf16>();
+    final n = arena<Uint32>()..value = cap;
+    if (_queryFullProcessImageName(hp, 0, buf, n) == 0) return ServerProcess.unknown;
+    final image = buf.toDartString(length: n.value);
+    final tok = arena<IntPtr>();
+    if (_openProcessToken(hp, _tokenQuery, tok) == 0) return ServerProcess.unknown;
+    try {
+      const size = 256;
+      final info = arena<Uint8>(size);
+      final got = arena<Uint32>();
+      if (_getTokenInformation(tok.value, _tokenUser, info.cast(), size, got) == 0) return ServerProcess.unknown;
+      final user = Pointer<Void>.fromAddress(info.cast<IntPtr>().value);
+      final same = _withUserSid((me) => _equalSid(user, me) != 0);
+      final label = arena<Uint8>(size);
+      if (_getTokenInformation(tok.value, _tokenIntegrityLevel, label.cast(), size, got) == 0) {
+        return ServerProcess.unknown;
+      }
+      final sid = Pointer<Void>.fromAddress(label.cast<IntPtr>().value); // TOKEN_MANDATORY_LABEL.Label.Sid
+      final count = _getSidSubAuthorityCount(sid).value;
+      if (count == 0) return ServerProcess.unknown;
+      final integrity = _getSidSubAuthority(sid, count - 1).value;
+      final appc = arena<Uint32>();
+      if (_getTokenInformation(tok.value, _tokenIsAppContainer, appc.cast(), 4, got) == 0) {
+        return ServerProcess.unknown;
+      }
+      return ServerProcess(image: image, integrity: integrity, appContainer: appc.value != 0, sameUser: same);
+    } finally {
+      _closeHandle(tok.value);
+    }
+  } finally {
+    _closeHandle(hp);
+  }
+});
 
 /// A connected pipe. [connect] fails fast (EngineOffline) when no engine is listening.
 class PipeTransport implements Transport {
@@ -206,6 +387,16 @@ class PipeTransport implements Transport {
       if (!_ownedByMe(h)) {
         _closeHandle(h);
         throw const PipeNotOwned();
+      }
+      final problem = engineProblem(
+        serverProcess(h),
+        uiExe: Platform.resolvedExecutable,
+        exists: (p) => File(p).existsSync(),
+        sameFile: sameFileOnDisk,
+      );
+      if (problem != null) {
+        _closeHandle(h); // before a single byte is written
+        throw EngineUntrusted(problem);
       }
       final t = PipeTransport._(h);
       await t._startReader();

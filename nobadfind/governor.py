@@ -240,6 +240,7 @@ class Governor(threading.Thread):
         self.watchdog = watchdog
         self.release_idle = release_idle            # models idle for a few minutes leave memory (window closed too)
         self.decision = Decision(GENTLE, "Gentle: starting up")
+        self.sample = None                          # the last Sample (None before the first tick)
         self._history = deque(maxlen=HISTORY)
         self._stop_ev = threading.Event()
         self._applied = None
@@ -289,6 +290,7 @@ class Governor(threading.Thread):
     def tick(self):
         self._usage = self._read_usage()            # once per tick: find_cpu and find_mb share it
         s = self._sense()
+        self.sample = s                             # the last reading (talk about a photo checks free memory)
         d = self.brain.decide(s)
         self._history.append({"t": s.t, "cpu": s.cpu, "gpu": s.gpu, "find_cpu": s.find_cpu,
                               "find_mb": self._usage["memory_mb"], "level": d.level})

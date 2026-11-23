@@ -80,7 +80,7 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
     case 'get_settings':
       return c.getSettings();
     case 'set_settings' when p['changes'] is Map:
-      return c.setSettings(Map<String, Object?>.from(p['changes'] as Map));
+      return c.setSettings(Map<String, Object?>.from(p['changes'] as Map), consent: p['consent'] as String?);
     case 'hotkey_state':
       return c.hotkeyState();
     case 'hotkey_probe' when p['which'] is String && p['spec'] is String:
@@ -137,6 +137,29 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.turboSet(p['on'] as bool);
     case 'turbo_helper' when p['action'] == 'update' || p['action'] == 'remove':
       return c.turboHelper(p['action'] as String);
+    // talk about a photo (1.1); the transcript's wrong-typed and too-long requests go raw
+    case 'vision_state':
+      return c.visionState();
+    case 'vision_describe' when p['file_id'] is int:
+      return c.visionDescribe(p['file_id'] as int);
+    case 'vision_ask'
+        when p['file_id'] is int &&
+            p['question'] is String &&
+            (p['question'] as String).length <= 2000 &&
+            (p['deeper'] == null || p['deeper'] is bool) &&
+            (p['more'] == null || p['more'] is bool):
+      return c.visionAsk(
+        p['file_id'] as int,
+        p['question'] as String,
+        deeper: p['deeper'] == true,
+        more: p['more'] == true,
+      );
+    case 'vision_compare' when p['a'] is int && p['b'] is int && (p['question'] == null || p['question'] is String):
+      return c.visionCompare(p['a'] as int, p['b'] as int, question: p['question'] as String?);
+    case 'vision_cancel':
+      return c.visionCancel();
+    case 'vision_keep' when p['file_id'] is int && p['text'] is String && (p['text'] as String).length <= 2000:
+      return c.visionKeep(p['file_id'] as int, p['text'] as String);
   }
   return c.call(m, p);
 }

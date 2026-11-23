@@ -185,7 +185,7 @@ class StatusController extends ChangeNotifier {
         if (state.state == 'available' && (was.state != 'available' || was.latest != state.latest)) {
           onUpdateFound?.call(state);
         }
-      case ShowEvent() || NoticeEvent() || HereEvent() || QuittingEvent() || ModelsEvent():
+      case ShowEvent() || NoticeEvent() || HereEvent() || QuittingEvent() || ModelsEvent() || VisionEvent():
         return;
     }
     _changed();
@@ -196,6 +196,7 @@ class StatusController extends ChangeNotifier {
     Link.connecting => 'Connecting to the engine…',
     Link.offline => "The engine isn't running. Trying again…",
     Link.incompatible => 'This window and the engine are different versions. Update NOBAD Find.',
+    Link.untrusted => untrustedLine,
     Link.connected => _connectedLine(),
   };
 

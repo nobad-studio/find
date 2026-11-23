@@ -115,7 +115,8 @@ class PipeEngine implements EngineApi {
   @override
   Future<Settings> getSettings() => _pipe.getSettings();
   @override
-  Future<SettingsChange> setSettings(Map<String, Object?> changes) => _pipe.setSettings(changes);
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent}) =>
+      _pipe.setSettings(changes, consent: consent);
   @override
   Future<HotkeyState> hotkeyState() => _pipe.hotkeyState();
   @override
@@ -202,6 +203,20 @@ class PipeEngine implements EngineApi {
     if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid);
     return _pipe.openWith(id);
   }
+
+  @override
+  Future<VisionState> visionState() => _pipe.visionState();
+  @override
+  Future<VisionAnswer> visionDescribe(int fileId) => _pipe.visionDescribe(fileId);
+  @override
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false}) =>
+      _pipe.visionAsk(fileId, question, deeper: deeper, more: more);
+  @override
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question}) => _pipe.visionCompare(a, b, question: question);
+  @override
+  Future<VisionAnswer> visionCancel() => _pipe.visionCancel();
+  @override
+  Future<VisionAnswer> visionKeep(int fileId, String text) => _pipe.visionKeep(fileId, text);
 
   @override
   void dispose() => _pipe.dispose();

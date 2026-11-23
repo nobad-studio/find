@@ -145,10 +145,14 @@ class FakeApi:
     def get_settings(self):
         return dict(self.settings)
 
-    def set_settings(self, changes):
-        """Like Settings.update: every value through the real settings.coerce."""
+    def set_settings(self, changes, consent=None):
+        """Like Settings.update: every value through the real settings.coerce; secret_app_files goes on only with
+        the consent word, like Api.set_settings."""
+        from nobadfind.const import APP_FILES_CONSENT
         new = {k: coerce(k, v) for k, v in changes.items()
                if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
+        if new.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
+            del new["secret_app_files"]
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)
         out = {"changed": changed}
@@ -210,8 +214,10 @@ class FakeApi:
         rec = cat.recommend(pc)
         choice = cat.tier_choice(rec, focus)
         out = []
+        rid = "llama-vulkan" if pc.get("gpu") else "llama-cpu"
         for m in cat.CATALOG:
             ok, why = cat.capable(m, pc)
+            talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
             if m["builtin"]:
                 state = "active" if self.settings.get("ocr") else "ready"
             elif self.dl.get(m["id"], {}).get("state") == "downloading":
@@ -220,7 +226,7 @@ class FakeApi:
                 state = "active" if cat.selected(self.settings, m["feature"]) == m["id"] else "ready"
             else:
                 state = "not_downloaded"
-            out.append({"id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": cat.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -356,6 +362,58 @@ class FakeApi:
         self.turbo["error"] = ("Windows didn't get permission (the prompt was closed or answered No). NOBAD Find "
                                "keeps using its normal folder walk.")
         return {"ok": False, "error": self.turbo["error"], "state": self.turbo_state()}
+
+    # talk about a photo: ids 7 and 8 are photos, the first job is number 1 (the answer streams as vision events)
+    PHOTOS = (7, 8)
+    GONE = "This photo is no longer there."
+
+    def _job(self, *call):
+        self._note(*call)
+        self._jobs = getattr(self, "_jobs", 0) + 1
+        return {"ok": True, "error": "", "job": self._jobs}
+
+    def vision_state(self):
+        return {"ok": True, "not_now": "", "loaded": "", "busy": False, "job": 0, "running": False,
+                "models": [{"id": "smolvlm2-500m", "name": "SmolVLM2 500M", "deeper": False, "ready": True,
+                            "missing_mb": 0, "ram_mb": 1000, "vram_mb": 1200, "load_s": 1, "answer_s": [1, 3], "slow_note": "",
+                            "can_run": True, "why": ""},
+                           {"id": "qwen3vl-2b", "name": "Qwen3-VL 2B", "deeper": True, "ready": False,
+                            "missing_mb": 1800, "ram_mb": 3200, "vram_mb": 3500, "load_s": 13, "answer_s": [2, 12], "slow_note": "Slower now: NOBAD Find is in Very light mode.",
+                            "can_run": False,
+                            "why": "Not enough free memory for this one right now."}],
+                "runtime": {"id": "llama-vulkan", "ready": True, "missing_mb": 0}}
+
+    def vision_describe(self, file_id):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        return self._job("vision_describe", file_id)
+
+    def vision_ask(self, file_id, question, deeper=False, more=False):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        if not question.strip():
+            return {"ok": False, "error": "Type a question.", "job": 0}
+        if deeper:
+            return {"ok": False, "job": 0, "error": "To talk about photos, download Qwen3-VL 2B first (1800 MB, once).",
+                    "download": [{"id": "qwen3vl-2b", "name": "Qwen3-VL 2B", "size_mb": 1800}]}
+        return self._job("vision_ask", file_id, question, more)
+
+    def vision_compare(self, a, b, question=None, deeper=False):
+        if a == b:
+            return {"ok": False, "error": "Pick a second, different photo to compare.", "job": 0}
+        if a not in self.PHOTOS or b not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE, "job": 0}
+        return self._job("vision_compare", a, b, question)
+
+    def vision_cancel(self):
+        self._note("vision_cancel")
+        return {"ok": True, "error": "", "job": None}
+
+    def vision_keep(self, file_id, text):
+        if file_id not in self.PHOTOS:
+            return {"ok": False, "error": self.GONE}
+        self._note("vision_keep", file_id, text)
+        return {"ok": True, "error": "", "kept": bool(text.strip())}
 
     # window
     def ui_shown(self):
@@ -508,6 +566,8 @@ class Engine:
             if "volume" in t:
                 self.api.turbo["volumes"] = [dict(t["volume"])]
             self.events.turbo(self.api.turbo_state())
+        elif do == "vision":
+            self.events.push("vision", t["event"])
         elif do == "update":
             # a real update.Updater on a fake clock: the download's progress throttle and speed are the engine's own
             u = self._updater()

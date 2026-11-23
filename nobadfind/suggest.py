@@ -11,6 +11,7 @@ import datetime as dt
 import re
 
 from . import history
+from .display import visible
 from .store import fts_quote
 from .understand import FOLDER_LABELS, place_folders
 
@@ -110,8 +111,8 @@ def _name_items(store, text, limit):
         seen.add(key)
         # "tax no" -> "tax notes.txt", not "tax tax notes.txt": the name alone when it has the earlier words too
         text = name if all(w in key for w in earlier) else before + name
-        out.append({"text": text, "kind": "folder" if kind == "folder" else "file", "label": name,
-                    "detail": folder, "id": fid})
+        out.append({"text": text, "kind": "folder" if kind == "folder" else "file", "label": visible(name),
+                    "detail": visible(folder), "id": fid})       # names from the disk: display.visible (L7)
         if len(out) >= limit:
             break
     return out

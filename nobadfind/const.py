@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "1.0.1"
+APP_VER = "1.1.0"
 
 # NOBAD Find runs as the normal user, so its data lives in the user's own profile (not readable by other users).
 DATA_DIR = os.environ.get("NOBAD_FIND_DATA_DIR") or os.path.join(
@@ -43,22 +43,86 @@ SECRET_EXT = set(ALWAYS_EXCLUDE_EXT) | {".1pux", ".1pif", ".wallet"}
 # passwords, cookies, history and form data (Chromium and Firefox), developer tokens, wallets. Security review of #79.
 SECRET_FILES = {"key3.db", "key4.db", "logins.json", "cookies.sqlite", "places.sqlite", "formhistory.sqlite",
                 "signons.sqlite", ".npmrc", ".pypirc", ".netrc", "_netrc", ".git-credentials", "wallet.dat"}
+# Security review 2026-11-22 (M2). What other programs record (AGENTS.md: never read it) and more saved sign-ins, by
+# exact file name. They are secrets: out by default, names only when the user turns secrets on. A change here bumps
+# scope.RULES_REV, so an index made with the old rules loses their content once (indexer.Indexer._apply_new_rules).
+SECRET_FILES |= {
+    # command histories other programs keep (shells, REPLs, database clients, editors)
+    "consolehost_history.txt", ".bash_history", ".zsh_history", ".sh_history", ".python_history",
+    ".node_repl_history", ".psql_history", ".mysql_history", ".sqlite_history", ".rediscli_history",
+    ".irb_history", ".lesshst", ".viminfo", "_viminfo", ".wget-hsts",   # (not ".history": VS Code's folder)
+    # saved servers and passwords: FileZilla, WinSCP, PostgreSQL, S3 tools, Terraform, Vault
+    "sitemanager.xml", "recentservers.xml", "filezilla.xml", "winscp.ini", ".pgpass", "pgpass.conf", ".s3cfg",
+    ".boto", "credentials.tfrc.json", ".vault-token",
+    # SSH keys and host lists outside .ssh (a copied key is still a key)
+    "known_hosts", "known_hosts.old", "authorized_keys", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    "id_ecdsa_sk", "id_ed25519_sk",
+    # cloud sign-ins outside their own folders (gcloud, .aws, .azure, .docker, .kube are folders, above)
+    "application_default_credentials.json",
+}
+# A file name that is a secret only inside a folder run (the last item is the file name, the rest the folders right
+# above it): "settings.xml" in .m2 holds Maven passwords, elsewhere it's just settings.
+SECRET_FILES_IN = ((".m2", "settings.xml"), (".m2", "settings-security.xml"), (".cargo", "credentials.toml"),
+                   (".cargo", "credentials"), ("github cli", "hosts.yml"), ("gh", "hosts.yml"))
+# What other programs record and the sign-ins developer tools keep in plain text: the one part of the secrets the
+# user may let NOBAD Find READ (setting secret_app_files, off by default; maintainer ruling 2026-11-22). Off: they
+# are secrets like the rest (out, names only with include_secrets on). On: they are ordinary files, read into the
+# encrypted index. Keys, browser passwords, password vaults, wallets, Windows' credential folders and the cloud
+# sign-in folders never are. Every name here is also in SECRET_FILES (and every run in SECRET_FILES_IN / SECRET_PATHS
+# below), so the name lists that find secrets in the index still find them.
+APP_SECRET_FILES = {
+    # command histories (PowerShell, shells, REPLs, database clients, editors)
+    "consolehost_history.txt", ".bash_history", ".zsh_history", ".sh_history", ".python_history",
+    ".node_repl_history", ".psql_history", ".mysql_history", ".sqlite_history", ".rediscli_history",
+    ".irb_history", ".lesshst", ".viminfo", "_viminfo", ".wget-hsts",
+    # saved sites and logins of FTP/SSH tools
+    "sitemanager.xml", "recentservers.xml", "filezilla.xml", "winscp.ini", ".netrc", "_netrc",
+    # developer tool tokens: npm, PyPI, git, PostgreSQL, S3 tools, Terraform, Vault
+    ".npmrc", ".pypirc", ".git-credentials", ".pgpass", "pgpass.conf", ".s3cfg", ".boto", "credentials.tfrc.json",
+    ".vault-token",
+}
+SECRET_FILES |= APP_SECRET_FILES
 # Generic names that are secrets inside a browser profile (NAMES_ONLY_PATHS) only: "History" elsewhere is yours
 BROWSER_SECRET_FILES = {"login data", "login data for account", "cookies", "history", "web data", "local state"}
 # ... and by folder: these folder names one after the other anywhere in a path (lower case)
 SECRET_PATHS = (("microsoft", "credentials"), ("microsoft", "vault"), ("microsoft", "protect"),
-                ("discord", "local storage"), ("slack", "local storage"), ("teams", "local storage"))
+                ("discord", "local storage"), ("slack", "local storage"), ("teams", "local storage"),
+                # security review 2026-11-22 (M2): PowerShell's command history, FileZilla's saved sites, GitHub
+                # CLI tokens, GnuPG's keyrings on Windows
+                ("powershell", "psreadline"), ("roaming", "filezilla"),
+                ("roaming", "github cli"), (".config", "gh"), ("roaming", "gnupg"))
+# The folder runs of SECRET_PATHS (and all of SECRET_FILES_IN: Maven, Cargo and gh tokens) that secret_app_files lets
+# NOBAD Find read: PowerShell's history, FileZilla's saved sites, GitHub CLI's tokens (not GnuPG's keyrings)
+APP_SECRET_PATHS = (("powershell", "psreadline"), ("roaming", "filezilla"), ("roaming", "github cli"),
+                    (".config", "gh"))
+# .env files (".env", ".env.local", ".env.production", ...): often a project's passwords and API keys. Names only
+# unless secret_app_files is on (1.1.0); unlike the rest of that class they are listed by name even with secrets off.
+ENV_FILE = ".env"
+# The word set_settings needs (param consent) to turn secret_app_files on; the UI sends it after the confirm dialog
+APP_FILES_CONSENT = "READ_APP_SECRETS"
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
                     ("brave-browser", "user data"), ("vivaldi", "user data"), ("opera software",),
-                    ("firefox", "profiles"), ("thunderbird", "profiles"), ("leveldb",), ("indexeddb",))
+                    ("firefox", "profiles"), ("thunderbird", "profiles"), ("leveldb",), ("indexeddb",),
+                    # 2026-11-22: the other channels and forks of the same browsers
+                    ("chrome beta", "user data"), ("chrome dev", "user data"), ("chrome sxs", "user data"),
+                    ("edge beta", "user data"), ("edge dev", "user data"), ("edge sxs", "user data"),
+                    ("yandexbrowser", "user data"), ("thorium", "user data"), ("arc", "user data"),
+                    ("librewolf", "profiles"), ("waterfox", "profiles"), ("floorp", "profiles"),
+                    ("zen", "profiles"))
 NAMES_ONLY_EXT = {".sqlite", ".sqlite3", ".db", ".ldb", ".sqlite-wal", ".sqlite-shm", ".db-wal", ".db-shm",
-                  ".db-journal", ".leveldb"}
+                  ".db-journal", ".leveldb", ".vscdb"}
 CACHE_NAMES = {"node_modules", "__pycache__", ".git", ".svn", ".hg", ".venv", "venv", ".cache", "cache", "cache2",
                "code cache", "gpucache", "temp", "tmp"}
 SYSTEM_NAMES = {"windowsapps", "winsxs", "$windows.~bt", "$windows.~ws"}
 # Never indexed, whatever the settings say: other people's deleted files, restore points, Find's own data
 FIXED_NAMES = {"$recycle.bin", "system volume information", "nobad"}
+# ... and by folder run: the lists Windows and Office keep of what you opened (Recent items, jump lists). Their file
+# NAMES are the activity history AGENTS.md rules out, so they are out with every switch on, secret_app_files too
+# (fix round 1, I1). Each run is below the user's profile folder (scope.Rules anchors it there, so D:\proj\office\
+# recent is an ordinary folder).
+ALWAYS_OUT_PATHS = (("appdata", "roaming", "microsoft", "windows", "recent"),
+                    ("appdata", "roaming", "microsoft", "office", "recent"))
 
 DEFAULTS = {
     "roots": [],                    # empty = the user's profile folders plus every other fixed drive
@@ -106,6 +170,10 @@ DEFAULTS = {
     "include_system": True,         # Windows, Program Files, ProgramData, Recovery, PerfLogs
     "include_caches": True,         # AppData, caches, temp, node_modules, .git, venv
     "include_secrets": False,       # key files, password stores, .ssh, wallets: NAMES ONLY, never their content
+    # 1.1.0 (maintainer ruling 2026-11-22): READ what other programs record and developer tools' plain-text sign-ins
+    # (const.APP_SECRET_*: command histories, FileZilla/WinSCP sites, gh/npm/cargo... tokens, .env files) into the
+    # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off removes what was read.
+    "secret_app_files": False,      # turned on only with set_settings consent APP_FILES_CONSENT (below)
     "turbo": False,                 # the optional NTFS index helper (ntfs.py); asks for admin once (turbosvc.py)
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.

@@ -6,7 +6,11 @@ Security:
 - `FILE_FLAG_FIRST_PIPE_INSTANCE` on the first instance: if any process already holds the name, the engine
   refuses to serve instead of sharing it. The next listening instance is created before a connected one is handed
   off, so the name is never free while the engine runs. (The Flutter client also checks the pipe's owner is the
-  current user and allows identification-level impersonation only.)
+  current user, that the process serving it is NobadFind.exe next to it at medium integrity outside any
+  AppContainer, and allows identification-level impersonation only: pipe_client.dart engineProblem.)
+- Each connected client's own process token is checked (client_problem): below medium integrity or in an
+  AppContainer, it is dropped before anything is read (the DACL and the default label already stop them; this
+  fails closed if they ever don't). Security review 2026-11-22, M1.
 - Lines are capped at protocol.MAX_MESSAGE; a client that sends more is dropped. A client that stops reading is
   dropped after WRITE_TIMEOUT_MS, so it can't stall the engine.
 
@@ -29,6 +33,10 @@ SLOW_LOG_MS = 300                    # answers slower than this are logged (meth
 
 
 MAX_CLIENTS = 8
+# Requests one client may have waiting or running at once (security review 2026-11-22, L2): past this, the engine
+# stops reading from that client until some are answered, so a client writing as fast as it can doesn't queue
+# without bound. The UI has a handful in flight (a search, previews of the rows on screen, a status).
+MAX_INFLIGHT = 32
 BUF = 64 * 1024
 WRITE_TIMEOUT_MS = 5000
 
@@ -143,6 +151,7 @@ class Conn:
         pid = wintypes.DWORD()
         self.pid = pid.value if k.GetNamedPipeClientProcessId(handle, ctypes.byref(pid)) else 0
         self._closed = False
+        self.inflight = threading.BoundedSemaphore(MAX_INFLIGHT)
 
     def send(self, obj):
         data = encode(obj)
@@ -184,11 +193,50 @@ class Conn:
         k.CloseHandle(self._wov.hEvent)
 
 
-class Server:
-    """Serves `methods` (name -> fn(params, conn)) on the user's pipe. start() is False if the pipe can't be made."""
+MEDIUM = 0x2000
 
-    def __init__(self, methods=None, name=None, workers=4):
+
+def client_verdict(integrity, app_container):
+    """Why a client process may not talk to the engine, or None (security review 2026-11-22, M1, the engine's half):
+    the pipe's DACL and its default medium label already keep out other users, AppContainers and low-integrity
+    writers; this checks the connected process's own token again and fails closed."""
+    if integrity is None or integrity < 0 or app_container is None:
+        return "Windows can't say who the client is"
+    if app_container:
+        return "the client runs in an AppContainer"
+    if integrity < MEDIUM:
+        return "the client runs at low integrity"
+    return None
+
+
+def client_problem(pid):
+    """client_verdict for the process pid, from its token (ntfs's token readers)."""
+    from .. import ntfs
+    if not pid:
+        return "Windows can't say who the client is"
+    k, a = ntfs._k32(), ntfs._advapi()
+    hp = k.OpenProcess(0x1000, False, pid)                       # PROCESS_QUERY_LIMITED_INFORMATION
+    if not hp:
+        return "the client process can't be opened"
+    try:
+        tok = wintypes.HANDLE()
+        if not a.OpenProcessToken(hp, 0x8, ctypes.byref(tok)):  # TOKEN_QUERY
+            return "the client's token can't be read"
+        try:
+            return client_verdict(ntfs.integrity_of(tok), ntfs.token_dword(tok, 29))   # TokenIsAppContainer
+        finally:
+            k.CloseHandle(tok)
+    finally:
+        k.CloseHandle(hp)
+
+
+class Server:
+    """Serves `methods` (name -> fn(params, conn)) on the user's pipe. start() is False if the pipe can't be made.
+    check_client(pid) -> a reason or None: a connected client with a reason is dropped before it is read."""
+
+    def __init__(self, methods=None, name=None, workers=4, check_client=client_problem):
         self._k, self._a = _dlls()
+        self.check_client = check_client
         self.methods = methods or {}
         self.on_drop = None                  # fn(conn) after a client is gone (pipe liveness: Rpc._dropped)
         self.slow = set()                    # method names answered on a thread of their own
@@ -306,9 +354,17 @@ class Server:
                         if self._stop.wait(0.5):
                             break
                 conn = Conn(k, h)
-                with self._lock:
-                    self._conns.add(conn)
-                threading.Thread(target=self._serve, args=(conn,), daemon=True, name="rpc-conn").start()
+                try:
+                    problem = self.check_client(conn.pid)
+                except Exception as e:
+                    problem = f"the client check failed ({type(e).__name__})"
+                if problem:
+                    log(f"rpc client refused: {problem}", "warn")
+                    conn.close()
+                else:
+                    with self._lock:
+                        self._conns.add(conn)
+                    threading.Thread(target=self._serve, args=(conn,), daemon=True, name="rpc-conn").start()
                 if self._next is None:
                     return
         finally:
@@ -343,6 +399,9 @@ class Server:
                     linger = conn.send(error(None, INVALID_REQUEST, "Message too big"))   # it must get to read it
                     break
                 for line in got:
+                    while not conn.inflight.acquire(timeout=0.5):     # backpressure: wait for answers first
+                        if self._stop.is_set() or not conn.alive:
+                            return
                     if method_of(line) in self.slow:
                         threading.Thread(target=self._answer, args=(conn, line), daemon=True,
                                          name="rpc-slow").start()
@@ -350,6 +409,7 @@ class Server:
                     try:
                         self._pool.submit(self._answer, conn, line)
                     except RuntimeError:                       # the pool is shut down: stopping
+                        conn.inflight.release()
                         break
         except Exception as e:
             log(f"rpc connection ended: {type(e).__name__}", "warn")
@@ -358,6 +418,17 @@ class Server:
             self.drop(conn, linger or self._stop.is_set())    # stopping: what was written stays readable
 
     def _answer(self, conn, line):
+        try:
+            self._answer1(conn, line)
+        except Exception as e:                                 # in a pool thread nobody would see it
+            log(f"rpc answer failed: {type(e).__name__}", "warn")
+        finally:
+            try:
+                conn.inflight.release()
+            except (AttributeError, ValueError):               # a test's Conn without one
+                pass
+
+    def _answer1(self, conn, line):
         t0 = time.perf_counter()
         after = []
         reply = handle_line(line, self.methods, conn, after=after)

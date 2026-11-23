@@ -17,12 +17,16 @@ import numpy as np
 
 from . import embed, extract, models, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
+from .const import APP_SECRET_FILES, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
 from .log import log
 from .walker import Walker
 
 RESCAN_EVERY = 6 * 3600
 NAMES_ONLY = "names only"         # text_err / photo err of a secret: its content is never read (scope.Rules)
+# secret_app_files on: these names are read as text too, whatever their extension (.bash_history, .npmrc, Cargo's
+# "credentials"); .env files as well (Store.needs_text env)
+APP_READ_NAMES = frozenset(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
 DEBOUNCE = 2.0
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
 ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
@@ -169,6 +173,62 @@ class Indexer:
             else:
                 keep.append(r)
         return keep
+
+    RULE_KEYS = ("include_system", "include_caches", "include_secrets", "secret_app_files")
+
+    def _rules_key(self):
+        return tuple(bool(self.settings.get(k)) for k in self.RULE_KEYS)
+
+    def _may_read(self, path):
+        """What was read from path may be kept: the current rules don't make it names only (every secret is, so a
+        file secret_app_files no longer covers is too). The Rules are made again only when a switch changed."""
+        key = self._rules_key()
+        got = getattr(self, "_read_rules", None)
+        if got is None or got[0] != key:
+            got = self._read_rules = (key, self.rules())
+        return not got[1].names_only(path)
+
+    def _app_extras(self, rows, exts):
+        """Rows (id, path, ext, size, mtime) the text pass got by name (secret_app_files) rather than by extension
+        are read only when they are one of those files (scope.app_file): a "credentials" file elsewhere is an
+        ordinary file without readable text, marked read so it doesn't come back."""
+        keep = []
+        for r in rows:
+            if r[2] in exts or scope.app_file(r[1]):
+                keep.append(r)
+            else:
+                self.store.set_text(r[0], r[4], [], "not a text file")
+        return keep
+
+    def _apply_new_rules(self):
+        """Once per scope.RULES_REV (meta scope_rules): an index made with older rules loses what was read from the
+        files the new rules make names only (their text, vectors and photo vectors; security review 2026-11-22, M2:
+        PowerShell's history, FileZilla's saved sites, gh tokens, ...), and, with secrets off, the rows of the files
+        they make secrets. Everything else in the index stays as it is: no rebuild, no new walk.
+        Returns (content dropped, rows removed)."""
+        if self.store.meta("scope_rules") == scope.RULES_REV:
+            return (0, 0)
+        from .const import ALWAYS_OUT_PATHS
+        from .search import secret_sql
+        rules = self.rules()
+        quiet = [fid for fid, path in self.store.with_content() if rules.names_only(path)]
+        dropped = self.store.drop_content(quiet, NAMES_ONLY)
+        gone = []
+        if not rules.secrets:
+            where, args = secret_sql("f")
+            gone = [r[0] for r in self.store.q(f"SELECT f.path FROM files f WHERE {where}", args)
+                    if rules.category(r[0]) == "secrets"]
+        # always out, whatever the switches (Recent items, jump lists): the folders and everything in them
+        likes = ["%\\" + "\\".join(run) for run in ALWAYS_OUT_PATHS]
+        cond = " OR ".join("lower(path) LIKE ? OR lower(path) LIKE ?" for _ in likes)
+        args = [x for lk in likes for x in (lk, lk + "\\%")]
+        gone += [r[0] for r in self.store.q(f"SELECT path FROM files WHERE {cond}", args)
+                 if rules.category(r[0]) == "other_profiles"]
+        self.store.remove_paths(gone)
+        self.store.set_meta("scope_rules", scope.RULES_REV)
+        if dropped or gone:
+            log(f"new names-only rules: content of {dropped} files dropped, {len(gone)} rows out of the index")
+        return (dropped, len(gone))
 
     def known_drives(self):
         """Every drive the index has files from, with its kind and name, and whether it's plugged in now."""
@@ -348,6 +408,10 @@ class Indexer:
                     log("name word index built (fast one- and two-letter searches)")
             except Exception as e:
                 log(f"text index upgrade failed: {type(e).__name__}", "warn")
+            try:
+                self._apply_new_rules()
+            except Exception as e:
+                log(f"names-only clean-up failed: {type(e).__name__}", "warn")
             self.status["plan"] = plan(self.settings, self.roots())
             log(f"indexer plan {self.status['plan']}")
             self.store.prefer_roots = user_roots()         # your own folders first in every work queue (0.9.1)
@@ -552,6 +616,7 @@ class Indexer:
         plan_ = self.status["plan"]
         gentle, full = plan_.get("text_workers", 2), plan_.get("text_workers_idle", 2)
         inflight, queued = {}, []                    # future -> (job, started)
+        queued_key = self._rules_key()               # the rules the queue was made with
         alone = set()                                # file ids sent while nothing else was being read
         size = max(gentle, full)
 
@@ -585,13 +650,19 @@ class Indexer:
                     limit = 1 if careful else max(1, workers_for(level, plan_))
                 else:
                     limit = 1 if careful else (full if away else gentle)
+                key = self._rules_key()
+                if queued and key != queued_key:
+                    queued = []                     # the rules changed (secret_app_files off...): ask again
+                queued_key = key
                 if careful:
                     if not inflight:
                         queued = [self._suspects.pop(0)]
                 elif not queued and len(inflight) < limit:
                     skip = {job[0] for job, _t in inflight.values()}
+                    apps = not images and bool(self.settings.get("secret_app_files"))
                     todo = self._skip_secrets(
-                        self.store.needs_text(exts, max_bytes, limit=full * 16, min_bytes=min_bytes),
+                        self._app_extras(self.store.needs_text(exts, max_bytes, limit=full * 16, min_bytes=min_bytes,
+                                                               names=APP_READ_NAMES if apps else (), env=apps), exts),
                         lambda r: self.store.set_text(r[0], r[4], [], NAMES_ONLY))
                     queued = [(fid, p, ext, mt, max_bytes, use_ocr) for fid, p, ext, _size, mt in todo
                               if fid not in skip]
@@ -639,8 +710,10 @@ class Indexer:
                             continue
                         err = "too big"                 # out of memory with nothing else running: as before
                     alone.discard(job[0])
-                    self.store.set_text(fid, mtime, chunks, err)
-                    self.status["texts"] += 1
+                    # the rules as they are now, checked under the write lock: a file the user took out while it
+                    # was being read (secret_app_files off, then Api._purge_app_files) gets nothing back
+                    if self.store.set_text(fid, mtime, chunks, err, allow=lambda p=job[1]: self._may_read(p)):
+                        self.status["texts"] += 1
                 stuck = [(f, j) for f, (j, t) in inflight.items() if self._clock() - t > JOB_TIMEOUT]
                 if stuck:
                     for _f, j in stuck:
@@ -793,9 +866,14 @@ class Indexer:
             vecs = self._encode([embed.chunk_text(titles.get(r[0], ""), r[1]) for r in rows], next)
             if vecs is None:
                 return
-            self.store.add_vectors([(r[0], embed.to_blob(v)) for r, v in zip(rows, vecs)], next=bool(next))
-            if self.vindex is not None and not next:
-                self.vindex.add([r[0] for r in rows], vecs)
+            # under the write lock, and only for the chunks still there: a purge while they were being encoded
+            # (secret_app_files off) leaves no vector behind, on disk or in memory (fix round 2)
+            with self.store.wlock:
+                wrote = set(self.store.add_vectors([(r[0], embed.to_blob(v)) for r, v in zip(rows, vecs)],
+                                                   next=bool(next), bodies={r[0]: r[1] for r in rows}))
+                if self.vindex is not None and not next and wrote:
+                    pick = [i for i, r in enumerate(rows) if r[0] in wrote]
+                    self.vindex.add([rows[i][0] for i in pick], np.asarray(vecs)[pick])
             self.status["rebuilt" if next else "vectors"] = self.status.get("rebuilt" if next else "vectors", 0) + len(rows)
             self._breathe()
 
@@ -1119,7 +1197,8 @@ class Indexer:
         rows = []
         w = Walker(self.roots(), exclude=self.settings.get("exclude"), gen=gen, rules=self.rules())
         for p in paths:
-            if w.excluded(p):
+            p = winapi.long_path(p)                 # a short "CREDEN~1" segment must not get past the rules (L5)
+            if p is None or w.excluded(p):
                 continue
             name, parent = os.path.basename(p), os.path.dirname(p)
             try:

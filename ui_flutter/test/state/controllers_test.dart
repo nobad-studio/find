@@ -103,6 +103,49 @@ void main() {
       toasts.dispose();
     });
 
+    test('Copy name copies the real name, not the one drawn with [U+...] marks', () async {
+      final r = FileResult.fromJson({'id': 5, 'name': 'تقرير\u200F.docx', 'dir': 'C:\\Docs\u202E', 'kind': 'document'})!;
+      expect(r.name, 'تقرير[U+200F].docx');
+      expect(r.rawName, 'تقرير\u200F.docx');
+      expect(r.dir, r'C:\Docs[U+202E]');
+      expect(r.rawDir, 'C:\\Docs\u202E');
+      final e = FakeEngine(files: [r]);
+      final copied = <String>[];
+      final f = FindController(e, debounce: Duration.zero, copy: (s) async => copied.add(s));
+      f.setText('docx');
+      await f.run();
+      await f.copyNameSelected();
+      expect(copied, ['تقرير\u200F.docx']);
+      f.dispose();
+    });
+
+    test('a forget the engine refuses says why and keeps the result', () async {
+      final e = FakeEngine()..forgetError = 'The Never index list is full (5000 entries).';
+      final toasts = ToastController();
+      final f = FindController(e, debounce: Duration.zero, toasts: toasts);
+      f.setText('tax return');
+      await f.run();
+      expect(await f.forgetSelected((q) async => true), isFalse);
+      expect(e.forgotten, isEmpty);
+      expect(toasts.message, 'The Never index list is full (5000 entries).');
+      expect(f.results, isNotEmpty);
+      f.dispose();
+      toasts.dispose();
+    });
+
+    test('a forget kept in memory only shows the engine\'s note', () async {
+      final e = FakeEngine()..forgetNote = "Forgotten for now, but NOBAD Find couldn't save its protected list.";
+      final toasts = ToastController();
+      final f = FindController(e, debounce: Duration.zero, toasts: toasts);
+      f.setText('tax return');
+      await f.run();
+      expect(await f.forgetSelected((q) async => true), isTrue);
+      expect(e.forgotten, isNotEmpty);
+      expect(toasts.message, "Forgotten for now, but NOBAD Find couldn't save its protected list.");
+      f.dispose();
+      toasts.dispose();
+    });
+
     test('an open that fails says why', () async {
       final e = FakeEngine()..openOk = false;
       final toasts = ToastController();

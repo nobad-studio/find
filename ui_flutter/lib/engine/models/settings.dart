@@ -4,6 +4,9 @@ library;
 
 import 'json.dart';
 
+/// set_settings' consent word for turning `secret_app_files` on (const.APP_FILES_CONSENT in the engine).
+const appFilesConsent = 'READ_APP_SECRETS';
+
 /// The engine's settings as it sent them. Unknown keys are kept (a newer engine), missing ones read as the
 /// engine's defaults. The UI never decides what a value means: set_settings sends changes and the engine checks.
 class Settings {
@@ -45,6 +48,8 @@ class Settings {
     'bg_notice_seen': false,
     'welcome_seen': false,
     'search_history': true,
+    // 1.1.0: read command histories, saved logins and tool tokens (Settings > Privacy, after a confirm dialog)
+    'secret_app_files': false,
     'models_stay_loaded': false,
     'update_check': true,
   };

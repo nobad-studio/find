@@ -7,6 +7,8 @@ Tables
   nvecs   meaning-search vectors for file and folder names (so a photo or a bill is found by what its name means)
   pvecs   photo-meaning vectors (what's in the picture), with the file time they were made for
   search_history  the questions you typed yourself, for autocomplete (setting search_history; history.py)
+  vdesc   a photo description the user kept (talk about a photo, Keep this description), with the model that made
+          it; it is also one chunk of that photo (ord KEPT_ORD) so words and meaning search find it
 """
 import os
 import secrets
@@ -42,11 +44,13 @@ CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
   INSERT INTO names(rowid, name, dir) VALUES (new.id, new.name, new.dir); END;
 CREATE TABLE IF NOT EXISTS nvecs(file_id INTEGER PRIMARY KEY, v BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS pvecs(file_id INTEGER PRIMARY KEY, mtime REAL, v BLOB NOT NULL, err TEXT);
+CREATE TABLE IF NOT EXISTS vdesc(file_id INTEGER PRIMARY KEY, text TEXT NOT NULL, model TEXT, at REAL);
 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
   INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
   DELETE FROM chunks WHERE file_id = old.id;
   DELETE FROM nvecs WHERE file_id = old.id;
-  DELETE FROM pvecs WHERE file_id = old.id; END;
+  DELETE FROM pvecs WHERE file_id = old.id;
+  DELETE FROM vdesc WHERE file_id = old.id; END;
 CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF name, dir ON files
   WHEN old.name IS NOT new.name OR old.dir IS NOT new.dir BEGIN
   INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
@@ -97,6 +101,11 @@ NAME_INDEX = "4"
 SCHEMA = SCHEMA.replace("@TEXT_TOKENIZE@", TEXT_TOKENIZE).replace("@NAME_TOKENIZE@", NAME_TOKENIZE)
 
 
+# chunks.ord of a kept description (vdesc): the file's read text (OCR) is ord 0, 1, ...; re-reading the file replaces
+# those and keeps this one
+KEPT_ORD = -1
+
+
 def fts_quote(term):
     """One FTS5 string literal: the term is always data, never query syntax."""
     return '"' + term.replace('"', '""') + '"'
@@ -119,6 +128,7 @@ def _load_key(key_path):
 class Store:
     def __init__(self, db_path, key_path=None, encrypt=True):
         self.db_path = db_path
+        self.key_path = key_path or db_path + ".key"
         self.encrypted = bool(encrypt and _cipher and winapi.WIN)
         self._key = None
         if self.encrypted:
@@ -335,20 +345,51 @@ class Store:
                         break
         return out
 
-    def needs_text(self, kinds_ext, max_bytes, limit=500, min_bytes=0):
+    def needs_text(self, kinds_ext, max_bytes, limit=500, min_bytes=0, names=(), env=False):
+        """Files to read, by extension; names: also these file names (lower case; text files without a readable
+        extension, like .bash_history), env: also .env and .env.* files (secret_app_files)."""
         marks = ",".join("?" * len(kinds_ext))
+        names = sorted(names)
+        which = f"f.ext IN ({marks})"
+        if names:
+            which += f" OR (f.kind != 'folder' AND lower(f.name) IN ({','.join('?' * len(names))}))"
+        if env:
+            which += " OR (f.kind != 'folder' AND (lower(f.name) = '.env' OR lower(f.name) LIKE '.env.%'))"
         return self._first(lambda extra: (
-            f"SELECT f.id, f.path, f.ext, f.size, f.mtime FROM files f WHERE f.ext IN ({marks}) AND f.size <= ? "
+            f"SELECT f.id, f.path, f.ext, f.size, f.mtime FROM files f WHERE ({which}) AND f.size <= ? "
             f"AND f.size >= ? AND (f.text_mtime IS NULL OR f.text_mtime <> f.mtime){extra} ORDER BY f.mtime DESC LIMIT ?"),
-            (*sorted(kinds_ext), max_bytes, min_bytes), limit)
+            (*sorted(kinds_ext), *names, max_bytes, min_bytes), limit)
 
-    def set_text(self, file_id, mtime, chunks, err=None):
+    def read_again(self, file_ids, mark):
+        """Files marked `mark` (names only) are read again: their text and photo marks go. Returns how many."""
+        ids = list(file_ids)
+        n = 0
         with self.wlock:
-            self.db.execute("DELETE FROM chunks WHERE file_id=?", (file_id,))
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                marks = ",".join("?" * len(part))
+                n += self.db.execute(f"UPDATE files SET text_mtime = NULL, text_err = NULL WHERE text_err = ? AND id IN "
+                                     f"({marks})", (mark, *part)).rowcount
+                self.db.execute(f"DELETE FROM pvecs WHERE err = ? AND file_id IN ({marks})", (mark, *part))
+            self.db.commit()
+        return n
+
+    def set_text(self, file_id, mtime, chunks, err=None, allow=None):
+        """What was read from a file, and that it was read at mtime. allow: checked under the write lock, right
+        before writing (the indexer's rules as they are NOW: a setting turned off while the file was being read,
+        and the purge that followed, win); False = nothing is written and the file isn't marked read. A file whose
+        row is gone gets nothing (no orphan text). Returns True when it was written."""
+        with self.wlock:
+            if allow is not None and not allow():
+                return False
+            if chunks and self.one("SELECT 1 FROM files WHERE id=?", (file_id,)) is None:
+                return False
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord IS NOT ?", (file_id, KEPT_ORD))
             self.db.executemany("INSERT INTO chunks(file_id, ord, body) VALUES(?,?,?)",
                                 [(file_id, i, c) for i, c in enumerate(chunks)])
             self.db.execute("UPDATE files SET text_mtime=?, text_err=? WHERE id=?", (mtime, err, file_id))
             self.db.commit()
+        return True
 
     def reset_scanned_pdfs(self, min_chars=200):
         """PDFs that gave (almost) no text are probably scans: read them again, now with OCR."""
@@ -482,11 +523,82 @@ class Store:
         return dict(self.q(f"SELECT c.id, f.name FROM chunks c JOIN files f ON f.id=c.file_id WHERE c.id IN ({marks})",
                            chunk_ids)) if chunk_ids else {}
 
-    def add_vectors(self, rows, next=False):
+    def add_vectors(self, rows, next=False, bodies=None):
+        """Meaning vectors (chunk_id, blob) into vecs (vecs_next: a model switch's). Only for chunks that are still
+        there when the write lock is held (and, with bodies {chunk_id: text}, still hold the text the vector was
+        made from: a chunk id can be used again): a purge between reading the text and this write (secret_app_files
+        off, fix round 2) leaves no vector of it behind. Returns the chunk ids written, in order."""
         t = "vecs_next" if next else "vecs"
+        rows = list(rows)
         with self.wlock:
-            self.db.executemany(f"INSERT OR REPLACE INTO {t}(chunk_id, v) VALUES(?,?)", rows)
+            live = {}
+            ids = [r[0] for r in rows]
+            for i in range(0, len(ids), 500):
+                part = ids[i:i + 500]
+                live.update(self.q(f"SELECT id, body FROM chunks WHERE id IN ({','.join('?' * len(part))})", part))
+            keep = [r for r in rows if r[0] in live and (bodies is None or bodies.get(r[0]) == live[r[0]])]
+            self.db.executemany(f"INSERT OR REPLACE INTO {t}(chunk_id, v) VALUES(?,?)", keep)
             self.db.commit()
+        return [r[0] for r in keep]
+
+    # ---------- talk about a photo: what was read from it, and the description the user kept ----------
+    def read_text(self, file_id):
+        """The text read from inside a file (OCR for a photo), in order, when it was read from the file as it is now
+        (text_mtime = mtime); "" otherwise. A kept description is not part of it."""
+        if not self.one("SELECT 1 FROM files WHERE id=? AND text_mtime IS NOT NULL AND text_mtime = mtime",
+                        (file_id,)):
+            return ""
+        rows = self.q("SELECT body FROM chunks WHERE file_id=? AND ord IS NOT ? ORDER BY ord", (file_id, KEPT_ORD))
+        return "\n".join(r[0] for r in rows if r[0]).strip()
+
+    def keep_description(self, file_id, text, model=""):
+        """Store the user's kept description of a photo (vdesc) and make it that photo's KEPT_ORD chunk (searched by
+        words, and by meaning once the indexer gives it a vector). Replaces an earlier one."""
+        with self.wlock:
+            self.db.execute("INSERT OR REPLACE INTO vdesc(file_id, text, model, at) VALUES(?,?,?,?)",
+                            (file_id, text, model or "", time.time()))
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord=?", (file_id, KEPT_ORD))
+            self.db.execute("INSERT INTO chunks(file_id, ord, body) VALUES(?,?,?)", (file_id, KEPT_ORD, text))
+            self.db.commit()
+
+    def forget_description(self, file_id):
+        with self.wlock:
+            self.db.execute("DELETE FROM vdesc WHERE file_id=?", (file_id,))
+            self.db.execute("DELETE FROM chunks WHERE file_id=? AND ord=?", (file_id, KEPT_ORD))
+            self.db.commit()
+
+    def kept_description(self, file_id):
+        """{"text", "model", "at"} or None."""
+        r = self.q("SELECT text, model, at FROM vdesc WHERE file_id=?", (file_id,))
+        return {"text": r[0][0], "model": r[0][1] or "", "at": r[0][2] or 0.0} if r else None
+
+    def with_content(self):
+        """(id, path) of every file something was read from: text chunks, a photo vector or a kept description."""
+        return self.q("SELECT id, path FROM files WHERE id IN (SELECT file_id FROM chunks) OR id IN "
+                      "(SELECT file_id FROM pvecs WHERE length(v) > 0) OR id IN (SELECT file_id FROM vdesc)")
+
+    def drop_content(self, file_ids, mark):
+        """What was read from these files goes (text, its words and vectors, photo vectors, a kept description); the
+        rows, their names and name vectors stay, marked `mark` so nothing reads them again. One transaction."""
+        ids = list(file_ids)
+        if not ids:
+            return 0
+        with self.wlock:
+            self.db.execute("BEGIN")
+            try:
+                for i in range(0, len(ids), 500):
+                    part = ids[i:i + 500]
+                    marks = ",".join("?" * len(part))
+                    self.db.execute(f"DELETE FROM chunks WHERE file_id IN ({marks})", part)   # text, vecs: triggers
+                    self.db.execute(f"DELETE FROM vdesc WHERE file_id IN ({marks})", part)
+                    self.db.execute(f"UPDATE pvecs SET v = x'', err = ? WHERE file_id IN ({marks})", (mark, *part))
+                    self.db.execute(f"UPDATE files SET text_mtime = mtime, text_err = ? WHERE id IN ({marks})",
+                                    (mark, *part))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return len(ids)
 
     # ---------- forgetting ----------
     def forget_path(self, path):
@@ -495,12 +607,31 @@ class Store:
     def wipe(self):
         with self.wlock:
             for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "chunks", "files", "meta", "apps",
-                      "search_history"):
+                      "search_history", "vdesc"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT INTO names(names) VALUES('rebuild')")
             self.db.execute("INSERT INTO text(text) VALUES('rebuild')")
             self.db.commit()
             self.db.execute("VACUUM")
+
+    def remove_aside_copies(self):
+        """Delete the index and key copies set aside when the key couldn't be read (*.unreadable-<stamp>): they hold
+        an old index (Wipe: nothing of it stays). Returns how many went."""
+        n = 0
+        for p in (self.db_path, self.key_path):
+            folder, base = os.path.split(p)
+            try:
+                names = os.listdir(folder or ".")
+            except OSError:
+                continue
+            for name in names:
+                if name.startswith(base + ".unreadable-"):
+                    try:
+                        os.remove(os.path.join(folder, name))
+                        n += 1
+                    except OSError as e:
+                        log(f"couldn't delete an old index copy (error {e.errno})", "warn")
+        return n
 
     def stats(self):
         return {

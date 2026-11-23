@@ -26,3 +26,18 @@ def log(msg, level="info"):
                 f.write(line[:2000] + "\n")
         except OSError:
             pass
+
+
+def clear():
+    """Empty the log and drop the rotated copy (Wipe: nothing of the old index is left in plain text)."""
+    if _path is None:
+        return
+    with _lock:
+        for p in (_path + ".1", _path):
+            try:
+                if p == _path:
+                    open(p, "w", encoding="utf-8").close()
+                else:
+                    os.remove(p)
+            except OSError:
+                pass

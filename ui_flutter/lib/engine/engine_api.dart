@@ -19,10 +19,28 @@ import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
 import 'models/update.dart';
+import 'models/vision.dart';
 
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
+export 'models/vision.dart';
 
-enum Link { connecting, connected, offline, incompatible }
+/// untrusted: something answers on the engine's pipe that isn't NOBAD Find's engine (pipe_client.dart checks the
+/// process at the other end); this window sends it nothing and keeps trying for the real one.
+enum Link { connecting, connected, offline, incompatible, untrusted }
+
+/// What the window says while [Link.untrusted].
+const untrustedLine =
+    "Another program is answering in place of NOBAD Find's engine, so this window won't talk to it. "
+    'Quit NOBAD Find and start it again; if this stays, restart the PC.';
+
+/// The pipe is served by a process that isn't NOBAD Find's engine (another account, a sandboxed or low-integrity
+/// process, another program): nothing is sent to it. [reason] is for the log.
+class EngineUntrusted implements Exception {
+  const EngineUntrusted(this.reason);
+  final String reason;
+  @override
+  String toString() => "Not connecting: the pipe's server isn't NOBAD Find's engine ($reason).";
+}
 
 /// The engine answered with a JSON-RPC error; [message] is plain language for the user.
 class RpcException implements Exception {
@@ -97,7 +115,9 @@ abstract class EngineApi {
 
   // ---- settings and the index ----
   Future<Settings> getSettings();
-  Future<SettingsChange> setSettings(Map<String, Object?> changes);
+  /// [consent]: `appFilesConsent` after the user's yes in the confirm dialog; the engine turns `secret_app_files`
+  /// on only with it.
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent});
 
   /// Whether each global hotkey is registered and working now (`hotkey_state`).
   Future<HotkeyState> hotkeyState();
@@ -171,6 +191,19 @@ abstract class EngineApi {
 
   /// Windows' "Open with" dialog for the result.
   Future<ActionResult> openWith(int id);
+
+  // ---- talk about a photo (1.1; an older engine: -32601). Photos by result id; the answer comes as VisionEvents,
+  // after the reply that names its job. One job at a time: a new question cancels the old one. ----
+  Future<VisionState> visionState();
+  Future<VisionAnswer> visionDescribe(int fileId);
+
+  /// [more]: run the model even when the text read from the photo answered a question about writing.
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false});
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question});
+  Future<VisionAnswer> visionCancel();
+
+  /// Keep [text] as the photo's description so searches find it ('' forgets it); [VisionAnswer.kept] says which.
+  Future<VisionAnswer> visionKeep(int fileId, String text);
 
   void dispose();
 }

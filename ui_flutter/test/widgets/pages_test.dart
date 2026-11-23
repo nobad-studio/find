@@ -148,6 +148,51 @@ void main() {
       expect(find.text('Index deleted. Rebuilding.'), findsOneWidget);
     });
 
+    testWidgets('reading app files asks once, says what is read, and off needs no question', (tester) async {
+      final engine = FakeEngine();
+      await pumpApp(tester, engine, size: const Size(1080, 1600));
+      await ctrl(tester, LogicalKeyboardKey.digit3);
+      await tester.tap(find.text('Privacy & data'));
+      await tester.pumpAndSettle();
+      const label = 'Read command histories, saved logins and tool tokens';
+      expect(find.text(label), findsOneWidget);
+      for (final words in [
+        'command histories (PowerShell, bash',
+        'saved-site and login files of FTP/SSH tools (FileZilla, WinSCP',
+        'developer tool tokens (GitHub CLI, npm',
+        'Cargo',
+        '.env files',
+        'Recent items are never read',
+      ]) {
+        expect(find.textContaining(words), findsOneWidget, reason: words);
+      }
+      final sw = find.byWidgetPredicate((w) => w is NbSwitch && w.label == label);
+      await tester.ensureVisible(sw);
+      await tester.pumpAndSettle();
+      await tester.tap(sw);
+      await tester.pumpAndSettle();
+      expect(find.text('Read these files?'), findsOneWidget);
+      expect(find.textContaining('may include passwords and tokens'), findsOneWidget);
+      expect(find.textContaining("NOBAD Find's encrypted index on this PC"), findsOneWidget);
+      expect(find.textContaining('can appear in search results'), findsOneWidget);
+      expect(find.textContaining('"App data, caches and code folders" is on'), findsOneWidget); // M2
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(engine.settingsSet.where((c) => c.containsKey('secret_app_files')), isEmpty);
+      await tester.tap(sw);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Read them'));
+      await tester.pumpAndSettle();
+      expect(engine.settingsSet.last, {'secret_app_files': true});
+      expect(engine.consents.last, 'READ_APP_SECRETS'); // the engine turns it on only with this word (M7)
+      expect(tester.widget<NbSwitch>(sw).value, isTrue); // the engine took it
+      await tester.tap(sw); // off: no question and no word, the engine removes what was read
+      await tester.pumpAndSettle();
+      expect(find.text('Read these files?'), findsNothing);
+      expect(engine.settingsSet.last, {'secret_app_files': false});
+      expect(engine.consents.last, isNull);
+    });
+
     testWidgets('Windows Search: one click, and the words say what happens', (tester) async {
       final engine = FakeEngine();
       await pumpApp(tester, engine, size: const Size(1080, 1000));

@@ -1,6 +1,7 @@
 """Small Windows API wrappers (ctypes only; nothing here builds a shell string)."""
 import ctypes
 import os
+import re
 import subprocess
 import sys
 from ctypes import wintypes
@@ -14,6 +15,67 @@ if WIN:
 
 
 INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+
+# ---------- Windows' own programs by full path (security review 2026-11-22, L3) ----------
+def _win_folder(fn_name, fallback):
+    if WIN:
+        buf = ctypes.create_unicode_buffer(260)
+        n = getattr(ctypes.windll.kernel32, fn_name)(buf, 260)
+        if 0 < n < 260:
+            return buf.value
+    return fallback
+
+
+def windows_dir():
+    """The Windows folder, from Windows itself (GetWindowsDirectoryW), never from %WINDIR% or the search order."""
+    return _win_folder("GetWindowsDirectoryW", "C:\\Windows")
+
+
+def system_dir():
+    """System32, from Windows itself (GetSystemDirectoryW)."""
+    return _win_folder("GetSystemDirectoryW", "C:\\Windows\\System32")
+
+
+_SHORT_SEGMENT = re.compile(r"~\d")
+
+
+def long_path(p):
+    """p with every 8.3 short segment ("APPDAT~1") in its long form, or None when it has one Windows can't expand
+    (gone, or no access). Folder-change notifications may name a path either way (ReadDirectoryChangesW), and the
+    scope rules match folder names as written: "CREDEN~1" must not slip past "Credentials" (security review
+    2026-11-22, L5). A path with no "~digit" in it is returned as it is, with no call."""
+    if not p or not _SHORT_SEGMENT.search(p):
+        return p
+    if not WIN:
+        return None
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetLongPathNameW(p, buf, 32768)
+    if n and n < 32768:
+        return buf.value
+    # gone (a delete): its folders still exist, so expand those; the last name stays as it came (a file really
+    # named "Report~1.docx" that was deleted still leaves the index)
+    parent, name = os.path.split(p)
+    if not name or parent == p:
+        return None
+    head = long_path(parent)
+    return None if head is None else os.path.join(head, name)
+
+
+_IN_WINDOWS_DIR = {"explorer.exe"}
+_IN_OWN_FOLDER = {"powershell.exe": ("WindowsPowerShell", "v1.0")}
+
+
+def system_exe(name):
+    """The full path of one of Windows' own programs by its bare name ("explorer.exe", "cmd.exe"): a bare name
+    would be looked up in NobadFind.exe's folder and the current directory before System32 (CreateProcess's search
+    order), so a planted explorer.exe there would run instead. Raises ValueError for anything but a bare name."""
+    if not name or os.path.basename(name) != name or "/" in name or ":" in name:
+        raise ValueError("a bare program name")
+    low = name.lower()
+    if low in _IN_WINDOWS_DIR:
+        return os.path.join(windows_dir(), name)
+    return os.path.join(system_dir(), *_IN_OWN_FOLDER.get(low, ()), name)
 
 SHOW_EVENT = "Local\\NOBAD-Find-Show"         # a second start asks the running copy to show its window
 SHOW_WHAT = ("main", "settings", "index", "bar")   # what it may ask for: one event each (main keeps the old name)
@@ -135,7 +197,7 @@ def open_outside_job(path):
     with CREATE_BREAKAWAY_FROM_JOB and an argument list (no shell string) and hands the file to the running
     desktop shell, so the program gets the shell's environment, not Find's. Raises OSError when Windows
     refuses the breakaway (the caller falls back to os.startfile)."""
-    explorer = os.path.join(os.environ.get("WINDIR") or "C:\\Windows", "explorer.exe")
+    explorer = system_exe("explorer.exe")
     return subprocess.Popen([explorer, path], creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
 
 
@@ -143,7 +205,12 @@ def start_outside_job(argv):
     """Start a program of Find's own (the UI, the Open with helper) outside Find's job, as the normal user:
     an argument list, never a shell string. Raises OSError when Windows refuses the breakaway.
     0.9.5: the window asked for it (AllowSetForegroundWindow to the engine), so what starts may take the front;
-    a Settings page opened from the bar used to appear behind the app the user was in."""
+    a Settings page opened from the bar used to appear behind the app the user was in.
+    The program is always a full path (system_exe for Windows' own): a bare name would go through the search
+    order (Find's folder, the current directory) first."""
+    argv = list(argv)
+    if not argv or not os.path.isabs(str(argv[0])):
+        raise OSError(22, "a program by its full path")
     if WIN:
         try:
             user32.AllowSetForegroundWindow(wintypes.DWORD(0xFFFFFFFF))   # ASFW_ANY
@@ -987,8 +1054,24 @@ def worker_priority(low=True):
     if not WIN:
         return False
     k, _ps = _own_dll()
+    ok = bool(k.SetPriorityClass(k.GetCurrentProcess(), _IDLE_PRIORITY_CLASS if low else _NORMAL_PRIORITY_CLASS))
+    return _memory_and_io_priority(low) and ok
+
+
+def worker_activity(active):
+    """The talk worker while a job is loading or answering (active=True): NORMAL memory and I/O priority, so the
+    model it reads (1.1 GB for Qwen) is not the first memory Windows takes back nor queued behind every other
+    disk read; back to low / very low when the job ends (active=False). The CPU priority stays idle (and the
+    WORKERS job's CPU cap and EcoQoS stay as the governor set them): the user's level keeps the CPU."""
+    if not WIN:
+        return False
+    return _memory_and_io_priority(not active)
+
+
+def _memory_and_io_priority(low):
+    k, _ps = _own_dll()
     h = k.GetCurrentProcess()
-    ok = bool(k.SetPriorityClass(h, _IDLE_PRIORITY_CLASS if low else _NORMAL_PRIORITY_CLASS))
+    ok = True
     mem = wintypes.ULONG(_MEMORY_PRIORITY_LOW if low else _MEMORY_PRIORITY_NORMAL)
     ok = bool(k.SetProcessInformation(h, _PROCESS_MEMORY_PRIORITY, ctypes.byref(mem), 4)) and ok
     try:

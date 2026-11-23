@@ -68,7 +68,7 @@ class StatusLine extends StatelessWidget {
                       keys && ok ? (st?.phaseLabel ?? '') : s.status.line,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: NbType.text(NbSize.caption, s.status.link == Link.offline ? c.warn : c.muted),
+                      style: NbType.text(NbSize.caption, s.status.link == Link.offline || s.status.link == Link.untrusted ? c.warn : c.muted),
                     ),
                   ),
                 ),

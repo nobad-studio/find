@@ -10,9 +10,11 @@ Tiers (the spec's table):
   best      16 GB+ and 8+ cores, or DirectML   multilingual-e5-base, SigLIP 2 base, Windows OCR
             with 4 GB+ of video memory
 """
+import math
 import os
 
 from .const import DATA_DIR, MODEL_FILES, MODEL_REV
+from . import llama_pins
 from .photo import PHOTO_FILES, PHOTO_REV
 
 TIERS = ("light", "balanced", "best")
@@ -21,6 +23,16 @@ HF = "https://huggingface.co/"
 _E5_SMALL_REV = "761b726dd34fb83930e26aab4e9ac3899aa1fa78"
 _E5_BASE_REV = "1ec9243030a27d1a115d5c340572074c125b58b2"
 _SIGLIP2_REV = "ba1f3b0843f24bc5417d38e19c37b287d719b2f4"
+
+
+def _runtime(rid, name, zipinfo, dlls, improves):
+    zname, zurl, size, sha = zipinfo
+    return {"id": rid, "feature": "runtime", "name": name, "tier": "light", "licence": "MIT",
+            "source": "https://github.com/ggml-org/llama.cpp/releases/tag/" + llama_pins.TAG, "rev": llama_pins.TAG,
+            "url": zurl, "files": {"zip": (zname, size, sha)}, "files_in_zip": dict(dlls),
+            "dir": os.path.join("runtime", rid), "languages": [], "improves": improves, "ram_mb": 0,
+            "speed_note": "", "builtin": False}
+
 
 CATALOG = [
     {"id": "minilm-l6-v2", "min_score": 0.25, "spread": 0.29, "name_spread": 0.29, "name_strong": 0.33, "feature": "text", "name": "all-MiniLM-L6-v2", "tier": "light", "licence": "Apache-2.0",
@@ -84,12 +96,68 @@ CATALOG = [
      "improves": "Finds photos with questions in many languages, Hindi included", "ram_mb": 370,
      "speed_note": "about 3 photos a second on 4 threads (SigLIP base about 4); a question in about 90-125 ms",
      "builtin": False},
+    # talk about a photo (find 1.1): a small vision-language model run by llama.cpp (the runtimes below). Not part of
+    # the search tiers: it is offered when the user first asks to talk about a photo. Files, revisions, sizes and
+    # SHA-256s are tools/vision_bench/models.json. Measured through the real talk worker on the reference PC
+    # (docs/measurements.md, 2026-11-22 1.1.0): ram_mb = the most system memory the worker held (peak private or
+    # working set, the bigger, over the CPU and the Vulkan runs: on shared-memory graphics the "video" memory is
+    # system RAM too); vram_mb = its peak graphics memory on Vulkan (talk_need_mb picks between them).
+    # timing, per runtime and governor level (talk_timing): the talk worker runs in the worker group under the
+    # level's CPU hard cap (Gentle 35 %, Very light 15 % and efficiency mode), so each level was measured with that
+    # cap in force (tools/measure_talk.py; measurements.md 2026-11-22 "release fix: progress, Stop, priority"; CPU
+    # rows are two runs, the worker at normal memory / I/O priority while a job runs). load_s = what loading adds to the first question (cold first word minus a warm describe's, the
+    # median over the runs), answer_s = (fastest, slowest) finished answer once loaded (Ask, Compare, warm Describe,
+    # over all runs); the UI's "about N s" comes only from these.
+    {"id": "smolvlm2-500m", "feature": "talk", "name": "SmolVLM2 500M", "tier": "balanced", "licence": "Apache-2.0",
+     "source": HF + "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF", "rev": "ccd7aae53bcb1997355c2f094959e72b3642ce17",
+     "repo": "ggml-org/SmolVLM2-500M-Video-Instruct-GGUF",
+     "files": {"model.gguf": ("SmolVLM2-500M-Video-Instruct-Q8_0.gguf", 436808704,
+                              "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc"),
+               "mmproj.gguf": ("mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf", 108785184,
+                               "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b")},
+     "talk": {"side": 512, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
+     "languages": ["en"], "improves": "Answers questions about a photo, on this PC",
+     "ram_mb": 1031, "vram_mb": 665,
+     "timing": {"cpu": {"full": {"load_s": 2, "answer_s": (3, 9)}, "gentle": {"load_s": 1, "answer_s": (3, 10)},
+                        "light": {"load_s": 3, "answer_s": (5, 16)}},
+                "vulkan": {"full": {"load_s": 2, "answer_s": (1, 4)}, "gentle": {"load_s": 1, "answer_s": (1, 4)},
+                           "light": {"load_s": 1, "answer_s": (1, 4)}}},
+     "speed_note": "an answer in about 1-4 s on the reference PC's graphics (Iris Xe), 3-10 s on its processor "
+                   "(5-16 s while NOBAD Find runs very light)",
+     "builtin": False},
+    {"id": "qwen3vl-2b", "feature": "talk", "name": "Qwen3-VL 2B", "tier": "best", "licence": "Apache-2.0",
+     "source": HF + "Qwen/Qwen3-VL-2B-Instruct-GGUF", "rev": "52d6c8ffea26cc873ac5ad116f8631268d7eb503",
+     "repo": "Qwen/Qwen3-VL-2B-Instruct-GGUF",
+     "files": {"model.gguf": ("Qwen3VL-2B-Instruct-Q4_K_M.gguf", 1107409952,
+                              "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae"),
+               "mmproj.gguf": ("mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf", 445053216,
+                               "f9a68fabba69c3b81e153367b2c7521030b0fa8bb0de400c9599c8e6725f9c82")},
+     "talk": {"side": 512, "image_max_tokens": 160, "n_ctx": 1024, "n_ubatch": 256, "flash_attn": True, "kv": "q8_0"},
+     "languages": ["en", "multilingual"], "improves": "Deeper answers about a photo, on this PC",
+     "ram_mb": 2483, "vram_mb": 2062,
+     "timing": {"cpu": {"full": {"load_s": 3, "answer_s": (5, 29)}, "gentle": {"load_s": 2, "answer_s": (4, 18)},
+                        "light": {"load_s": 3, "answer_s": (8, 46)}},
+                "vulkan": {"full": {"load_s": 3, "answer_s": (1, 11)}, "gentle": {"load_s": 1, "answer_s": (1, 11)},
+                           "light": {"load_s": 2, "answer_s": (1, 11)}}},
+     "speed_note": "an answer in about 1-11 s on the reference PC's graphics (Iris Xe), 4-29 s on its processor "
+                   "(8-46 s while NOBAD Find runs very light); the first question also loads it (about 1-3 s "
+                   "measured with its files already read once)",
+     "builtin": False},
+    # the llama.cpp release the talk models run on (release zip, pinned; files_in_zip = the DLLs kept from it, name:
+    # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.
+    _runtime("llama-cpu", "llama.cpp runtime (CPU)", llama_pins.CPU_ZIP, llama_pins.CPU_DLLS,
+             "Runs the talk models on the processor"),
+    _runtime("llama-vulkan", "llama.cpp runtime (graphics card)", llama_pins.VULKAN_ZIP, llama_pins.VULKAN_DLLS,
+             "Runs the talk models on the graphics card (Vulkan)"),
     {"id": "windows-ocr", "feature": "ocr", "name": "Windows OCR", "tier": "light", "licence": "Windows",
      "source": "Windows (Windows.Media.Ocr)", "rev": "", "files": {}, "languages": ["the Windows language packs"],
      "improves": "Reads words in photos, screenshots and scans", "ram_mb": 0, "speed_note": "built into Windows",
      "builtin": True},
 ]
 _BY_ID = {m["id"]: m for m in CATALOG}
+# the features the search tiers, auto_configure and the models page work with; "talk" and "runtime" entries are
+# fetched on use (talk about a photo), never by a tier
+SEARCH_FEATURES = ("text", "photo", "ocr")
 # what each tier uses per feature ("" = off), by language focus (english: the best English model the PC can run;
 # multilingual: multilingual-e5; hindi: the model that scored best on the Hindi set). Measured: measurements.md.
 FOCUSES = ("english", "multilingual", "hindi")
@@ -136,6 +204,9 @@ def ready(mid, data_dir=DATA_DIR):
     if m["builtin"]:
         return True
     d = model_dir(mid, data_dir)
+    if m["feature"] == "runtime":               # the zip is not kept: its kept DLLs are what has to be there
+        return all(os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n)) == size
+                   for n, (size, _sha) in m["files_in_zip"].items())
     return all(os.path.isfile(os.path.join(d, n)) and os.path.getsize(os.path.join(d, n)) == size
                for n, (_p, size, _sha) in m["files"].items())
 
@@ -147,6 +218,8 @@ def missing_mb(mid, data_dir=DATA_DIR):
     if m is None or m["builtin"]:
         return 0
     d = model_dir(mid, data_dir)
+    if m["feature"] == "runtime":
+        return 0 if ready(mid, data_dir) else round(size_mb(m))
     left = sum(size for name, (_p, size, _s) in m["files"].items()
                if not (os.path.isfile(os.path.join(d, name)) and os.path.getsize(os.path.join(d, name)) == size))
     return round(left / 1048576)
@@ -154,6 +227,69 @@ def missing_mb(mid, data_dir=DATA_DIR):
 
 def size_mb(m):
     return round(sum(size for _p, size, _s in (m["files"] or {}).values()) / 1048576) if not m["builtin"] else 0
+
+
+def talk_models():
+    """The talk-about-a-photo models, SmolVLM2 first."""
+    return [m for m in CATALOG if m["feature"] == "talk"]
+
+
+def runtime_for(device, data_dir=DATA_DIR):
+    """The llama.cpp runtime id to use: llama-vulkan for "vulkan" when it is on disk, else llama-cpu."""
+    return "llama-vulkan" if device == "vulkan" and ready("llama-vulkan", data_dir) else "llama-cpu"
+
+
+def talk_runtime(pc, data_dir=DATA_DIR):
+    """The runtime talk about a photo uses on this PC: the one on disk (llama-vulkan first), else the one to
+    download: llama-vulkan when Windows lists a graphics adapter (hardware.scan "gpu"), else llama-cpu."""
+    rid = runtime_for("vulkan", data_dir)
+    if ready(rid, data_dir):
+        return rid
+    return "llama-vulkan" if pc.get("gpu") else "llama-cpu"
+
+
+TALK_LEVELS = ("full", "gentle", "light")     # the governor's levels talk runs at (paused refuses it)
+LEVEL_NAMES = {"gentle": "Gentle", "light": "Very light"}       # as the UI's level chip says them
+# a level whose typical answer (the middle of its measured range) takes at least this many times Full's gets the
+# "Slower now" note: on the processor at Very light (SmolVLM2 1.4x, Qwen 1.5x); never on Vulkan or at Gentle,
+# where the cap measured no slower (the 4 llama threads fit under 35 % of 16 threads; the graphics do the work)
+SLOW_FACTOR = 1.4
+
+
+def _talk_level(level):
+    level = str(level or "full").lower()
+    return level if level in TALK_LEVELS else ("light" if level == "paused" else "full")
+
+
+def talk_timing(m, runtime, level="full"):
+    """(load_s, (fastest, slowest answer_s)) measured for this talk model on this runtime at this governor level
+    (the worker group's CPU cap and efficiency mode); (0, (0, 0)) if not measured."""
+    by_level = (m.get("timing") or {}).get("vulkan" if runtime == "llama-vulkan" else "cpu") or {}
+    t = by_level.get(_talk_level(level)) or {}
+    lo, hi = t.get("answer_s") or (0, 0)
+    return int(t.get("load_s") or 0), (int(lo), int(hi))
+
+
+def talk_slow_note(m, runtime, level):
+    """"Slower now: NOBAD Find is in Very light mode." when a typical answer at this level (the middle of its
+    measured range) was measured at least SLOW_FACTOR times as long as at Full on this runtime, else ""."""
+    level = _talk_level(level)
+    if level == "full":
+        return ""
+    _load, (lo, hi) = talk_timing(m, runtime, level)
+    _fl, (flo, fhi) = talk_timing(m, runtime, "full")
+    if flo + fhi and lo + hi >= SLOW_FACTOR * (flo + fhi):
+        return f"Slower now: NOBAD Find is in {LEVEL_NAMES[level]} mode."
+    return ""
+
+
+def talk_need_mb(m, runtime):
+    """The talk model's measured memory need for this runtime: ram_mb on the processor, max(ram_mb, vram_mb) on
+    Vulkan (measured: on shared-memory graphics such as Iris Xe, Qwen3-VL on Vulkan committed more system RAM than
+    its graphics memory; DXGI can't tell shared from dedicated reliably, and the need only raises the worker
+    group's memory limit and sizes the out-of-memory note, so the bigger figure is used on every graphics card)."""
+    ram, vram = int(m.get("ram_mb") or 0), int(m.get("vram_mb") or 0)
+    return max(ram, vram) if runtime == "llama-vulkan" else ram
 
 
 def recommend(pc):
@@ -179,11 +315,28 @@ def capable(m, pc, vectors=0):
     if free and free < need_gb + 1:
         return False, (f"Needs {need_gb:.1f} GB on the disk (the model and its vectors) plus 1 GB to spare; "
                        f"{free:.1f} GB is free")
+    if m["feature"] == "talk":
+        return _talk_capable(m, pc, ram, cores)
     if m["tier"] == "best" and not gpu and (ram < need_ram or cores < need_cores):
         return False, "Needs 16 GB of memory and 8 cores (or a graphics card with 4 GB for DirectML)"
     if m["tier"] == "balanced" and (ram < need_ram or cores < need_cores):
         return False, "Needs 8 GB of memory and 4 cores"
     return True, ""
+
+
+def _talk_capable(m, pc, ram, cores):
+    """A talk model never runs on DirectML (llama.cpp: the processor or Vulkan), so it has its own check: the tier's
+    memory and cores for the processor, or a graphics card with its own memory for the model's measured graphics
+    need (vram_mb; shared-memory graphics such as Iris Xe use system memory, so the processor's check applies)."""
+    need_ram, need_cores = NEEDS[m["tier"]]
+    if ram >= need_ram and cores >= need_cores:
+        return True, ""
+    vram_mb = int(m.get("vram_mb") or 0)
+    if pc.get("gpu") and vram_mb and float(pc.get("vram_gb") or 0) * 1024 >= vram_mb:
+        return True, ""
+    gb = math.ceil(vram_mb / 102.4) / 10
+    return False, (f"Needs {round(need_ram + 0.5):.0f} GB of memory and {need_cores} cores, or a graphics card "
+                   f"with {gb:.1f} GB of its own memory")
 
 
 def selected(settings, feature):

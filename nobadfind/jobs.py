@@ -250,7 +250,19 @@ def setup():
     WORKERS = Job(WORKERS_PREFIX + str(os.getpid()))
     total = winapi.memory_status_total_mb()
     if total:
-        WORKERS.set_memory_limit(worker_memory_limit_mb(total))
+        _base_limit[0] = worker_memory_limit_mb(total)
+        WORKERS.set_memory_limit(_base_limit[0])
+
+
+_base_limit = [0]                    # the worker group's limit set by setup() (MB), 0 = none
+
+
+def set_talk_allowance(mb):
+    """While a photo talk model is loaded (or loading), the worker group may commit its measured need on top of the
+    normal limit (worker_memory_limit_mb); mb=0 puts the normal limit back. True when the limit was set."""
+    if WORKERS is None or not _base_limit[0]:
+        return False
+    return WORKERS.set_memory_limit(_base_limit[0] + max(0, int(mb or 0)))
 
 
 def join_workers():

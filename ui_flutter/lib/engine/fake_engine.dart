@@ -70,8 +70,17 @@ class FakeEngine implements EngineApi {
   final thumbsAsked = <int>[];
   final forgotten = <int>[];
   final settingsSet = <Map<String, Object?>>[];
+
+  /// The consent word sent with each set_settings (null: none).
+  final consents = <String?>[];
   final calls = <String>[];
   bool openOk = true;
+
+  /// Not empty: forget refuses with this message (the Never index list is full).
+  String forgetError = '';
+
+  /// ok with a note (1.1.0): forgotten, but the engine's protected list couldn't be saved yet.
+  String forgetNote = '';
   bool pickBusy = false;
   bool offline = false;
 
@@ -367,10 +376,11 @@ class FakeEngine implements EngineApi {
   Future<ActionResult> forget(int id) => _answer('forget', () {
     final f = _file(id);
     if (f == null) return const ActionResult(false);
+    if (forgetError.isNotEmpty) return ActionResult(false, forgetError);
     forgotten.add(id);
     files.remove(f);
     _settings['exclude'] = [...Settings(_settings).list('exclude'), '${f.dir}\\${f.name}'];
-    return _ok;
+    return forgetNote.isEmpty ? _ok : ActionResult(true, forgetNote);
   });
 
   @override
@@ -450,17 +460,20 @@ class FakeEngine implements EngineApi {
 
   /// Like settings.coerce: a value that doesn't fit becomes the default; unknown names and wsearch_prev are ignored.
   @override
-  Future<SettingsChange> setSettings(Map<String, Object?> changes) => _answer('set_settings', () {
+  Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent}) => _answer('set_settings', () {
     final fail = failNext;
     if (fail != null) {
       failNext = null;
       throw fail;
     }
     settingsSet.add(changes);
+    consents.add(consent);
     final changed = <String>[];
     for (final e in changes.entries) {
       final known = {...Settings.defaults, ...scopeDefaults};
       if (e.key == 'wsearch_prev' || !known.containsKey(e.key)) continue;
+      // like the engine: on only with the confirm dialog's word
+      if (e.key == 'secret_app_files' && e.value == true && consent != appFilesConsent) continue;
       final want = known[e.key];
       final fits = switch (want) {
         bool _ => e.value is bool,
@@ -872,8 +885,111 @@ class FakeEngine implements EngineApi {
     return _ok;
   });
 
+  // ---------- 1.1: talk about a photo ----------
+  /// What vision_state answers (tests change it): the engine's two talk models, as a PC with room for both.
+  VisionState vision = demoVisionState();
+
+  /// Every vision_* call: (method, params), in order.
+  final visionCalls = <(String, Map<String, Object?>)>[];
+
+  /// The next describe / ask / compare answers this instead of starting a job (a refusal).
+  VisionAnswer? visionRefuse;
+
+  /// What vision_keep kept, by file id.
+  final kept = <int, String>{};
+  int _job = 0;
+  int? _visionJob;
+  Timer? _visionTimer;
+
+  @override
+  Future<VisionState> visionState() => _new('vision_state', () => vision);
+
+  Future<VisionAnswer> _visionStart(String m, Map<String, Object?> p, List<int> ids, {String? answer}) =>
+      _new(m, () {
+        visionCalls.add((m, p));
+        final r = visionRefuse;
+        if (r != null) {
+          visionRefuse = null;
+          return r;
+        }
+        if (ids.any((id) => _file(id) == null)) return const VisionAnswer(error: 'This photo is no longer there.');
+        if (ids.length == 2 && ids[0] == ids[1]) {
+          return const VisionAnswer(error: 'Pick a second, different photo to compare.');
+        }
+        final old = _visionJob;
+        if (old != null) emit(VisionEvent(job: old, state: 'cancelled', model: 'smolvlm2-500m'));
+        final job = _visionJob = ++_job;
+        if (live) _stream(job, answer ?? 'A photo.');
+        return VisionAnswer(ok: true, job: job);
+      });
+
+  /// The demo (live): the answer streams in a few words at a time, as the engine sends it.
+  void _stream(int job, String answer) {
+    _visionTimer?.cancel();
+    final words = answer.split(' ');
+    var n = 0;
+    _visionTimer = Timer.periodic(const Duration(milliseconds: 160), (t) {
+      if (_visionJob != job) return t.cancel();
+      n++;
+      if (n > words.length) {
+        _visionJob = null;
+        t.cancel();
+        emit(VisionEvent(job: job, state: 'done', text: answer, model: 'smolvlm2-500m'));
+        return;
+      }
+      emit(VisionEvent(job: job, state: 'answering', text: words.take(n).join(' '), model: 'smolvlm2-500m'));
+    });
+  }
+
+  /// The job being answered (tests emit its events), or null.
+  int? get visionJob => _visionJob;
+
+  @override
+  Future<VisionAnswer> visionDescribe(int fileId) => _visionStart(
+    'vision_describe',
+    {'file_id': fileId},
+    [fileId],
+    answer: 'A sandy beach under a clear sky, with small waves and two people walking by the water.',
+  );
+
+  @override
+  Future<VisionAnswer> visionAsk(int fileId, String question, {bool deeper = false, bool more = false}) =>
+      _visionStart('vision_ask', {
+        'file_id': fileId,
+        'question': question,
+        if (deeper) 'deeper': true,
+        if (more) 'more': true,
+      }, [fileId]);
+
+  @override
+  Future<VisionAnswer> visionCompare(int a, int b, {String? question}) =>
+      _visionStart('vision_compare', {'a': a, 'b': b, 'question': ?question}, [a, b]);
+
+  @override
+  Future<VisionAnswer> visionCancel() => _new('vision_cancel', () {
+    visionCalls.add(('vision_cancel', const {}));
+    final job = _visionJob;
+    _visionJob = null;
+    _visionTimer?.cancel();
+    if (job != null) emit(VisionEvent(job: job, state: 'cancelled', model: 'smolvlm2-500m'));
+    return const VisionAnswer(ok: true);
+  });
+
+  @override
+  Future<VisionAnswer> visionKeep(int fileId, String text) => _new('vision_keep', () {
+    visionCalls.add(('vision_keep', {'file_id': fileId, 'text': text}));
+    if (_file(fileId) == null) return const VisionAnswer(error: 'This photo is no longer there.');
+    if (text.trim().isEmpty) {
+      kept.remove(fileId);
+      return const VisionAnswer(ok: true);
+    }
+    kept[fileId] = text;
+    return const VisionAnswer(ok: true, kept: true);
+  });
+
   @override
   void dispose() {
+    _visionTimer?.cancel();
     _ticker?.cancel();
     for (final t in _downloads.values) {
       t.cancel();
@@ -1230,6 +1346,53 @@ List<FileResult> demoFiles() => [
   ),
 ];
 
+/// vision_state as the engine answers on a PC with room for both talk models (nobadfind/models.py's measured memory
+/// and timings at Full: Vulkan on the reference PC's Iris Xe, or its processor with [cpu]; [veryLight] with [cpu]:
+/// the processor at Very light, slower, with the engine's "Slower now" note).
+VisionState demoVisionState({
+  String deeperWhy = '',
+  String notNow = '',
+  bool deeperReady = true,
+  bool cpu = false,
+  bool veryLight = false,
+}) {
+  // Very light on the processor: the 15 % CPU cap and efficiency mode, measured slower, with the engine's note
+  final slow = cpu && veryLight;
+  final slowNote = slow ? 'Slower now: NOBAD Find is in Very light mode.' : '';
+  return VisionState(
+      notNow: notNow,
+      models: [
+        VisionModel(
+          id: 'smolvlm2-500m',
+          name: 'SmolVLM2 500M',
+          ready: true,
+          ramMb: 1031,
+          vramMb: 665,
+          loadS: cpu && !slow ? 3 : 1,
+          answerS: slow ? (5, 15) : (cpu ? (3, 11) : (1, 3)),
+          slowNote: slowNote,
+          canRun: true,
+        ),
+        VisionModel(
+          id: 'qwen3vl-2b',
+          name: 'Qwen3-VL 2B',
+          deeper: true,
+          ready: deeperReady,
+          missingMb: deeperReady ? 0 : 1481,
+          ramMb: 2483,
+          vramMb: 2062,
+          loadS: slow ? 10 : (cpu ? 12 : 13),
+          answerS: slow ? (7, 32) : (cpu ? (4, 22) : (1, 12)),
+          slowNote: slowNote,
+          canRun: deeperWhy.isEmpty,
+          why: deeperWhy,
+        ),
+      ],
+      runtimeId: cpu ? 'llama-cpu' : 'llama-vulkan',
+      runtimeReady: true,
+    );
+}
+
 List<FileResult> manyFiles(int n) => [
   for (var i = 0; i < n; i++)
     FileResult(id: 100 + i, name: 'report $i.pdf', dir: r'C:\Users\me\Reports\Quarterly\Archive', kind: 'pdf'),
@@ -1358,6 +1521,61 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       improves: 'Reads words in photos, screenshots and scans',
       builtin: true,
       state: ModelUseState.active,
+    ),
+    // 1.1: talk about a photo and the llama.cpp runtimes (nobadfind/models.py, measured memory)
+    const ModelInfo(
+      id: 'smolvlm2-500m',
+      feature: 'talk',
+      name: 'SmolVLM2 500M',
+      tier: 'balanced',
+      licence: 'Apache-2.0',
+      source: 'https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF',
+      sizeMb: 520,
+      ramMb: 1031,
+      vramMb: 665,
+      runtime: 'llama-vulkan',
+      speedNote:
+          "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-11 s on its processor "
+          '(5-15 s while NOBAD Find runs very light)',
+      languages: ['en'],
+      improves: 'Answers questions about a photo, on this PC',
+    ),
+    const ModelInfo(
+      id: 'qwen3vl-2b',
+      feature: 'talk',
+      name: 'Qwen3-VL 2B',
+      tier: 'best',
+      licence: 'Apache-2.0',
+      source: 'https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF',
+      sizeMb: 1481,
+      ramMb: 2483,
+      vramMb: 2062,
+      runtime: 'llama-vulkan',
+      languages: ['en', 'multilingual'],
+      improves: 'Deeper answers about a photo, on this PC',
+      capable: false,
+      // talk models never use DirectML: their own check (models._talk_capable)
+      capableReason: 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory',
+    ),
+    const ModelInfo(
+      id: 'llama-cpu',
+      feature: 'runtime',
+      name: 'llama.cpp runtime (CPU)',
+      tier: 'light',
+      licence: 'MIT',
+      source: 'https://github.com/ggml-org/llama.cpp/releases/tag/b12602',
+      sizeMb: 24,
+      improves: 'Runs the talk models on the processor',
+    ),
+    const ModelInfo(
+      id: 'llama-vulkan',
+      feature: 'runtime',
+      name: 'llama.cpp runtime (graphics card)',
+      tier: 'light',
+      licence: 'MIT',
+      source: 'https://github.com/ggml-org/llama.cpp/releases/tag/b12602',
+      sizeMb: 37,
+      improves: 'Runs the talk models on the graphics card (Vulkan)',
     ),
   ];
   final was = {for (final m in from?.models ?? const <ModelInfo>[]) m.id: m.state};

@@ -28,7 +28,7 @@ def ui_exe():
         return p if os.path.isfile(p) else None
     env = os.environ.get("NOBAD_FIND_UI_EXE", "")
     if env and os.path.isfile(env):
-        return env
+        return os.path.abspath(env)                    # a full path: start_outside_job refuses others
     return DEV_BUILD if os.path.isfile(DEV_BUILD) else None
 
 

@@ -124,10 +124,32 @@ def worker_hooks(pieces):
             obj = pieces.get(key)
             return default if obj is None else fn(obj)
         return call
+    def both(fn_api, fn_ix, merge=None):
+        """The talk worker's part FIRST (Api.vision_*, pieces["api"]), then the indexer's; each in its own try, so
+        one failing never skips the other."""
+        parts = (on("api", fn_api, merge), on("indexer", fn_ix, merge))
+
+        def call():
+            got = []
+            for part in parts:
+                try:
+                    got.append(part())
+                except Exception as e:
+                    log(f"worker hook failed: {type(e).__name__}", "warn")
+                    got.append(None)
+            if merge is not None:
+                return {k: v for g in got for k, v in (g or {}).items()}
+            return got[-1]
+        return call
+    # The talk worker (find 1.1): the governor's tick stops it when paused, hung or idle (vision_tick); memory
+    # pressure releases it before anything else (release_talk, watchdog._check_job); its loaded model's need is
+    # its own memory budget (talk_mb).
     return {"release": on("indexer", lambda i: i.release_models()),
+            "release_talk": on("api", lambda a: a.vision_stop("Stopped: NOBAD Find needed the memory."), False),
+            "talk_mb": on("api", lambda a: a.vision_budget_mb(), 0),
             "recycle": on("indexer", lambda i: i.recycle_workers()),
-            "release_idle": on("indexer", lambda i: i.release_idle_models()),
-            "names": on("indexer", lambda i: i.worker_names(), {})}
+            "release_idle": both(lambda a: a.vision_tick(), lambda i: i.release_idle_models()),
+            "names": both(lambda a: a.vision_pids(), lambda i: i.worker_names(), {})}
 
 
 def show_requests(base, show, stop, make=winapi.show_event, wait=winapi.wait_any, spawn=None):
@@ -455,7 +477,8 @@ def run(stop=None, open_ui=None, lock=None):
     activity = Activity()
     pieces = {}
     hooks = worker_hooks(pieces)
-    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names")},
+    watchdog = Watchdog(activity, **{k: hooks[k] for k in ("release", "recycle", "names", "talk_mb",
+                                                         "release_talk")},
                         keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
     governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
@@ -471,10 +494,13 @@ def run(stop=None, open_ui=None, lock=None):
     indexer.turbo = turbo
     stop = stop or threading.Event()
     api = Api(store, settings, indexer, vindex)
+    pieces["api"] = api                           # the talk worker's idle release and memory release (worker_hooks)
     api._governor, api._activity, api._apps = governor, activity, apps
     api._turbo = turbo
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
     turbo._push = rpc.events.turbo
+    api._on_vision = lambda ev: rpc.events.push("vision", ev)     # talk about a photo (vlm/worker.Talker)
+    api._on_talk_budget = jobs.set_talk_allowance                 # the worker group's limit + the talk model
     api._ui_pids = rpc.ui_pids                    # the Index page names the UIs connected to the pipe
     from .update import Updater
     updater = Updater(settings)
@@ -541,6 +567,7 @@ def run(stop=None, open_ui=None, lock=None):
         hk.stop()
     rpc.stop()
     turbo.stop()                    # the helper ends with the engine (it also watches the engine's process)
+    api.vision_stop()               # the talk worker and its model (the job object would end it too)
     indexer.stop()
     governor.stop()
     indexer.join(5)                 # database writes are committed first

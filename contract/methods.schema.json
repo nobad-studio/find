@@ -275,7 +275,7 @@
       }
     },
     "forget": {
-      "description": "Remove a result (file or folder) from the index and add it to the excluded folders.",
+      "description": "Remove a result (file or folder) from the index and add it to the excluded folders. ok false with an error (shown to the user) when it couldn't be kept out: the list holds at most 5000 entries; nothing is removed then.",
       "params": {
         "$ref": "#/$defs/id_params"
       },
@@ -421,12 +421,17 @@
       }
     },
     "set_settings": {
-      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
+      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. secret_app_files: true is ignored unless consent is \"READ_APP_SECRETS\" (sent only after the user's yes in the confirm dialog). A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
       "params": {
         "type": "object",
         "properties": {
           "changes": {
             "$ref": "#/$defs/settings_changes"
+          },
+          "consent": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "\"READ_APP_SECRETS\": the user said yes to reading command histories, saved logins and tool tokens (needed to turn secret_app_files on)."
           }
         },
         "required": [
@@ -442,6 +447,12 @@
           },
           {
             "changes": {}
+          },
+          {
+            "changes": {
+              "secret_app_files": true
+            },
+            "consent": "READ_APP_SECRETS"
           }
         ]
       },
@@ -991,6 +1002,168 @@
       },
       "result": {
         "$ref": "#/$defs/ok"
+      }
+    },
+    "vision_state": {
+      "description": "Can the engine talk about photos now, which models and runtime are ready, what is loaded and whether a question is being answered.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_state"
+      }
+    },
+    "vision_describe": {
+      "description": "Describe one photo (by result id). Answers at once with a job number; the description streams as vision events.",
+      "params": {
+        "$ref": "#/$defs/vision_file_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_ask": {
+      "description": "Ask a question about one photo. deeper uses the bigger model when this PC can run it. A question about writing in the photo (\"what does the sign say?\") first gets the text already read from the photo as a finished vision event (note \"Text read from the photo\"); more true asks the model anyway. The question is at most 2000 characters before the engine cleans it.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "deeper": {
+            "type": "boolean"
+          },
+          "more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file_id",
+          "question"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "file_id": 7,
+            "question": "What colour is the car?"
+          },
+          {
+            "file_id": 7,
+            "question": "What does the sign say?",
+            "deeper": true,
+            "more": true
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_compare": {
+      "description": "Compare two different photos (by result id), optionally with a question. Same answer and events as vision_describe.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "integer"
+          },
+          "b": {
+            "type": "integer"
+          },
+          "question": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "a": 7,
+            "b": 8
+          },
+          {
+            "a": 7,
+            "b": 8,
+            "question": "Which one is brighter?"
+          }
+        ]
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_cancel": {
+      "description": "Stop the answer that is streaming (a vision event with state cancelled and an empty note follows). Nothing running is fine.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/vision_answer"
+      }
+    },
+    "vision_keep": {
+      "description": "Keep a description of a photo (at most 2000 characters) so searches find it; empty text forgets it. kept is whether a description is now kept.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "integer"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "file_id",
+          "text"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "file_id": 7,
+            "text": "A red car in front of a white house."
+          },
+          {
+            "file_id": 7,
+            "text": ""
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "job": {
+            "type": "null"
+          },
+          "kept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "error",
+          "job",
+          "kept"
+        ],
+        "additionalProperties": false
       }
     }
   },
@@ -2627,6 +2800,10 @@
           "type": "boolean",
           "description": "Keys, browser passwords/cookies/history, Windows Credentials, chat and developer tokens, password vaults, wallets: names only, never their content. Browser profiles and app databases are names only even with this off and caches on."
         },
+        "secret_app_files": {
+          "type": "boolean",
+          "description": "1.1.0, off by default: read what other programs record and developer tools' plain-text sign-ins (command histories, FileZilla/WinSCP saved sites and logins, GitHub CLI/npm/PyPI/git/Maven/Cargo/Terraform/Vault/PostgreSQL/S3 tokens, .env files) into the encrypted index; their content can appear in results. Off: they are secrets (out, or names only with include_secrets on) and .env files are names only. Turning it off removes what was read (and their rows while include_secrets is off). Keys, browser passwords, vaults, wallets and Recent items are never read."
+        },
         "turbo": {
           "type": "boolean",
           "description": "Read-only: the turbo index is turned on and off with turbo_set (it needs the permission prompt); set_settings ignores it."
@@ -2703,6 +2880,7 @@
         "include_system",
         "include_caches",
         "include_secrets",
+        "secret_app_files",
         "turbo",
         "tray",
         "text_model",
@@ -2840,6 +3018,9 @@
         "include_secrets": {
           "type": "boolean"
         },
+        "secret_app_files": {
+          "type": "boolean"
+        },
         "tray": {
           "type": "boolean",
           "description": "NOBAD Find's icon in the notification area."
@@ -2888,8 +3069,20 @@
           "enum": [
             "text",
             "photo",
-            "ocr"
-          ]
+            "ocr",
+            "talk",
+            "runtime"
+          ],
+          "description": "1.1: talk = a talk-about-a-photo model, runtime = a llama.cpp runtime the talk models run on. Neither is part of a tier or of model_use."
+        },
+        "vram_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Talk models only: measured graphics memory while answering on the Vulkan runtime (0 = not measured)."
+        },
+        "runtime": {
+          "$ref": "#/$defs/model_id",
+          "description": "Talk models only: the runtime this PC uses for it (llama-vulkan with a graphics adapter, else llama-cpu); its download is offered together with the model's, in one consent."
         },
         "name": {
           "type": "string"
@@ -3330,6 +3523,210 @@
         "subtitle"
       ],
       "additionalProperties": false
+    },
+    "vision_answer": {
+      "description": "What every photo-talk call answers at once. job is the number the vision events of that question carry (null when no job was started: a refusal, a cancel, a keep). The answer itself comes as vision events. download lists what to fetch first when that is why it can't start (a model or the picture runtime).",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "job": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "download": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "size_mb": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "size_mb"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "job"
+      ],
+      "additionalProperties": false
+    },
+    "vision_model": {
+      "description": "One picture-talk model: the quick one (deeper false) or the deeper one. can_run is whether this PC can run it right now, why says what stops it.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "deeper": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "missing_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ram_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "vram_mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "load_s": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Measured seconds loading adds to the first question, on the runtime this PC would use (0 = not measured)."
+        },
+        "answer_s": {
+          "type": "array",
+          "description": "Measured seconds for an answer once loaded: always two numbers, [fastest, slowest], on the runtime this PC would use ([0, 0] = not measured).",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "slow_note": {
+          "type": "string",
+          "description": "A short sentence when answers at the governor's level now were measured much slower than at Full (\"Slower now: NOBAD Find is in Very light mode.\"), else empty."
+        },
+        "can_run": {
+          "type": "boolean"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "deeper",
+        "ready",
+        "missing_mb",
+        "ram_mb",
+        "vram_mb",
+        "load_s",
+        "answer_s",
+        "slow_note",
+        "can_run",
+        "why"
+      ],
+      "additionalProperties": false
+    },
+    "vision_state": {
+      "description": "Whether talking about photos can start now. not_now is a sentence when it can't (paused, the runtime downloading), else empty. models: the quick one first, then the deeper one. runtime: the llama runtime that would be used. loaded: id of the model in memory (empty: none); busy: a question is being answered; job: its number (null: none); running: the worker process exists.",
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "job": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "not_now": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vision_model"
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "ready": {
+              "type": "boolean"
+            },
+            "missing_mb": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "id",
+            "ready",
+            "missing_mb"
+          ],
+          "additionalProperties": false
+        },
+        "loaded": {
+          "type": "string"
+        },
+        "busy": {
+          "type": "boolean"
+        },
+        "running": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "job",
+        "not_now",
+        "models",
+        "runtime",
+        "loaded",
+        "busy",
+        "running"
+      ],
+      "additionalProperties": false
+    },
+    "vision_file_params": {
+      "description": "A result id from search. Never a path.",
+      "type": "object",
+      "properties": {
+        "file_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file_id"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "file_id": 7
+        }
+      ]
     }
   }
 }

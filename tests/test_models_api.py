@@ -45,6 +45,53 @@ def test_models_lists_the_pc_the_tiers_and_every_model(a):
     assert all(m["capable"] for m in r["models"])
 
 
+def test_models_lists_the_talk_models_and_the_runtime_this_pc_needs(a, monkeypatch):
+    """1.1: Settings > Models shows SmolVLM2 and Qwen (feature talk) with their graphics memory and the runtime
+    this PC would use, and both runtimes; none of them is in a tier."""
+    by = {m["id"]: m for m in a.models()["models"]}
+    for mid in ("smolvlm2-500m", "qwen3vl-2b"):
+        m = by[mid]
+        assert m["feature"] == "talk" and m["state"] == "not_downloaded" and not m["recommended"]
+        assert m["runtime"] == "llama-vulkan"                                  # Windows lists a graphics adapter
+        assert m["vram_mb"] == models.get(mid)["vram_mb"] and m["ram_mb"] == models.get(mid)["ram_mb"]
+        assert m["size_mb"] == models.size_mb(models.get(mid)) and m["source"].startswith("https://huggingface.co/")
+    assert {by[r]["feature"] for r in ("llama-cpu", "llama-vulkan")} == {"runtime"}
+    assert "vram_mb" not in by["llama-cpu"] and "runtime" not in by["minilm-l6-v2"]
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "", "vram_gb": 0.0})
+    assert {m["runtime"] for m in a.models()["models"] if m["feature"] == "talk"} == {"llama-cpu"}
+
+
+def test_qwen_says_why_on_a_pc_that_cannot_run_it(a, monkeypatch):
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "ram_gb": 7.8, "cores": 4})
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["qwen3vl-2b"]["capable"] is False
+    assert by["qwen3vl-2b"]["capable_reason"].startswith("Needs 16 GB of memory")
+    assert by["smolvlm2-500m"]["capable"] is True and by["smolvlm2-500m"]["capable_reason"] == ""
+
+
+def test_talk_model_download_stores_no_consent(a, monkeypatch):
+    got = []
+    monkeypatch.setattr(api_mod.embed, "_fetch_verified", lambda url, dest, size, sha, name, progress=None, part=".part":
+                        got.append(os.path.basename(dest)))
+    assert a.model_download("smolvlm2-500m", "no")["ok"] is False and got == []
+    assert a.model_download("smolvlm2-500m", "DOWNLOAD") == {"ok": True, "error": ""}
+    a._mdl_thread.join(5)
+    assert set(got) == {"model.gguf", "mmproj.gguf"}
+    assert not a._settings.get("allow_photo_model_download") and not a._settings.get("allow_model_download")
+
+
+def test_model_remove_deletes_a_runtimes_dlls(a):
+    rid = "llama-cpu"
+    d = models.model_dir(rid, a._models_dir)
+    os.makedirs(d)
+    for n, (size, _s) in models.get(rid)["files_in_zip"].items():
+        with open(os.path.join(d, n), "wb") as f:
+            f.truncate(size)
+    assert models.ready(rid, a._models_dir)
+    assert a.model_remove(rid) == {"ok": True, "error": ""}
+    assert not models.ready(rid, a._models_dir) and not os.path.exists(d)
+
+
 def test_language_focus_from_windows_then_the_users_choice(a, monkeypatch):
     monkeypatch.setattr(api_mod.winapi, "windows_languages", lambda: ["en-IN", "hi-IN"])
     assert a.models()["language_focus"] == "hindi"
@@ -78,6 +125,33 @@ def test_model_download_needs_the_consent_word(a, monkeypatch):
     assert all(g[0].startswith("https://huggingface.co/" + m["repo"] + "/resolve/" + m["rev"] + "/") for g in got)
     assert a._settings.get("allow_model_download") is True        # the stored consent
     assert a.downloads()["multilingual-e5-small"]["state"] in ("ready", "missing")
+
+
+def test_model_download_installs_a_llama_runtime(a, monkeypatch):
+    """The llama.cpp runtimes go through runtime.install (the zip, then only its pinned DLLs), same consent word."""
+    from nobadfind.vlm import runtime
+    calls = []
+
+    def fake_install(mid, data_dir, progress):
+        calls.append((mid, data_dir))
+        progress("zip", 7, 10)
+        return os.path.join(data_dir, "runtime", mid)
+    monkeypatch.setattr(runtime, "install", fake_install)
+    monkeypatch.setattr(api_mod.embed, "_fetch_verified", lambda *a, **k: pytest.fail("not the plain model path"))
+    assert a.model_download("llama-vulkan", "yes")["ok"] is False and calls == []
+    assert a.model_download("llama-cpu", "DOWNLOAD") == {"ok": True, "error": ""}
+    a._mdl_thread.join(5)
+    assert calls == [("llama-cpu", a._models_dir)]
+    st = a._mdl["llama-cpu"]
+    assert st["state"] == "ready" and st["got"] == 7 and st["size"] == models.get("llama-cpu")["files"]["zip"][1]
+    assert not a._settings.get("allow_photo_model_download")   # a runtime grants no model consent
+
+    def failing(mid, data_dir, progress):
+        raise IOError("ggml.dll: checksum mismatch, runtime rejected")
+    monkeypatch.setattr(runtime, "install", failing)
+    a.model_download("llama-vulkan", "DOWNLOAD")
+    a._mdl_thread.join(5)
+    assert a._mdl["llama-vulkan"]["state"] == "missing" and "checksum" in a._mdl["llama-vulkan"]["error"]
 
 
 def test_meaning_and_photo_states_follow_the_model_in_use(a):

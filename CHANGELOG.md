@@ -1,5 +1,84 @@
 # NOBAD Find changelog
 
+## 1.1.0 · 2026-11-22
+
+### Talk about a photo
+- **Describe a photo, ask about it, or compare two,** on a photo's detail pane. The answer appears word by word,
+  is labelled as Find's reading of the photo, and can be copied, stopped (Stop or Esc) or kept: a kept description
+  makes the photo findable by its words.
+- **"What's written here?"** first shows the text Windows OCR already read from the photo; "Ask the model too"
+  asks the model as well. An answer with Hindi script in it says it may not be exact.
+- **Runs on this PC only,** with a small vision model (SmolVLM2 500M, 520 MB) and, for deeper answers, Qwen3-VL 2B
+  (1,481 MB), on the llama.cpp runtime (24 MB for the processor, 37 MB for the graphics card). Nothing downloads
+  until you say Download: one dialog names the model, the runtime it needs, both sizes and the total, and where
+  they come from (huggingface.co; github.com). Files are pinned and checked by size and SHA-256; only the DLLs
+  NOBAD Find loads are kept (29 MB for the processor, 71 MB for the graphics card), never the llama.cpp programs,
+  their tool libraries or its network backend.
+- **Measured on the reference PC (i5-12500H, Iris Xe), with NOBAD Find's own CPU limits in force:** SmolVLM2
+  answers in about 1-4 s on the graphics and 3-10 s on the processor, using about 1 GB of memory; Qwen3-VL in about
+  1-11 s on the graphics and 4-29 s on the processor once loaded (the first question also loads it: 1-3 s more
+  when its files were read before), using about 2.5 GB. Talking about a photo follows NOBAD Find's level like the
+  rest of its work: while it runs very light (a game, a call, a busy PC), answers on the processor take longer
+  (SmolVLM2 5-16 s, Qwen3-VL 8-46 s) and the photo pane says so ("Slower now: NOBAD Find is in Very light mode.");
+  on the graphics the level makes no difference.
+- **Loading shows how far it got, and Stop works at once:** "Loading Qwen3-VL 2B… 60 %", then its vision part;
+  Stop (or a new question) ends a load or the reading of the photo within about a second (measured 0.002-1.5 s).
+  A model that is slow to load but still loading is never ended as "stopped responding"; one that stops making
+  progress is.
+- **Deeper analysis is only offered when it fits:** it says its memory cost, or why not now (too little free
+  memory, NOBAD Find paused). Qwen3-VL shows a warning on PCs below its tier (16 GB and 8 cores, or a graphics
+  card with 2.1 GB of its own memory).
+- The model leaves memory 3 minutes after the last question, when memory runs short, or when NOBAD Find pauses.
+- Settings > Models has a "Talk about photos" group: both models and both runtimes, with sizes, memory, Download
+  (with the same consent) and Remove.
+
+### Privacy and security (review of 2026-11-22)
+- **What other programs record is no longer read:** PowerShell's command history, shell and database-client
+  histories, FileZilla and WinSCP saved servers, and sign-in files of the GitHub CLI, Maven,
+  Cargo, Terraform, PostgreSQL and more now count as "Keys and password stores": left out by default, names only
+  when you turn that on. After the update, NOBAD Find removes once what it had read from those files; the rest of
+  the index stays as it is.
+- **New, off by default: "Read command histories, saved logins and tool tokens"** in Settings > Privacy. If you
+  want to search inside your command histories, FileZilla/WinSCP saved sites, developer tool tokens (GitHub CLI,
+  npm, Cargo and more) and .env files, turn it on: it asks first, because they may hold passwords and tokens, which
+  then stay in NOBAD Find's encrypted index on this PC and can show up in results. Turning it off removes them
+  again. Keys, browser passwords, password vaults and wallets are never read.
+- `.env` files (`.env`, `.env.local`, ...) are listed by name only; their contents are read only with that setting
+  on. What was read from them before is removed once after the update.
+- Windows' and Office's Recent items and jump lists (the lists of what you opened) are never indexed, not even
+  by name with "Keys and password stores" or the new setting on; any already in the index are removed after the
+  update. A folder of your own that happens to be called `office\recent` is indexed as usual.
+- If the protected list of files you forgot can't be read or saved for a moment (an antivirus scan, say), a new
+  forget still works, says it may come back after a restart, and is never written to the settings file in plain
+  text; NOBAD Find saves it as soon as it can, and other settings keep saving.
+- Fixed: a change Windows reported with an old-style short name (`APPDAT~1\...\CREDEN~1`) could get a password
+  store past those rules; such paths are now read by their full names first.
+- Fixed: after 200 forgotten files, "Forget" said it worked but the next file came back at the next scan. The
+  Never index list now holds 5000 entries; if it is ever full, Forget says so and leaves the file where it is.
+- The window now checks that it is talking to NOBAD Find's own engine (NobadFind.exe next to it, a normal user
+  process, not a sandboxed or low-rights one) before it sends a single search. If another program got there first,
+  the window says so instead of connecting. The engine checks the window the same way.
+- Windows' own programs that NOBAD Find starts (File Explorer, Task Manager, Control Panel tools, PowerShell for the
+  Start menu list) now always come from the Windows folder by full path, never from a same-named file elsewhere.
+- Messages to the engine nested absurdly deep get an error back instead of no answer.
+- A file name can no longer hide what it is with invisible direction characters (a program named to look like
+  `Invoice_exe.pdf`): those characters are shown as `[U+202E]`, the details show the real extension, and a
+  disguised program says "opening it runs a program".
+- The files and folders you forget are no longer written in plain text: NOBAD Find keeps that list apart from
+  its settings file, protected for your Windows account, and moves an existing list there once after the
+  update. Two windows forgetting at the same moment no longer lose one of them.
+- Copy name copies the file's real name, even when the window shows hidden characters in it as `[U+...]`.
+- "Delete the whole index" now also removes the list of files you forgot from the settings file, empties NOBAD
+  Find's log, and deletes old index copies kept after a sign-in key problem. Your settings and your own Never index
+  folders stay.
+- Fixed: when a talk model was slow to close, NOBAD Find could lower its memory limit while the model was still
+  in memory, so indexing work could fail for a moment. The limit now comes down only once it has really closed.
+
+### Known
+- The installer is not code-signed yet, so Windows SmartScreen may warn before it runs.
+- The first question about a photo right after Windows starts can take longer than the times above: the model
+  files are read from disk then, and that case has not been measured yet.
+
 ## 1.0.1 · 2026-11-22
 
 ### Opening Windows settings and apps

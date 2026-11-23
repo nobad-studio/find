@@ -192,6 +192,32 @@ void main() {
       expect(t.sent.where((m) => m['method'] == 'search'), isEmpty);
       c.dispose();
     });
+
+    test('an impostor on the pipe is shown as untrusted and the real engine is tried again', () async {
+      var tries = 0;
+      final real = FakeTransport(autoReply: engineReplies);
+      final c = EngineClient(() async {
+        tries++;
+        if (tries == 1) throw const EngineUntrusted('it runs at low integrity');
+        return real;
+      }, backoff: const [Duration(milliseconds: 1)])..start();
+      await pumpEventQueue();
+      for (var i = 0; i < 50 && c.link.value != Link.connected; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(tries, 2);
+      expect(c.link.value, Link.connected);
+      c.dispose();
+    });
+
+    test('while untrusted the link says so', () async {
+      final c = EngineClient(() async => throw const EngineUntrusted('it runs at low integrity'),
+          backoff: const [Duration(seconds: 30)])..start();
+      await pumpEventQueue();
+      expect(c.link.value, Link.untrusted);
+      expect(untrustedLine, contains("won't talk to it"));
+      c.dispose();
+    });
   });
 
   group('framing and parsing', () {

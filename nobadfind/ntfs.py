@@ -96,7 +96,8 @@ SOURCE_WORDS = ("serve", "selftest")      # from source: development only, with 
 SETUP_WORDS = ("install", "remove", "service")    # the installed helper only: always refused from source
 DEV_ENV = "NOBAD_FIND_DEV_TURBO"         # from source only: "1" lets the helper run (module docstring)
 PROTOCOL = 2                             # 2 (2026-11-21): the engine is the client and says hi first
-MAX_LINE = 8 * 1024 * 1024
+MAX_LINE = 16 * 1024 * 1024
+MAX_FOLDERS = 5000                       # roots / exclude in a config: settings.MAX_PATHS (forget adds one per file)
 HI_MAX = 4096                            # the first line, read before the client is checked
 HI_WAIT = 30                             # seconds a connected client has to say hi
 ROWS_PER_MESSAGE = 1000
@@ -325,7 +326,7 @@ class Filter:
         n = _norm(path)
         if parent_state in (OUT, SHUT) or self._hard_out(n, name):
             return OUT
-        if any(n == e or n.startswith(e.rstrip("\\") + "\\") for e in self.exclude):
+        if scope.holders(n, self.exclude):
             return OUT
         if n in self.roots:
             state = IN
@@ -460,8 +461,8 @@ class Lines:
 def _paths(v, what):
     if v is None:
         return []
-    if not isinstance(v, list) or len(v) > 200:
-        raise ValueError(f"{what}: a list of at most 200 folders")
+    if not isinstance(v, list) or len(v) > MAX_FOLDERS:
+        raise ValueError(f"{what}: a list of at most {MAX_FOLDERS} folders")
     out = []
     for p in v:
         if not (isinstance(p, str) and 3 <= len(p) < 1024 and "\x00" not in p and re.match(r"^[A-Za-z]:\\", p)):
@@ -473,7 +474,8 @@ def _paths(v, what):
 def parse_config(msg):
     """The engine's scope for the helper (it can only narrow what's sent; the hard drops don't depend on it)."""
     out = {"roots": _paths(msg.get("roots"), "roots"), "exclude": _paths(msg.get("exclude"), "exclude")}
-    for k, d in (("include_system", True), ("include_caches", True), ("include_secrets", False)):
+    for k, d in (("include_system", True), ("include_caches", True), ("include_secrets", False),
+                 ("secret_app_files", False)):
         v = msg.get(k, d)
         if not isinstance(v, bool):
             raise ValueError(f"{k}: true or false")
@@ -1016,7 +1018,7 @@ def _rules_for(sid, cfg, profile=None, own=None):
         raise PermissionError("no profile for this account")
     others = [p for p in scope._profile_list() if p and _norm(p) != _norm(prof)]
     rules = scope.Rules(system=cfg["include_system"], caches=cfg["include_caches"], secrets=cfg["include_secrets"],
-                        profile=prof, others=others)
+                        profile=prof, others=others, apps=cfg.get("secret_app_files", False))
     if own:
         rules.own = scope.norm(own)          # as a service LOCALAPPDATA isn't the user's: their index folder
     return rules

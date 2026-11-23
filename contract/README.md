@@ -105,7 +105,10 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`thumbnail`** `{id}` → `{url: string}`: `data:image/png;base64,…` (or jpeg/bmp) from Windows' thumbnail cache for
   photos, videos and PDFs, or `""` (keep the kind badge).
 - **`path_of`** `{id}` → `{path: string}`: for Copy path; `""` if the file is gone.
-- **`forget`** `{id}` → `Ok`: remove from the index and add to the excluded folders.
+- **`forget`** `{id}` → `Ok`: remove from the index and add to the excluded folders. `ok: false` with an `error`
+  the UI shows when it couldn't be kept out (the list holds at most 5000 entries; nothing is removed then). `ok:
+  true` with an `error` (1.1.0) is a note to show instead of "Forgotten": it is out, but the protected list of
+  forgotten files couldn't be saved, so it is kept in memory for now (the engine tries again).
 - **`here_folder`** `{}` → `{path: string}`: the File Explorer folder the hotkey was pressed in (what "here" means), or
   `""`. The `here` event brings the same value as soon as it is known.
 - **`to_main`** `{text?: string (≤ 2000)}` → `{ok: true}`: the bar's Alt+Enter. The engine sends `show {what: "main", text}`,
@@ -145,9 +148,10 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `const.DEFAULTS`).
 - **`hotkey_state`** `{}` → `{hotkey: {spec, state}, bar_hotkey: {spec, state}}`: whether each hotkey is registered and working now. `state` is `ok`, `taken` (another app holds it), `reserved` (Windows keeps it), `invalid` or `off` (the quick find bar is off).
 - **`hotkey_probe`** `{which: "hotkey"|"bar_hotkey", spec}` → `{state, spec, reason}`: would that combination work, before it's saved? The engine registers it for a moment and lets it go. `same` means the other NOBAD Find hotkey uses it; `reason` is one sentence for Settings. A combination NOBAD Find already holds for `which` is `ok`.
-- **`set_settings`** `{changes: {name: value}}` → `{changed: [string], settings: Settings}`: the engine checks every
+- **`set_settings`** `{changes: {name: value}, consent?: string (≤ 40)}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
-  ignored. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
+  ignored. `secret_app_files: true` is ignored (not in `changed`) unless `consent` is `"READ_APP_SECRETS"`, which
+  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.
@@ -157,7 +161,8 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   brings the open dialog to the front again; don't treat that as a cancel.
 - **`rescan`** `{}` → `Ok`: walk every folder again now.
 - **`wipe`** `{confirm: string}` → `Ok`: delete the whole index and start over, only with `confirm: "DELETE"`; any
-  other word gives `ok: false` and nothing happens.
+  other word gives `ok: false` and nothing happens. It also removes the Never index entries Forget added, empties
+  the log and deletes old `*.unreadable-*` index copies; settings and the user's own Never index folders stay.
 
 ### Models
 
@@ -174,6 +179,12 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   were measured on the reference PC (0 / "" when not measured); `improves`, `licence`, `size_mb`, `source` and
   `ram_mb` are what the consent dialog shows. `recommended`: in the recommended tier for this PC and language focus.
   The `models` event brings the same object whenever it changes.
+  1.1: `feature` may also be `talk` (SmolVLM2 500M and Qwen3-VL 2B, talk about a photo) or `runtime` (the llama.cpp
+  runtimes `llama-cpu` / `llama-vulkan` they run on). A talk model also sends `vram_mb` (measured graphics memory on
+  Vulkan) and `runtime` (the runtime id this PC uses for it). The UI's one consent dialog for a talk model names the
+  model and that runtime (when it isn't on disk yet), both sizes and the total, and both sources (huggingface.co;
+  github.com, which redirects to `*.githubusercontent.com`); its Download then sends `model_download` for each. No
+  consent is stored for either. `model_use` is not for them; `model_remove` deletes a runtime's unpacked DLLs.
 - **`model_use`** `{feature, id}` → `{ok, error, needs_download: bool}`: choose the model for a feature (and turn the
   feature on). Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
   model rebuilds the meaning vectors in the background (`status_full.phases` has `{id: "rebuild"}`); the old vectors
@@ -221,6 +232,11 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   its card, `why` the full explanation. `names_only` = `all` (only names are indexed, the contents are never read:
   `secrets`), `some` (part of it is names only: browser profiles and app databases in `caches`) or `none`. Show
   `name`, `summary`, `why` and `examples` as plain text. Change the switches with `set_settings` (`scope`, `include_*`); the engine walks again.
+  The one exception to "names only" is the setting **`secret_app_files`** (1.1.0, **off by default**, Settings >
+  Privacy after a confirm dialog): command histories, FTP/SSH tools' saved sites and logins, developer tool tokens
+  and `.env` files are then read into the encrypted index (`.env` files are names only until then). Turning it off
+  removes their content, and their rows while `include_secrets` is off, without a rebuild. Keys, browser passwords,
+  vaults, wallets and Recent items are never read.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string, helper: not_installed|installed|needs_update}`: the
   optional turbo index, an elevated helper that reads NTFS's own file list and change journal (names, sizes, times
@@ -240,6 +256,36 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `ok: false`. The `turbo` setting is read-only for `set_settings`: only `turbo_set` changes it.
 - **`turbo_helper`** `{action: update|remove}` → `{ok, error, state: TurboState}`: `update` asks once to bring the
   helper up to date (then turbo starts if it is on); `remove` = `turbo_set` off (one prompt). Same prompt rules.
+
+### Talk about a photo (1.1)
+
+Photos only by result id. Every call answers at once `VisionAnswer` = `{ok, error, job, download?}`; `job` is the number
+the `vision` events of that question carry, `null` when no job started (a refusal, `vision_cancel`, `vision_keep`).
+`download` (optional) lists `{id, name, size_mb}` of what to fetch first when that is why it can't start. The answer
+comes as `vision` events, after the reply that names the job. One job at a time: a new question cancels the old one.
+
+- **`vision_state`** `{}` -> `{ok, error, job, not_now, models: [{id, name, deeper, ready, missing_mb, ram_mb, vram_mb,
+  load_s, answer_s: [fastest, slowest], slow_note, can_run, why}], runtime: {id, ready, missing_mb}, loaded, busy, running}`: can
+  it start now (`not_now` is a sentence when paused or the runtime is downloading, else empty), the quick model first
+  and the deeper one second, what is in memory, whether a question is being answered (`job` its number, else null).
+  `load_s` (seconds loading adds to the first question) and `answer_s` (seconds an answer takes once loaded) are the
+  catalog's measured figures for the runtime in `runtime` (CPU or Vulkan) at the governor's level now (the talk
+  worker runs under the worker group's CPU cap: Full none, Gentle 35 %, Very light 15 % and efficiency mode;
+  docs/measurements.md, tools/measure_talk.py); 0 / [0, 0] when not measured. The UI says "about N s" only from these,
+  never a number of its own. `slow_note` is a short sentence ("Slower now: NOBAD Find is in Very light mode.") when
+  a typical answer at this level was measured at least 1.4 times as long as at Full (`models.SLOW_FACTOR`; on the
+  reference PC: the processor at Very light), else empty.
+- **`vision_describe`** `{file_id}` -> `VisionAnswer`.
+- **`vision_ask`** `{file_id, question: string (<= 2000 characters before cleaning), deeper?: bool, more?: bool}` ->
+  `VisionAnswer`. A question about writing in the photo may get a `done` event with note "Text read from the photo"
+  (the text already read from it, no model); the model runs only with `more: true`.
+- **`vision_compare`** `{a, b, question?: string|null}` -> `VisionAnswer`: two different photos.
+- **`vision_cancel`** `{}` -> `VisionAnswer` (`job` null): stop the streaming answer; a `cancelled` event follows.
+- **`vision_keep`** `{file_id, text: string (<= 2000 characters)}` -> `{ok, error, job: null, kept}`: keep the
+  description so searches find it; empty text forgets it (`kept` false).
+
+Wrong types (a string or boolean file id, a question that isn't a string or is too long, `deeper`/`more` not booleans)
+are `-32602`; a photo that is gone, an empty question, a paused engine or a missing model are `ok: false` with a sentence.
 
 ### The window and quitting
 
@@ -286,6 +332,18 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`quitting`** → `{}`: the engine is ending. Exit instead of reconnecting.
 - **`turbo`** → `TurboState` (as `turbo_state`): the turbo index started, stopped, read a drive, lost a change journal
   (it reads the drive again) or hit an error.
+- **`vision`** -> `{job, state: loading|answering|done|error|cancelled, text, model, note}`: the answer to a photo
+  question moved on (subscribe to it before asking). `text` is the WHOLE answer so far while `answering` (replace what
+  you show, never append), the final answer on `done`, empty on `error` and `cancelled`. `model` is the model id (empty
+  for stored text). `note`: on `loading` what is loading: first "Loading <model name>", then, as the worker reports
+  real progress, "Loading <model name>… 60 %", "Loading the vision part of <model name>…" / "… 40 %", or "Stopping
+  the last answer…" (a new question waits for the last one to stop; it can't be cut in every step). A note with
+  "…" is a whole line to show as it is. `loading` may come several times; `answering` with empty `text` is the photo
+  being read. On `done` "Text read from the photo" (stored text, no model ran)
+  or "may not be exact" (Devanagari in the answer); otherwise empty. States: `cancelled` with a non-empty `note` means
+  the engine stopped it (a pause, memory, a runtime update, the model removed): show the note. `cancelled` with an
+  empty `note` means the user cancelled or a newer question replaced it: show nothing. `error` means a crash, a hang,
+  a failed start or a worker error: `note` carries the message (`text` is empty).
 
 ## Transcripts
 
@@ -312,3 +370,4 @@ lines, rewrites the `recv` lines), then review the diff.
 | `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray) |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
+| `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |

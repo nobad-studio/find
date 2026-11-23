@@ -18,6 +18,8 @@ from .indexer import NAME_KINDS
 from .kinds import READABLE_EXT
 from .log import log
 from .search import SORTS, search
+from .vlm import runtime as vlm_runtime
+from .vlm.worker import GONE as VISION_GONE, MAX_IMAGES
 
 MAX_QUERY = 500
 TOTALS_TTL = 10                  # seconds: the phase counts are COUNT queries, too heavy for every 2 s poll
@@ -58,6 +60,11 @@ class Api:
         self._folder_dialog = None        # engine.py: Windows' own folder dialog
         self._turbo = None                # engine.py: turbo.Turbo, the optional elevated NTFS index helper
         self._timer, self._exit = threading.Timer, os._exit     # tests replace them
+        self._talk = None                 # vlm.worker.Talker, made on the first talk-about-a-photo question
+        self._talk_lock = threading.Lock()
+        self._on_vision = None            # engine.py: push one `vision` event to the UI
+        self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
+        self._migrate_forgotten()         # once: forgotten paths out of settings.json (fix round 1, I5)
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -293,9 +300,50 @@ class Api:
         p = self._store.one("SELECT path FROM files WHERE id=?", (file_id,))
         if not p:
             return {"ok": False}
+        from .settings import MAX_PATHS
+        keep = os.path.normpath(p)
+        try:                                     # review M4: never ok without keeping it out; fix round 1, I5: the
+            got = self._settings.forget(keep)    # entry is kept DPAPI-protected, apart from settings.json
+        except OSError:
+            return {"ok": False, "error": "NOBAD Find couldn't save the Never index list."}
+        if got == "full":
+            return {"ok": False, "error": f"The Never index list is full ({MAX_PATHS} entries). Remove some "
+                                          "in Settings > What to index, or forget the folder instead."}
+        if keep not in (self._settings.get("exclude") or []):
+            return {"ok": False, "error": "NOBAD Find couldn't add it to the Never index list."}
         self._store.forget_path(p)
-        self._settings.update({"exclude": self._settings.get("exclude") + [p]})
-        return {"ok": True}
+        note = getattr(self._settings, "note", "")       # kept in memory only for now (the protected list failed)
+        return {"ok": True, "error": note} if note else {"ok": True}
+
+    FORGOTTEN = "forgotten"                     # meta: the Never index entries Forget added (JSON list), for Wipe
+
+    def _forgotten(self):
+        try:
+            v = json.loads(self._store.meta(self.FORGOTTEN, "[]") or "[]")
+        except ValueError:
+            v = []
+        return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+    def _migrate_forgotten(self):
+        """Once (fix round 1, I5): the Never index entries Forget added before 1.1.0 kept them apart leave
+        settings.json for the DPAPI-protected list: the ones noted in the index (meta forgotten) and the ones that
+        are files (the folder picker adds folders only; network paths are never looked up)."""
+        if self._store is None or not hasattr(self._settings, "mark_forgotten"):
+            return                                       # (tests that make an Api without an index)
+        try:
+            if self._store.meta("forgotten_moved") == "1":
+                return
+            cand = set(self._forgotten())
+            cand |= {e for e in self._settings.get("exclude") or [] if not e.startswith("\\\\") and os.path.isfile(e)}
+            n = self._settings.mark_forgotten(cand)
+            if not self._settings.forgotten_saved():
+                log("forgotten list move: the protected list couldn't be saved; tried again at the next start", "warn")
+                return                                   # some are still in settings.json: not done
+            self._store.set_meta("forgotten_moved", "1")
+            if n:
+                log(f"{n} forgotten entries moved out of settings.json")
+        except Exception as e:
+            log(f"forgotten list move failed: {type(e).__name__}", "warn")
 
     # ---------- status and settings ----------
     def status(self):
@@ -312,7 +360,23 @@ class Api:
         st["drives"] = self._indexer.drive_list
         with self._slock:
             self._transparency(st)
+        self._retry_forgotten()
         return st
+
+    FORGOT_RETRY_S = 60
+
+    def _retry_forgotten(self):
+        """Forgotten entries kept only in memory (the protected list couldn't be saved): try again now and then."""
+        if not getattr(self._settings, "note", "") or not hasattr(self._settings, "retry_forgotten"):
+            return
+        now = time.time()
+        if now - getattr(self, "_forgot_retry_at", 0.0) < self.FORGOT_RETRY_S:
+            return
+        self._forgot_retry_at = now
+        try:
+            self._settings.retry_forgotten()
+        except Exception as e:
+            log(f"forgotten list retry failed: {type(e).__name__}", "warn")
 
     def _stats(self):
         """Store.stats (six COUNTs over the whole index: seconds on a whole PC), reused for STATS_TTL seconds or
@@ -361,6 +425,7 @@ class Api:
             known.update({pid: procs.WORKER_NAMES.get(n, "other") for pid, n in self._indexer.worker_names().items()})
         except Exception:
             pass
+        known.update({pid: "talk" for pid in self.vision_pids()})
         try:
             tpid = self._turbo.helper_pid() if self._turbo is not None else 0
         except Exception:
@@ -564,11 +629,14 @@ class Api:
     def get_settings(self):
         return self._settings.all()
 
-    def set_settings(self, changes):
+    def set_settings(self, changes, consent=None):
         if not isinstance(changes, dict):
             return {"changed": []}
         changes = {k: v for k, v in changes.items()
                    if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
+        from .const import APP_FILES_CONSENT
+        if changes.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
+            del changes["secret_app_files"]          # on only with the confirm dialog's word (fix round 1, M7)
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
@@ -579,7 +647,10 @@ class Api:
             self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):
             self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
-        if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets"}:
+        if "secret_app_files" in changed:            # 1.1.0: off takes out what was read, on reads them again
+            self._later(self._app_files_on if self._settings.get("secret_app_files") else self._purge_app_files)
+        if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets",
+                           "secret_app_files"}:
             self._indexer.rescan()
         for key, kind in (("index_removable", "removable"), ("index_network", "network")):
             if key in changed:
@@ -655,10 +726,10 @@ class Api:
 
     def _remove_secrets(self):
         """Every secret (scope category) out of the index: key files by extension, secret folders by name."""
-        from .const import BROWSER_SECRET_FILES, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
+        from .const import BROWSER_SECRET_FILES, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS
         rules = scope.Rules.from_settings(self._settings)
         exts = sorted(SECRET_EXT)
-        names = sorted(SECRET_NAMES | SECRET_FILES | BROWSER_SECRET_FILES)
+        names = sorted(SECRET_NAMES | SECRET_FILES | BROWSER_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
         names += [n + t for n in sorted(SECRET_FILES | BROWSER_SECRET_FILES) for t in ("-journal", "-wal", "-shm")]
 
         def esc(t):
@@ -673,12 +744,58 @@ class Api:
             self._store.remove_paths(gone)
         return len(gone)
 
+    def _app_file_rows(self):
+        """(id, path) of the index's rows secret_app_files is about (scope.app_file): command histories, saved
+        sites, tool tokens, .env files and the folders that hold them. A range of names and folder runs, then the
+        rule itself on each candidate."""
+        from .const import APP_SECRET_FILES, APP_SECRET_PATHS, SECRET_FILES_IN
+
+        def esc(t):
+            return t.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        names = sorted(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
+        runs = ["%\\" + esc("\\".join(p)) for p in APP_SECRET_PATHS]
+        likes = [x for r in runs for x in (r, r + "\\%")]
+        cond = " OR ".join(["lower(path) LIKE ? ESCAPE '!'"] * len(likes))
+        rows = self._store.q(f"SELECT id, path FROM files WHERE lower(name) IN ({','.join('?' * len(names))}) OR "
+                             f"lower(name) = '.env' OR lower(name) LIKE '.env.%' OR {cond}", (*names, *likes))
+        return [(fid, p) for fid, p in rows if scope.app_file(p)]
+
+    def _purge_app_files(self):
+        """secret_app_files went off (1.1.0): what was read from those files leaves the index, and so do their rows
+        where the rules now leave them out (secrets off). Only those rows: nothing else is rebuilt or read again
+        (the targeted counterpart of Indexer._apply_new_rules). Returns (content dropped, rows removed)."""
+        from .indexer import NAMES_ONLY
+        rules = scope.Rules.from_settings(self._settings)
+        gone, quiet = [], []
+        for fid, p in self._app_file_rows():
+            if rules.out(p):
+                gone.append(p)
+            elif rules.names_only(p):
+                quiet.append(fid)
+        dropped = self._store.drop_content(quiet, NAMES_ONLY)
+        if gone:
+            self._store.remove_paths(gone)
+        log(f"app files off: content of {dropped} files dropped, {len(gone)} rows out of the index")
+        return (dropped, len(gone))
+
+    def _app_files_on(self):
+        """secret_app_files went on: the rows of those files kept as names only are read again (the walk adds the
+        ones that were out). Returns how many."""
+        from .indexer import NAMES_ONLY
+        rules = scope.Rules.from_settings(self._settings)
+        n = self._store.read_again([fid for fid, p in self._app_file_rows() if not rules.names_only(p)], NAMES_ONLY)
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()
+        return n
+
     SCOPE_FRESH_S = 300
 
     def _scope_key(self, drives):
         s = self._settings
         return json.dumps([[s.get(k) for k in ("scope", "roots", "exclude", "include_system", "include_caches",
-                                               "include_secrets", "index_removable", "index_network")],
+                                               "include_secrets", "secret_app_files", "index_removable",
+                                               "index_network")],
                            [(d.get("root"), d.get("type")) for d in drives]], default=str)
 
     def scope_info(self):
@@ -758,9 +875,24 @@ class Api:
         return {"ok": True}
 
     def wipe(self, confirm):
+        """Delete the whole index and start over. Security review 2026-11-22 (L10): nothing of the old index stays
+        in plain text either: the Never index entries Forget added (noted in the index; from before that, the ones
+        that are files) leave settings.json, the log is emptied, the index copies set aside after a key problem
+        (*.unreadable-*) and the previews in memory go. What the app needs to start stays: the settings, the
+        user's own Never index folders, the index key, downloaded models."""
         if confirm != "DELETE":
             return {"ok": False}
-        self._store.wipe()
+        forgot = set(self._forgotten()) | set(getattr(self._settings, "forgotten", list)())
+        exclude = list(self._settings.get("exclude") or [])
+        keep = [e for e in exclude if e not in forgot and (e.startswith("\\\\") or not os.path.isfile(e))]
+        self._store.wipe()                      # the index first: a crash after it can't leave forgotten files out
+        if keep != exclude:                     # of exclude with the old index still there (review N7)
+            self._settings.update({"exclude": keep})
+        self._store.remove_aside_copies()
+        thumbs.clear()
+        from . import log as log_mod
+        log_mod.clear()
+        log(f"index wiped ({len(exclude) - len(keep)} forgotten entries removed)")
         self._indexer.rescan()
         return {"ok": True}
 
@@ -865,11 +997,15 @@ class Api:
         rec = models.recommend(pc)
         choice = models.tier_choice(rec, focus)
         out = []
+        rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
             ok, why = models.capable(m, pc)
             if m["feature"] == "ocr" and not ocr.available():
                 ok, why = False, ocr.why_missing() or "Windows OCR isn't available on this PC"
-            out.append({"id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            # 1.1: the talk models also say their graphics memory and the runtime they need on this PC (its
+            # download is offered with theirs, in one consent)
+            talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
+            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": models.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -904,7 +1040,9 @@ class Api:
             if self._mdl.get(mid, {}).get("state") == "downloading":
                 return {"ok": True, "error": ""}            # already on its way: one download per model
             self._mdl[mid] = {"state": "downloading", "got": 0, "size": 0, "error": ""}
-        self._settings.update({"allow_model_download" if m["feature"] == "text" else "allow_photo_model_download": True})
+        if m["feature"] in ("text", "photo"):       # talk models and llama.cpp runtimes: no stored consent (each
+            self._settings.update({"allow_model_download" if m["feature"] == "text" else    # download is a click)
+                                   "allow_photo_model_download": True})
         st = self._mdl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()),
                                "error": ""}
         d = models.model_dir(mid, self._mdir())
@@ -912,15 +1050,23 @@ class Api:
         def run():
             done = {}
             try:
-                os.makedirs(d, exist_ok=True)
-                for name, (path, size, sha) in m["files"].items():
-                    def progress(_n, got, _size, name=name):
-                        done[name] = got
+                if m["feature"] == "runtime":                   # the pinned zip, then only its pinned DLLs
+                    def zprogress(_n, got, _size):
+                        st["got"] = got
+                    # the folder is swapped by rename: the talk worker must not hold its DLLs (it refuses new
+                    # questions while this runtime downloads, _vision_not_now)
+                    self.vision_stop("Stopped: the picture runtime is being updated.")
+                    vlm_runtime.install(mid, self._mdir(), zprogress)
+                else:
+                    os.makedirs(d, exist_ok=True)
+                    for name, (path, size, sha) in m["files"].items():
+                        def progress(_n, got, _size, name=name):
+                            done[name] = got
+                            st["got"] = sum(done.values())
+                        embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
+                                              part=".dl.part")      # not the 0.7.0 download's file names
+                        done[name] = size
                         st["got"] = sum(done.values())
-                    embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
-                                          part=".dl.part")      # not the 0.7.0 download's file names
-                    done[name] = size
-                    st["got"] = sum(done.values())
                 st["state"] = "ready"
                 log(f"model {mid} downloaded and verified")
                 wake = getattr(self._indexer, "wake", None)
@@ -937,6 +1083,227 @@ class Api:
         self._mdl_thread = threading.Thread(target=run, daemon=True, name="model-download")
         self._mdl_thread.start()
         return {"ok": True, "error": ""}
+
+    # ---------- talk about a photo (1.1, vlm/worker.py) ----------
+    # Every vision_* call answers at once {"ok", "error", "job"}; the answer comes as `vision` events
+    # {"job", "state": loading | answering | done | error | cancelled, "text", "model", "note"} (worker.Talker).
+    # One job at a time: a new one cancels the one streaming. Files only by result id.
+
+    def _talker(self):
+        with self._talk_lock:
+            if self._talk is None:
+                from .vlm import worker
+                self._talk = worker.Talker(self._vision_emit, on_budget=self._talk_budget)
+            return self._talk
+
+    def _talk_budget(self, mb):
+        fn = self._on_talk_budget
+        if fn is not None:
+            fn(mb)
+
+    def _vision_emit(self, ev):
+        push = self._on_vision
+        if push is not None:
+            push(ev)
+
+    def _vision_file(self, file_id):
+        """(path, "") of a photo the talk model may look at, or (None, why not)."""
+        if not isinstance(file_id, int) or isinstance(file_id, bool):
+            return None, VISION_GONE
+        row = self._store.q("SELECT path, kind FROM files WHERE id=?", (file_id,))
+        if not row:
+            return None, VISION_GONE
+        path, kind = row[0]
+        if scope.Rules.from_settings(self._settings).names_only(path):
+            return None, "NOBAD Find keeps only the name of this file, so it doesn't look inside it."
+        if kind != "image":
+            return None, "Only photos can be described."
+        if not os.path.isfile(path):
+            return None, VISION_GONE
+        return path, ""
+
+    def _vision_not_now(self):
+        gov = self._governor
+        d = getattr(gov, "decision", None)
+        if d is not None and d.level == "paused":
+            why = d.reason.split(":", 1)[1].strip() if ":" in d.reason else ""
+            return "Not now: NOBAD Find is paused" + (f" ({why})." if why else ".")
+        busy = [mid for mid, st in getattr(self, "_mdl", {}).items()
+                if st.get("state") == "downloading" and (models.get(mid) or {}).get("feature") == "runtime"]
+        if busy:
+            return "Not now: the picture runtime is being downloaded. Try again when it's done."
+        return ""
+
+    def _vision_model(self, deeper):
+        """(catalog entry, "") of the talk model to use now, or (None, why not)."""
+        talk = models.talk_models()
+        m = talk[1] if deeper and len(talk) > 1 else talk[0]
+        gov = self._governor
+        sample = getattr(gov, "sample", None)
+        ok, why = talk_assess(m, sample, hw.scan()) if deeper else talk_fits(m, sample)
+        return (m, "") if ok else (None, why or f"Not now: {m['name']} can't run on this PC right now.")
+
+    def _vision_job(self, op, ids, question, deeper):
+        """The worker job for these photos and this model, or {"ok": False, ...} when it can't start."""
+        paths = []
+        for fid in ids:
+            p, why = self._vision_file(fid)
+            if p is None:
+                return None, {"ok": False, "error": why, "job": 0}
+            paths.append(p)
+        if len(paths) > MAX_IMAGES:
+            return None, {"ok": False, "error": "At most two photos at a time.", "job": 0}
+        if op == "ask":
+            from .vlm import prompts
+            try:
+                prompts.ask(question)
+            except ValueError:
+                return None, {"ok": False, "error": "Type a question.", "job": 0}
+        why = self._vision_not_now()
+        if why:
+            return None, {"ok": False, "error": why, "job": 0}
+        m, why = self._vision_model(deeper)
+        if m is None:
+            return None, {"ok": False, "error": why, "job": 0}
+        d = self._mdir()
+        pc = hw.scan()
+        rid = models.talk_runtime(pc, d)
+        need = [x for x in (m, models.get(rid)) if not models.ready(x["id"], d)]
+        if need:
+            mb = sum(models.missing_mb(x["id"], d) for x in need)
+            names = " and ".join(x["name"] for x in need)
+            return None, {"ok": False, "job": 0,
+                          "error": f"To talk about photos, download {names} first ({mb} MB, once).",
+                          "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
+                                       for x in need]}
+        vulkan = rid == "llama-vulkan"
+        settings = dict(m["talk"])
+        settings["need_mb"] = models.talk_need_mb(m, rid) or None
+        mdir = models.model_dir(m["id"], d)
+        talk = self._talker()
+        job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
+               "model": {"id": m["id"], "model": os.path.join(mdir, "model.gguf"),
+                         "mmproj": os.path.join(mdir, "mmproj.gguf"), "runtime": models.model_dir(rid, d)},
+               "settings": settings, "gpu_layers": 99 if vulkan else 0, "files": list(ids)}
+        return (job, m["name"]), None
+
+    def _vision_start(self, op, ids, question=None, deeper=False):
+        got, refused = self._vision_job(op, ids, question, deeper)
+        if refused is not None:
+            return refused
+        job, name = got
+        talk = self._talker()
+        from .rpc.protocol import after_reply
+        after_reply(lambda: talk.submit(job, name))     # its events come after this answer, which names the job
+        return {"ok": True, "error": "", "job": job["job"]}
+
+    def vision_describe(self, file_id):
+        return self._vision_start("describe", [file_id])
+
+    def vision_ask(self, file_id, question, deeper=False, more=False):
+        """A question about one photo. A question about its writing ("what does the sign say?") gets the text read
+        from the photo (OCR) first, as a finished answer; the model is asked only with more=True."""
+        from .vlm import prompts
+        if not isinstance(question, str):
+            return {"ok": False, "error": "Type a question.", "job": 0}
+        if not more and prompts.is_text_question(question) and prompts.clean_question(question):
+            p, why = self._vision_file(file_id)
+            if p is None:
+                return {"ok": False, "error": why, "job": 0}
+            text = self._store.read_text(file_id)
+            if text:
+                talk = self._talker()
+                jid = talk.next_id()
+                ev = {"job": jid, "state": "done", "text": text[:MAX_READ_TEXT], "model": "",
+                      "note": "Text read from the photo"}
+                from .rpc.protocol import after_reply
+                after_reply(lambda: talk.emit_now(ev))
+                return {"ok": True, "error": "", "job": jid}
+        return self._vision_start("ask", [file_id], question, bool(deeper))
+
+    def vision_compare(self, a, b, question=None, deeper=False):
+        if a == b:
+            return {"ok": False, "error": "Pick a second, different photo to compare.", "job": 0}
+        if question is not None and not isinstance(question, str):
+            return {"ok": False, "error": "The question must be text.", "job": 0}
+        return self._vision_start("compare", [a, b], question, bool(deeper))
+
+    def vision_cancel(self):
+        if self._talk is not None:
+            self._talk.cancel()
+        return {"ok": True, "error": "", "job": None}
+
+    def vision_keep(self, file_id, text):
+        """Keep a description of a photo (the user's press): stored in vdesc and as one text chunk of that photo,
+        so words and meaning search find it ("your kept description matches"). Empty text forgets it."""
+        from .vlm import prompts
+        _p, why = self._vision_file(file_id)
+        if why:
+            return {"ok": False, "error": why}
+        if not isinstance(text, str):
+            return {"ok": False, "error": "The description must be text."}
+        t = prompts.clean_text(text, MAX_KEPT)
+        if not t:
+            self._store.forget_description(file_id)
+            return {"ok": True, "error": "", "kept": False}
+        model = self._talk.kept_model(file_id, t) if self._talk is not None else ""
+        self._store.keep_description(file_id, t, model)
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()                                  # its meaning vector is made by the indexer's next pass
+        return {"ok": True, "error": "", "kept": True}
+
+    def vision_state(self):
+        d = self._mdir()
+        rid = models.talk_runtime(hw.scan(), d)          # the one a question would use (or ask to download)
+        sample = getattr(self._governor, "sample", None)
+        # the talk worker runs in the worker group under the level's CPU cap (and efficiency mode at Light): the
+        # seconds are the ones measured at that level (docs/measurements.md, tools/measure_talk.py)
+        level = getattr(getattr(self._governor, "decision", None), "level", None) or "full"
+        out = []
+        for i, m in enumerate(models.talk_models()):
+            ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
+            load_s, answer_s = models.talk_timing(m, rid, level)    # measured: this runtime, this level
+            out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
+                        "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
+                        "vram_mb": int(m.get("vram_mb") or 0), "load_s": load_s, "answer_s": list(answer_s),
+                        "slow_note": models.talk_slow_note(m, rid, level), "can_run": ok, "why": why})
+        st = self._talk.state() if self._talk is not None else {"loaded": "", "busy": False, "job": 0,
+                                                               "running": False}
+        return {"ok": True, "not_now": self._vision_not_now(), "models": out,
+                "runtime": {"id": rid, "ready": models.ready(rid, d), "missing_mb": models.missing_mb(rid, d)},
+                **st}
+
+    # the engine's hooks (engine.worker_hooks, run): idle release, memory pressure, quitting
+    def vision_tick(self):
+        """The governor's tick (engine.worker_hooks release_idle): a pause ends the answer and the model (the
+        game or the memory comes first), a hung worker is ended, an idle one is released."""
+        t = getattr(self, "_talk", None)
+        if t is None:
+            return False
+        d = getattr(self._governor, "decision", None)
+        if d is not None and d.level == "paused":
+            why = d.reason.split(":", 1)[1].strip() if ":" in d.reason else ""
+            return t.stop("Stopped: NOBAD Find paused" + (f" ({why})." if why else "."))
+        if t.check_deadline():
+            return True
+        return t.release_if_idle()
+
+    def vision_release_idle(self):
+        t = getattr(self, "_talk", None)
+        return t.release_if_idle() if t is not None else False
+
+    def vision_budget_mb(self):
+        t = getattr(self, "_talk", None)
+        return t.budget_mb() if t is not None else 0
+
+    def vision_stop(self, why=""):
+        t = getattr(self, "_talk", None)
+        return t.stop(why) if t is not None else False
+
+    def vision_pids(self):
+        t = getattr(self, "_talk", None)
+        return t.pids() if t is not None else {}
 
     # ---------- updates (0.9.0, update.py) ----------
     def update_state(self):
@@ -996,8 +1363,12 @@ class Api:
             in_use.add(models.selected(self._settings, "photo"))
         if mid in in_use:
             return {"ok": False, "error": "NOBAD Find is using that model. Choose another one first."}
+        if m["feature"] in ("talk", "runtime"):
+            self.vision_stop("Stopped: that model is being removed.")     # its files are open in the talk worker
         d = models.model_dir(mid, self._mdir())
-        for name in m["files"]:
+        # a runtime keeps only its pinned DLLs (the zip was deleted after unpacking): those are what goes
+        names = list(m["files_in_zip"]) if m["feature"] == "runtime" else list(m["files"])
+        for name in names:
             for p in (os.path.join(d, name), os.path.join(d, name + ".part"), os.path.join(d, name + ".dl.part")):
                 try:
                     os.remove(p)
@@ -1093,6 +1464,42 @@ class Api:
         self._indexer.stop()
         self._indexer.join(5)                  # a database write in progress is committed first
         self._exit(0)
+
+
+MAX_READ_TEXT = 4000             # characters of a photo's read text (OCR) shown first for a question about writing
+MAX_KEPT = 2000                  # characters of a kept description
+TALK_MARGIN_MB, TALK_MARGIN_SHARE = 256, 0.25       # as capability.MARGIN_MB / MARGIN_SHARE (PR #16)
+
+
+def talk_fits(m, sample):
+    """(True, "") when the talk model's measured need (catalog ram_mb) plus the margin fits in free RAM now (the
+    governor's last sample, else Windows now); unknown free memory never refuses."""
+    free = getattr(sample, "free_mb", None) if sample is not None else None
+    if not free:
+        free = winapi.memory_status()[1]
+    need = int(m.get("ram_mb") or 0)
+    if free and need + TALK_MARGIN_MB + TALK_MARGIN_SHARE * need > free:
+        short = m["name"].split()[0]
+        return False, (f"Not now: only {free / 1024:.1f} GB free, {short} needs about {need / 1024:.1f} GB "
+                       "plus margin")
+    return True, ""
+
+
+def talk_assess(m, sample, pc):
+    """(can run now, why) for the deeper talk model. capability.assess (PR #16) when it is there; until it merges,
+    this fallback: models.capable (the installed PC) and talk_fits (free memory now).
+    TEMPORARY (find 1.1 release fix, maintainer ruling): the fallback, talk_fits' use here and TALK_MARGIN_* go
+    when PR #16 merges; tests/test_vlm_progress.py::test_talk_assess_uses_capability_assess_when_the_module_is_there
+    proves the capability path is taken (and the fallback isn't) as soon as nobadfind.capability exists."""
+    try:
+        from . import capability
+    except ImportError:
+        capability = None
+    if capability is not None:
+        r = capability.assess(sample, pc, catalog=[m])
+        return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
+    ok, why = models.capable(m, pc)
+    return (ok, why) if not ok else talk_fits(m, sample)
 
 
 class DownloadRate:

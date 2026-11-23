@@ -13,7 +13,7 @@ import '../../app/scope.dart';
 import '../../app/theme/colors.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
-import '../../engine/engine_api.dart' show Link;
+import '../../engine/engine_api.dart' show Link, untrustedLine;
 import '../../engine/models/result.dart';
 import '../../state/categories.dart';
 import '../../widgets/smooth_scroll.dart';
@@ -278,6 +278,8 @@ class _RecentList extends StatelessWidget {
           ? _say(c, "NOBAD Find's engine isn't running, so there is nothing to show. It comes back with the engine.")
           : link == Link.incompatible
           ? _say(c, 'This window and the engine are different versions. Update NOBAD Find.')
+          : link == Link.untrusted
+          ? _say(c, untrustedLine)
           : list == null
           ? _say(c, link == Link.connecting ? 'Connecting to the engine…' : 'Looking for what changed…')
           : list.isEmpty && failed

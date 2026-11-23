@@ -20,7 +20,9 @@ import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/smooth_scroll.dart';
+import '../../state/talk_controller.dart';
 import 'result_actions.dart';
+import 'talk_panel.dart';
 
 /// Shared by rows and cards: hover lift, click (Ctrl+click: show in folder), right-click, semantics.
 class _CardShell extends StatelessWidget {
@@ -348,8 +350,16 @@ class DetailPane extends StatelessWidget {
     required this.onCopy,
     required this.onForget,
     this.onOpenWith,
+    this.talk,
+    this.otherPhotos = const [],
   });
   final VoidCallback? onOpenWith;
+
+  /// Talk about a photo (1.1): shown for an image result when given.
+  final TalkController? talk;
+
+  /// The other image results in the list now, for "Compare with…".
+  final List<FileResult> otherPhotos;
   final EngineApi engine;
   final FileResult? result;
   final VoidCallback onOpen;
@@ -394,11 +404,22 @@ class DetailPane extends StatelessWidget {
                       ),
                       const SizedBox(height: 14),
                       Text(r.name, style: NbType.text(15, c.text, weight: FontWeight.w600, height: 1.3)),
+                      if (r.disguised) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          disguisedNote(r),
+                          key: const ValueKey('disguised-name'),
+                          style: NbType.text(12.5, c.warn, height: 1.4),
+                        ),
+                      ],
                       const SizedBox(height: 6),
-                      SelectableText(r.dir, style: NbType.data(11.5, c.muted, height: 1.45)),
+                      // selectable only when what is drawn is what is on disk: a copy must paste the real folder
+                      r.dir == r.rawDir
+                          ? SelectableText(r.dir, style: NbType.data(11.5, c.muted, height: 1.45))
+                          : Text(r.dir, style: NbType.data(11.5, c.muted, height: 1.45)),
                       const SizedBox(height: 8),
                       Text(
-                        [kindTag(r.kind), r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
+                        [kindTag(r.kind), r.ext, r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
                         style: NbType.data(11.5, c.dim),
                       ),
                       if (r.snippet.isNotEmpty) ...[
@@ -436,6 +457,10 @@ class DetailPane extends StatelessWidget {
                           NbButton('Forget…', small: true, kind: NbButtonKind.quiet, onPressed: onForget),
                         ],
                       ),
+                      if (talk != null && r.kind == 'image') ...[
+                        const SizedBox(height: 16),
+                        TalkPanel(talk: talk!, photo: r, others: [for (final o in otherPhotos) if (o.id != r.id) o]),
+                      ],
                     ],
                   ),
                 ),

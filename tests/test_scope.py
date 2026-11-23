@@ -339,3 +339,121 @@ def test_scope_info_names_the_credential_stores(tmp_path):
     assert any("Login Data" in e for e in cats["secrets"]["examples"])
     assert "never reads" in cats["caches"]["why"]                   # browser databases: names only
     s.close()
+
+
+# ---------- security review 2026-11-22 (M2): what other programs record, and more credential files ----------
+PROGRAM_RECORDS = [
+    os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine", "ConsoleHost_history.txt"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "PowerShell", "PSReadLine", "Visual Studio Code Host_history.txt"),
+    os.path.join(ROAMING, "FileZilla", "sitemanager.xml"), os.path.join(ROAMING, "FileZilla", "recentservers.xml"),
+    os.path.join(ROAMING, "FileZilla", "filezilla.xml"), os.path.join(PROF, "Documents", "sitemanager.xml"),
+    os.path.join(ROAMING, "GitHub CLI", "hosts.yml"), os.path.join(PROF, ".config", "gh", "hosts.yml"),
+    os.path.join(ROAMING, "winscp.ini"), os.path.join(PROF, "Documents", "WinSCP.ini"),
+    os.path.join(ROAMING, "rclone", "rclone.conf"),
+    os.path.join(PROF, ".m2", "settings.xml"), os.path.join(PROF, ".m2", "settings-security.xml"),
+    os.path.join(PROF, ".cargo", "credentials.toml"), os.path.join(PROF, ".cargo", "credentials"),
+    os.path.join(ROAMING, "terraform.d", "credentials.tfrc.json"),
+    os.path.join(PROF, ".terraform.d", "credentials.tfrc.json"), os.path.join(PROF, ".vault-token"),
+    os.path.join(PROF, ".docker", "config.json"), os.path.join(PROF, ".kube", "config"),
+    os.path.join(PROF, ".azure", "accessTokens.json"), os.path.join(PROF, ".aws", "credentials"),
+    os.path.join(ROAMING, "gcloud", "application_default_credentials.json"),
+    os.path.join(PROF, ".ssh", "known_hosts"), os.path.join(PROF, "backup", "id_ed25519"),
+    os.path.join(PROF, "backup", "known_hosts"), os.path.join(PROF, "_netrc"), os.path.join(PROF, ".pgpass"),
+    os.path.join(ROAMING, "postgresql", "pgpass.conf"), os.path.join(PROF, ".s3cfg"),
+    os.path.join(PROF, "Documents", "Passwords.kdbx"), os.path.join(ROAMING, "gnupg", "pubring.kbx"),
+    os.path.join(PROF, ".bash_history"), os.path.join(PROF, ".zsh_history"), os.path.join(PROF, ".python_history"),
+    os.path.join(PROF, ".node_repl_history"), os.path.join(PROF, ".psql_history"), os.path.join(PROF, ".mysql_history"),
+    os.path.join(PROF, ".sqlite_history"), os.path.join(PROF, ".lesshst"), os.path.join(PROF, "_viminfo"),
+    os.path.join(PROF, ".viminfo"), os.path.join(PROF, ".wget-hsts"),
+    os.path.join(LOCAL, "Microsoft", "Edge Beta", "User Data", "Default", "Login Data"),
+    os.path.join(LOCAL, "Google", "Chrome SxS", "User Data", "Default", "History"),
+    os.path.join(ROAMING, "librewolf", "Profiles", "x.default", "logins.json"),
+]
+
+
+@pytest.mark.parametrize("path", PROGRAM_RECORDS)
+def test_program_records_and_tokens_are_out_by_default(path):
+    """The defaults (system and caches on, secrets off): not indexed at all, neither name nor content."""
+    r = rules()
+    assert r.category(path) == "secrets", path
+    assert r.out(path) and r.names_only(path), path
+
+
+@pytest.mark.parametrize("path", PROGRAM_RECORDS)
+def test_program_records_and_tokens_are_names_only_with_secrets_on(path):
+    r = rules(include_caches=True, include_system=True, include_secrets=True)
+    assert not r.out(path) and r.names_only(path), path
+
+
+def test_the_walk_lists_no_program_record_by_default(tmp_path):
+    root = tmp_path / "r"
+    psr = root / "Microsoft" / "Windows" / "PowerShell" / "PSReadLine"
+    psr.mkdir(parents=True)
+    (psr / "ConsoleHost_history.txt").write_text("x")
+    (root / "FileZilla").mkdir()
+    (root / "FileZilla" / "sitemanager.xml").write_text("x")
+    (root / "notes.txt").write_text("x")
+    got = walk(root)
+    assert "notes.txt" in got
+    assert not any("ConsoleHost_history" in g or "sitemanager" in g for g in got), got
+
+
+def test_lookalikes_of_program_records_are_ordinary_files():
+    r = rules()
+    for p in (os.path.join(PROF, "Documents", "settings.xml"), os.path.join(PROF, "Documents", "hosts.yml"),
+              os.path.join(PROF, "Documents", "credentials.toml"), os.path.join(PROF, "Documents", "history.txt"),
+              os.path.join(PROF, "Documents", "Recent", "plan.docx"),
+              os.path.join(DRIVE, "Program Files", "WindowsPowerShell", "Modules", "PSReadLine", "PSReadLine.psm1")):
+        assert r.category(p) in (None, "system") and not r.out(p) and not r.names_only(p), p
+
+
+def test_the_rule_lists_are_one_data_table():
+    """Every extra rule is data in const (a name, a folder run or a file in a folder run), not code."""
+    from nobadfind import const
+    for run in const.SECRET_PATHS + const.NAMES_ONLY_PATHS + const.ALWAYS_OUT_PATHS:
+        assert isinstance(run, tuple) and run and all(x == x.lower() for x in run), run
+    for run in const.SECRET_FILES_IN:
+        assert isinstance(run, tuple) and len(run) >= 2 and all(x == x.lower() for x in run), run
+    assert all(n == n.lower() for n in const.SECRET_FILES)
+    assert scope.RULES_REV
+
+
+# ---------- fix round 1 (I1): what Windows and Office record of what you opened is always out ----------
+RECENT = [
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "Divorce lawyer letter.docx.lnk"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "AutomaticDestinations", "5f7b5f1e01b83767.automaticDestinations-ms"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent", "CustomDestinations", "x.customDestinations-ms"),
+    os.path.join(ROAMING, "Microsoft", "Office", "Recent", "payslip-2026-10.pdf.LNK"),
+    os.path.join(ROAMING, "Microsoft", "Windows", "Recent"),
+]
+
+
+@pytest.mark.parametrize("path", RECENT)
+def test_recent_items_and_jump_lists_are_out_even_with_every_switch_on(path):
+    r = rules(include_caches=True, include_system=True, include_secrets=True)
+    assert r.category(path) == "other_profiles" and r.out(path), path
+
+
+@pytest.mark.parametrize("apps", [False, True])
+def test_the_walk_never_lists_recent_items_with_secrets_on(tmp_path, apps):
+    """Recent items stay out with secrets and secret_app_files on (1.1.0: the opt-in never covers them)."""
+    prof = tmp_path / "me"
+    rec = prof / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Recent"
+    (rec / "AutomaticDestinations").mkdir(parents=True)
+    (rec / "plan.docx.lnk").write_text("x")
+    (rec / "AutomaticDestinations" / "x.automaticDestinations-ms").write_text("x")
+    off = prof / "AppData" / "Roaming" / "Microsoft" / "Office" / "Recent"
+    off.mkdir(parents=True)
+    (off / "pay.pdf.LNK").write_text("x")
+    (prof / "notes.txt").write_text("x")
+    seen = []
+    r = scope.Rules(secrets=True, apps=apps, profile=str(prof), others=())
+    Walker([str(prof)], gen=1, on_batch=seen.extend, rules=r).run()
+    got = {os.path.relpath(x[0], prof) for x in seen}
+    assert "notes.txt" in got and not any("Recent" in g for g in got), got
+
+
+def test_a_folder_named_history_is_not_a_secret():
+    r = rules()
+    p = os.path.join(PROF, "proj", ".history")                         # VS Code's Local History folder
+    assert r.category(p) is None and not r.out(p)

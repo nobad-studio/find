@@ -20,9 +20,11 @@ def test_recommended_tier_follows_the_spec_table():
 
 def test_catalog_has_every_feature_and_only_permissive_licences():
     ids = {m["id"]: m for m in models.CATALOG}
-    assert {m["feature"] for m in models.CATALOG} == {"text", "photo", "ocr"}
+    assert {m["feature"] for m in models.CATALOG} == {"text", "photo", "ocr", "talk", "runtime"}
     for m in models.CATALOG:
         assert m["licence"] in ("MIT", "Apache-2.0", "Windows"), m["id"]
+        if m["feature"] == "runtime":
+            continue
         assert "clip" not in m["id"].lower() or "siglip" in m["id"].lower()
         if not m["builtin"]:
             assert m["files"] and all(len(sha) == 64 and size > 0 for _p, size, sha in m["files"].values())
@@ -60,6 +62,27 @@ def test_capable_says_why_not():
     ok, why = models.capable(best, dict(PC_BIG, disk_free_gb=0.1))
     assert not ok and "disk" in why
     assert models.capable(models.get("minilm-l6-v2"), PC_SMALL) == (True, "")
+
+
+def test_talk_models_have_their_own_check_without_directml():
+    """T9 M5: talk runs on the processor or Vulkan, never DirectML: DirectML doesn't let Qwen through and the reason
+    doesn't name it. The processor's check (tier memory and cores) or a graphics card with its own memory for the
+    model's measured graphics need."""
+    qwen, smol = models.get("qwen3vl-2b"), models.get("smolvlm2-500m")
+    small = {"ram_gb": 7.8, "cores": 4, "gpu": "", "vram_gb": 0.0, "directml": False}
+    ok, why = models.capable(qwen, dict(small, directml=True, vram_gb=8.0))        # DirectML alone: no
+    assert not ok
+    assert why == "Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory"
+    assert "DirectML" not in why
+    assert models.capable(qwen, dict(small, gpu="NVIDIA RTX 3050", vram_gb=4.0)) == (True, "")   # Vulkan path
+    assert not models.capable(qwen, dict(small, gpu="Intel(R) Iris(R) Xe Graphics", vram_gb=0.1))[0]  # shared
+    assert models.capable(qwen, dict(small, ram_gb=15.7, cores=12)) == (True, "")                 # processor
+    assert models.capable(smol, small) == (True, "")
+    ok, why = models.capable(smol, dict(small, ram_gb=3.8, cores=2))
+    assert not ok and why == "Needs 8 GB of memory and 4 cores, or a graphics card with 0.7 GB of its own memory"
+    assert models.capable(smol, dict(small, ram_gb=3.8, cores=2, gpu="GTX 1050", vram_gb=2.0)) == (True, "")
+    ok, why = models.capable(qwen, dict(small, ram_gb=15.7, cores=12, disk_free_gb=0.5))   # the disk check stays
+    assert not ok and "disk" in why
 
 
 def test_tier_current_from_the_settings():
@@ -191,3 +214,106 @@ def test_missing_mb_counts_only_the_files_still_to_download(tmp_path):
         f.truncate(94553333)                                                           # the old 8-bit file
     assert models.missing_mb("siglip2-base", str(tmp_path)) == round(m["files"]["vision.onnx"][1] / 1048576) == 177
     assert models.missing_mb("windows-ocr", str(tmp_path)) == 0
+
+
+def test_talk_models_are_pinned_and_measured():
+    t = {m["id"]: m for m in models.talk_models()}
+    assert set(t) == {"smolvlm2-500m", "qwen3vl-2b"}
+    for m in t.values():
+        assert m["feature"] == "talk" and m["licence"] == "Apache-2.0" and len(m["rev"]) == 40
+        assert len(m["files"]) == 2
+        assert all(len(sha) == 64 and size > 0 for _p, size, sha in m["files"].values())
+        assert m["talk"]["side"] == 512 and m["talk"]["n_ctx"] == 1024 and m["talk"]["n_ubatch"] == 256
+        assert m["talk"]["flash_attn"] is True and m["talk"]["kv"] == "q8_0"
+    # measured through the real worker (docs/measurements.md 2026-11-22 1.1.0)
+    assert (t["smolvlm2-500m"]["ram_mb"], t["qwen3vl-2b"]["ram_mb"]) == (1031, 2483)
+    assert (t["smolvlm2-500m"]["vram_mb"], t["qwen3vl-2b"]["vram_mb"]) == (665, 2062)
+    assert (t["smolvlm2-500m"]["tier"], t["qwen3vl-2b"]["tier"]) == ("balanced", "best")
+    assert t["qwen3vl-2b"]["talk"]["image_max_tokens"] == 160 and "image_max_tokens" not in t["smolvlm2-500m"]["talk"]
+
+
+def test_talk_models_listed_smolvlm2_first():
+    assert [m["id"] for m in models.talk_models()] == ["smolvlm2-500m", "qwen3vl-2b"]
+
+
+def test_runtime_zip_pinned_and_dll_list_complete():
+    for rid in ("llama-cpu", "llama-vulkan"):
+        m = models.get(rid)
+        assert m["feature"] == "runtime" and m["licence"] == "MIT"
+        (name, size, sha), = m["files"].values()
+        assert name.endswith(".zip") and size > 0 and len(sha) == 64
+        z = m["files_in_zip"]
+        assert {"llama.dll", "mtmd.dll", "ggml.dll"} <= set(z)
+        assert all(n.endswith(".dll") and n != "ggml-rpc.dll" for n in z)
+        assert all(len(s) == 64 and sz > 0 for sz, s in z.values())
+    assert "ggml-vulkan.dll" in models.get("llama-vulkan")["files_in_zip"]
+
+
+def test_runtime_for_device(tmp_path):
+    assert models.runtime_for("vulkan", str(tmp_path)) == "llama-cpu"
+    assert models.runtime_for("cpu", str(tmp_path)) == "llama-cpu"
+    d = models.model_dir("llama-vulkan", str(tmp_path))
+    os.makedirs(d)
+    for n, (size, _s) in models.get("llama-vulkan")["files_in_zip"].items():
+        with open(os.path.join(d, n), "wb") as f:
+            f.truncate(size)
+    assert models.ready("llama-vulkan", str(tmp_path))
+    assert models.runtime_for("vulkan", str(tmp_path)) == "llama-vulkan"
+    assert models.runtime_for("cpu", str(tmp_path)) == "llama-cpu"
+
+
+def test_talk_runtime_is_the_one_on_disk_else_by_graphics(tmp_path):
+    d = str(tmp_path)
+    assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-vulkan"
+    assert models.talk_runtime({"gpu": ""}, d) == "llama-cpu"
+    cpu = models.model_dir("llama-cpu", d)
+    os.makedirs(cpu)
+    for n, (size, _s) in models.get("llama-cpu")["files_in_zip"].items():
+        with open(os.path.join(cpu, n), "wb") as f:
+            f.truncate(size)
+    assert models.talk_runtime({"gpu": "Intel(R) Iris(R) Xe Graphics"}, d) == "llama-cpu"     # already there
+
+
+def test_talk_timing_is_measured_for_both_runtimes_at_every_level():
+    for m in models.talk_models():
+        for rid in ("llama-cpu", "llama-vulkan"):
+            for level in models.TALK_LEVELS:
+                load, (lo, hi) = models.talk_timing(m, rid, level)
+                assert load > 0 and 0 < lo <= hi, (m["id"], rid, level)
+            assert models.talk_timing(m, rid) == models.talk_timing(m, rid, "full")       # no level known: Full
+            assert models.talk_timing(m, rid, "paused") == models.talk_timing(m, rid, "light")
+    assert models.talk_timing({"id": "x"}, "llama-cpu") == (0, (0, 0))       # not measured: no number
+    assert models.talk_timing({"timing": {"cpu": {"full": {"load_s": 2, "answer_s": (1, 2)}}}},
+                              "llama-cpu", "light") == (0, (0, 0))          # that level not measured: no number
+
+
+def test_slower_now_note_only_where_the_cap_measured_much_slower():
+    note = "Slower now: NOBAD Find is in Very light mode."
+    for m in models.talk_models():
+        assert models.talk_slow_note(m, "llama-cpu", "light") == note, m["id"]       # measured 1.4x-1.5x
+        for level in ("full", "gentle"):
+            assert models.talk_slow_note(m, "llama-cpu", level) == "", (m["id"], level)
+        for level in models.TALK_LEVELS:
+            assert models.talk_slow_note(m, "llama-vulkan", level) == "", (m["id"], level)
+    fake = {"timing": {"cpu": {"full": {"load_s": 1, "answer_s": (2, 4)}, "gentle": {"load_s": 1, "answer_s": (4, 6)},
+                               "light": {"load_s": 1, "answer_s": (2, 6)}}}}
+    assert models.talk_slow_note(fake, "llama-cpu", "gentle") == "Slower now: NOBAD Find is in Gentle mode."
+    assert models.talk_slow_note(fake, "llama-cpu", "light") == ""                  # 8 < 1.4 x 6
+    assert models.talk_slow_note({"id": "x"}, "llama-cpu", "light") == ""           # nothing measured
+
+
+def test_talk_need_on_vulkan_is_the_bigger_figure():
+    for mid in ("smolvlm2-500m", "qwen3vl-2b"):
+        m = models.get(mid)
+        assert models.talk_need_mb(m, "llama-cpu") == m["ram_mb"]
+        assert models.talk_need_mb(m, "llama-vulkan") == max(m["ram_mb"], m["vram_mb"])
+    assert models.talk_need_mb({"ram_mb": 900, "vram_mb": 1500}, "llama-vulkan") == 1500
+
+
+def test_talk_models_are_not_downloaded_by_auto_configure():
+    off = {"talk", "runtime"}
+    for tier in models.TIERS:
+        for focus in models.FOCUSES:
+            assert not off & set(models.tier_choice(tier, focus))
+        assert not off & set(models.TIER_CHOICE[tier])
+    assert off.isdisjoint({m["feature"] for m in models.CATALOG if m["feature"] in models.SEARCH_FEATURES})

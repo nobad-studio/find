@@ -9,6 +9,9 @@ Maintainer decisions 2026-11-19 (ROADMAP §3):
     caches          AppData, cache/temp folders, node_modules, .git, venv           include_caches (default on)
     secrets         .ssh, key files, password stores, wallets                       include_secrets (default OFF)
                     NAMES ONLY when on: their content is never read (Rules.names_only, indexer._skip_secrets).
+                    The one exception, secret_app_files (default OFF, 1.1.0): what other programs record and
+                    developer tools' plain-text sign-ins (const.APP_SECRET_*) are then ordinary files, read into
+                    the encrypted index; .env files are names only until it's on. Recent items stay out.
     other_profiles  other people's profiles, recycle bins, System Volume Information   always out (locked)
     removable       USB sticks and SD cards                                           index_removable
     network         mapped network drives                                             index_network
@@ -20,11 +23,16 @@ Rules is the one place the walker (walker.Walker), live changes (Walker.excluded
 """
 import os
 
-from .const import (BROWSER_SECRET_FILES, CACHE_NAMES, DATA_DIR, DEFAULTS, FIXED_NAMES, NAMES_ONLY_EXT,
-                    NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS, SYSTEM_NAMES)
+from .const import (ALWAYS_OUT_PATHS, APP_SECRET_FILES, APP_SECRET_PATHS, BROWSER_SECRET_FILES, CACHE_NAMES,
+                    DATA_DIR, DEFAULTS, ENV_FILE, FIXED_NAMES, NAMES_ONLY_EXT, NAMES_ONLY_PATHS, SECRET_EXT,
+                    SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES, SECRET_PATHS, SYSTEM_NAMES)
 
 SCOPES = ("whole_pc", "my_files", "custom")
 CATEGORIES = ("system", "caches", "secrets", "other_profiles", "removable", "network")
+# The revision of the rule lists in const (SECRET_*, NAMES_ONLY_*). Bump it when one grows: an index made with older
+# rules then loses, once, the content (text, vectors, photo vectors) of every file the new rules make names only, and
+# the rows they put out (indexer.Indexer._apply_new_rules); nothing else in the index is touched.
+RULES_REV = "4"                      # 4 (1.1.0): .env files names only; Recent items anchored to the profile
 SYSTEM_DIRS = ("Windows", "ProgramData", "Recovery", "PerfLogs", "Program Files", "Program Files (x86)")
 
 
@@ -73,6 +81,19 @@ def _under(n, prefix):
     return n == prefix or n.startswith(prefix.rstrip("\\") + "\\")
 
 
+def holders(n, folders):
+    """The folders of the set `folders` (normcased) that are n or hold it, shortest first. One set lookup per level
+    of n, so a long Never index list (settings.MAX_PATHS) costs nothing per file."""
+    parts = n.split("\\")
+    out = []
+    for i in range(1, len(parts) + 1):
+        p = "\\".join(parts[:i])
+        for q in (p, p + "\\"):
+            if q in folders and q not in out:
+                out.append(q)
+    return out
+
+
 def other_profiles(registry=None):
     """Profile folders of every other account Windows knows (HKLM ProfileList, readable by every user)."""
     if registry is None:
@@ -112,9 +133,12 @@ def _profile_list():
 class Rules:
     """Which folders and files are in, from the include_* settings. Paths compare case-insensitively."""
 
-    def __init__(self, system=True, caches=True, secrets=False, profile=None, others=None):
+    def __init__(self, system=True, caches=True, secrets=False, profile=None, others=None, apps=False):
         self.system, self.caches, self.secrets = bool(system), bool(caches), bool(secrets)
+        self.apps = bool(apps)                           # secret_app_files: read app records and tool tokens
         self.profile = norm(profile or profile_dir())
+        # Recent items and jump lists: these folders of this user's profile (not any "office\recent" folder)
+        self.always_out = {norm(os.path.join(self.profile, *run)) for run in ALWAYS_OUT_PATHS}
         self.users = os.path.dirname(self.profile)
         self.public = os.path.join(self.users, "public")
         self.others = set(other_profiles() if others is None else (norm(o) for o in others))
@@ -125,7 +149,7 @@ class Rules:
     @classmethod
     def from_settings(cls, s, **kw):
         return cls(system=setting(s, "include_system"), caches=setting(s, "include_caches"),
-                   secrets=setting(s, "include_secrets"), **kw)
+                   secrets=setting(s, "include_secrets"), apps=setting(s, "secret_app_files"), **kw)
 
     @classmethod
     def legacy(cls):
@@ -152,24 +176,31 @@ class Rules:
             return "other_profiles"                     # Default, stale profiles, anyone ProfileList missed
         if n in self.system_set:
             return "system"
+        if n in self.always_out:
+            return "other_profiles"                     # Recent items, jump lists: always out (activity history)
         parts = n.split("\\")
-        if any(tuple(parts[-len(pat):]) == pat for pat in SECRET_PATHS):
-            return "secrets"                            # Windows Credentials/Vault/Protect, chat app tokens
+        for pat in SECRET_PATHS:
+            if tuple(parts[-len(pat):]) == pat and not (self.apps and pat in APP_SECRET_PATHS):
+                return "secrets"                        # Windows Credentials/Vault/Protect, chat app tokens
         if n == self.appdata:
             return "caches"
         return None
 
-    @staticmethod
-    def _secret_file(n):
+    def _secret_file(self, n):
         """A credential store by its own name (n normcased): key files, browser password/cookie/history databases,
-        developer tokens, wallets."""
+        developer tokens, wallets. With secret_app_files on, app records and tool tokens (const.APP_SECRET_FILES,
+        SECRET_FILES_IN) are not: they are read like any file."""
         parts = n.split("\\")
         low = parts[-1]
+        base = _base_name(low)
+        if self.apps and base in APP_SECRET_FILES:
+            return False                                 # (before the extension: pgpass.conf)
         if os.path.splitext(low)[1] in SECRET_EXT:
             return True
-        base = _base_name(low)
         if base in SECRET_FILES:
             return True
+        if any(base == run[-1] and tuple(parts[-len(run):-1]) == run[:-1] for run in SECRET_FILES_IN):
+            return not self.apps                         # Maven's settings.xml in .m2, gh's hosts.yml, ...
         return base in BROWSER_SECRET_FILES and any(_has_run(parts[:-1], pat) for pat in NAMES_ONLY_PATHS)
 
     def _allowed(self, cat):
@@ -222,7 +253,27 @@ class Rules:
             return True
         n = norm(path)
         parts = n.split("\\")
+        if not self.apps and env_file(parts[-1]):
+            return True                                  # .env, .env.local: names only until secret_app_files
         return os.path.splitext(n)[1] in NAMES_ONLY_EXT or any(_has_run(parts[:-1], pat) for pat in NAMES_ONLY_PATHS)
+
+
+def env_file(name):
+    """.env, .env.local, .env.production, ... (a file name)."""
+    low = name.lower()
+    return low == ENV_FILE or low.startswith(ENV_FILE + ".")
+
+
+def app_file(path):
+    """A path secret_app_files is about (const.APP_SECRET_*: an app's record or a tool's token, a .env file, or a
+    folder that holds them, like PSReadLine): what turning it off takes out again (Api._purge_app_files)."""
+    parts = norm(path).split("\\")
+    base = _base_name(parts[-1])
+    if base in APP_SECRET_FILES or env_file(parts[-1]):
+        return True
+    if any(base == run[-1] and tuple(parts[-len(run):-1]) == run[:-1] for run in SECRET_FILES_IN):
+        return True
+    return any(_has_run(parts, pat) for pat in APP_SECRET_PATHS)
 
 
 def _rank(cat):
@@ -335,8 +386,12 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
                 "key4.db, logins.json, cookies.sqlite, places.sqlite, formhistory.sqlite); Windows Credentials, "
                 "Vault and Protect folders; password manager vaults (.kdbx, .1pux, 1Password, Bitwarden, KeePass); "
                 "Discord, Slack and Teams sign-in tokens; developer tokens (.npmrc, .pypirc, .netrc, "
-                ".git-credentials, .aws, .azure, gcloud); crypto wallet files. Off by default. When on, only their "
-                "names are indexed: NOBAD Find never reads what's inside them.",
+                ".git-credentials, .aws, .azure, .docker, .kube, gcloud, GitHub CLI); saved servers (FileZilla, "
+                "WinSCP); what other programs record (PowerShell and shell command histories); crypto wallet "
+                "files. Off by default. When on, only their names are indexed: NOBAD Find never reads what's "
+                "inside them. The one exception is yours to choose in Settings > Privacy: with \"Read command "
+                "histories, saved logins and tool tokens\" on, the command histories, saved sites and developer "
+                "tool tokens are read into the encrypted index; .env files are listed by name only until then.",
          "examples": [os.path.join(prof, ".ssh"),
                       os.path.join(prof, "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data"),
                       os.path.join(prof, "AppData", "Roaming", "Mozilla", "Firefox", "Profiles", "...", "logins.json"),
@@ -347,7 +402,8 @@ def info(s, drives, store=None, known=None, real_case=real_case, rules=None):
         {"id": "other_profiles", "name": "Other people's files",
          "summary": "Other accounts on this PC, recycle bins and restore points.", "names_only": "none",
          "why": "Other accounts on this PC (their profiles and recycle bins) and Windows' restore points (System "
-                "Volume Information) are never indexed, not even by the turbo index: they aren't yours to search.",
+                "Volume Information) are never indexed, not even by the turbo index: they aren't yours to search. "
+                "Nor are the lists Windows and Office keep of what you opened (Recent items, jump lists).",
          "examples": [os.path.join(os.path.dirname(prof), "<another account>"), os.path.join(
              system_drive(), "$Recycle.Bin"), os.path.join(system_drive(), "System Volume Information")],
          "included": False, "locked": True,

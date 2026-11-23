@@ -16,7 +16,7 @@ from ..api import DownloadRate
 from ..log import log
 
 EVENTS = {"status", "status_full", "level", "activity", "download", "notice", "show", "here", "quitting",
-          "turbo", "models", "update"}
+          "turbo", "models", "update", "vision"}
 MODELS_EVERY = 1.0                 # seconds between looks for a changed models answer (it reads the model folders)
 STATUS_EVERY = 2.0                 # seconds between status events
 TICK = 0.5                         # seconds between looks for level and download changes

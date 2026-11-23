@@ -6,9 +6,10 @@ Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and on
 import os
 import time
 
-from .const import BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_NAMES, SECRET_PATHS
+from .const import (BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES,
+                    SECRET_PATHS)
 from .query import parse
-from .store import OperationalError, fts_quote
+from .store import KEPT_ORD, OperationalError, fts_quote
 from .understand import best_guess, folder_finder, parts, place_bases
 
 RRF_K = 60
@@ -88,6 +89,9 @@ def secret_sql(alias="f"):
     for run in [(n,) for n in sorted(SECRET_NAMES)] + list(SECRET_PATHS):
         ors.append(f"{alias}.path LIKE ? ESCAPE '!'")
         args.append(like(*run))
+    for run in SECRET_FILES_IN:                      # settings.xml in .m2, hosts.yml in gh, ...
+        ors.append(f"(lower({alias}.name) = ? AND {alias}.path LIKE ? ESCAPE '!')")
+        args += [run[-1], like(*run[:-1])]
     browser = sorted(BROWSER_SECRET_FILES)
     inside = " OR ".join(f"{alias}.path LIKE ? ESCAPE '!'" for _ in NAMES_ONLY_PATHS)
     ors.append(f"(lower({alias}.name) IN ({','.join('?' * len(browser))}) AND ({inside}))")
@@ -316,9 +320,10 @@ def _token_hits(store, token, q, limit, clock=None):
 
 
 def _text_hits(store, q, limit):
+    """(file ids best first, {file id: snippet}, {file ids whose best chunk is the user's kept description})."""
     words = [t for t in q.terms if len(t) >= 2] + q.phrases
     if not words:
-        return [], {}
+        return [], {}, set()
     match = " AND ".join(fts_quote(w) for w in words)
     if "fts_or" in VARIANTS or "synonyms" in VARIANTS:
         alts = [[w] + (sorted(SYNONYMS.get(w, ())) if "synonyms" in VARIANTS else []) for w in words]
@@ -327,16 +332,18 @@ def _text_hits(store, q, limit):
     where, args = _filters(q)
     # bm25() can't sit inside GROUP BY, so rank chunks first and keep each file's best chunk here
     rows = store.q(
-        "SELECT c.file_id, t.score, t.snip FROM (SELECT rowid, bm25(text) AS score, "
+        "SELECT c.file_id, t.score, t.snip, c.ord FROM (SELECT rowid, bm25(text) AS score, "
         "snippet(text, 0, char(2), char(3), '…', 14) AS snip FROM text WHERE text MATCH ? ORDER BY score LIMIT ?) t "
         f"JOIN chunks c ON c.id = t.rowid JOIN files f ON f.id = c.file_id WHERE 1=1{where} ORDER BY t.score",
         (match, limit * 5, *args))
-    order, snips = [], {}
-    for fid, _score, snip in rows:
+    order, snips, kept = [], {}, set()
+    for fid, _score, snip, ord_ in rows:
         if fid not in snips:
             snips[fid] = snip
             order.append(fid)
-    return order[:limit], snips
+            if ord_ == KEPT_ORD:
+                kept.add(fid)
+    return order[:limit], snips, kept
 
 
 def _meaning_hits(store, q, embedder, vindex, limit):
@@ -363,22 +370,22 @@ def _meaning_hits(store, q, embedder, vindex, limit):
     by_chunk, by_name = {}, set()
     if chunk_ids:
         marks = ",".join("?" * len(chunk_ids))
-        rows = store.q(f"SELECT c.id, c.file_id, substr(c.body, 1, 240) FROM chunks c JOIN files f ON f.id = c.file_id "
-                       f"WHERE c.id IN ({marks}){where}", (*chunk_ids, *args))
-        by_chunk = {r[0]: (r[1], r[2]) for r in rows}
+        rows = store.q(f"SELECT c.id, c.file_id, substr(c.body, 1, 240), c.ord FROM chunks c "
+                       f"JOIN files f ON f.id = c.file_id WHERE c.id IN ({marks}){where}", (*chunk_ids, *args))
+        by_chunk = {r[0]: (r[1], r[2], "kept" if r[3] == KEPT_ORD else "text") for r in rows}
     if file_ids:
         marks = ",".join("?" * len(file_ids))
         no_folders = "" if "folder_meaning" in VARIANTS or "folder" in q.kinds else " AND f.kind != 'folder'"
         by_name = {r[0] for r in store.q(f"SELECT f.id FROM files f WHERE f.id IN ({marks}){where}{no_folders}",
                                          (*file_ids, *args))}
-    best, order = {}, []                     # file id -> (score, snippet, "text" | "name")
+    best, order = {}, []                     # file id -> (score, snippet, "text" | "kept" | "name")
     for key, s in hits:
         if is_name(key):
             fid, body, how = -key, "", "name"
             if fid not in by_name:
                 continue
         elif key in by_chunk:
-            (fid, body), how = by_chunk[key], "text"
+            fid, body, how = by_chunk[key]           # "kept": the user's kept description of a photo
         else:
             continue                         # a vector for text that has since changed or gone
         if fid not in best:
@@ -390,6 +397,7 @@ def _meaning_hits(store, q, embedder, vindex, limit):
 # Photo matches (SigLIP cosine similarity: a much smaller scale than the text model's). Tuned on 55 real photos in
 # 19 topics: precision 0.82, recall 0.84 (was 0.73 / 0.87). A photo must clear the floor, be within the spread of
 # the best match and score at least PHOTO_RATIO of it.
+KEPT_MATCH = "your kept description matches"    # a description you kept of a photo (vdesc), not its OCR or look
 PHOTO_MIN = 0.04
 PHOTO_SPREAD = 0.04
 PHOTO_RATIO = 0.6
@@ -704,7 +712,7 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         w_meaning = 1.6
     names = _name_hits(store, q, 300)
     lists.append((w_name, names))
-    texts, snippets = _text_hits(store, q, 300)
+    texts, snippets, kept = _text_hits(store, q, 300)
     token = q.raw.strip() if looks_like_token(q.raw) else ""
     exact = []
     if token:
@@ -721,6 +729,7 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         if not complete:
             q.notes.append(f"Looked for “{token}” inside files for {TOKEN_BUDGET_S:g} s; part of the index wasn't "
                            "looked at yet. Add a folder to narrow it.")
+    exact_tokens = set(exact)                   # found by the exact token inside any text (not only the kept one)
     lists.append((w_text, texts))
     meaning, best = _meaning_hits(store, q, embedder, vindex, 150)
     if photo_v2() and meaning and photo_text is not None and pindex is not None and getattr(pindex, "n", 0):
@@ -789,11 +798,21 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         why = []
         if fid in name_set:
             why.append("name matches")
+        # the user's kept description (talk about a photo) is said apart from the photo's own text and its look
+        said_kept = False
         if fid in text_set:
-            why.append("text inside matches")
+            if fid in kept and fid not in exact_tokens:
+                why.append(KEPT_MATCH)
+                said_kept = True
+            else:
+                why.append("text inside matches")
         if fid in best:
             s, _body, how = best[fid]
-            why.append(f"{'name' if how == 'name' else 'text'} has a {_closeness(s)} meaning")
+            if how == "kept":
+                if not said_kept:
+                    why.append(KEPT_MATCH)
+            else:
+                why.append(f"{'name' if how == 'name' else 'text'} has a {_closeness(s)} meaning")
         if fid in pbest:
             why.append("the picture shows something like it" if pbest[fid] >= photo_sure else "the picture may show it")
         if q.t0 is not None:

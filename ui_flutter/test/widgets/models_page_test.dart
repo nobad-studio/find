@@ -66,6 +66,96 @@ void main() {
     );
   });
 
+  Finder card(String name) => find.ancestor(
+    of: find.text(name),
+    matching: find.byWidgetPredicate((w) => '${w.runtimeType}' == '_ModelRow'),
+  );
+
+  testWidgets('1.1: Talk about photos lists SmolVLM2, Qwen and the runtimes; Qwen says why it may not run', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    expect(find.text('Talk about photos'), findsOneWidget);
+    expect(find.text('SmolVLM2 500M'), findsOneWidget);
+    expect(find.text('Qwen3-VL 2B'), findsOneWidget);
+    expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget);
+    expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('520 MB download')), findsOneWidget);
+    expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('665 MB graphics memory')), findsOneWidget);
+    const why = 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory';
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.textContaining('DirectML')), findsNothing);
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text(why)), findsOneWidget);
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('Download anyway…')), findsOneWidget);
+    expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text(why)), findsNothing);
+    expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('Use')), findsNothing); // no Use
+  });
+
+  testWidgets('1.1: a talk model download asks ONE consent naming the model and its runtime, then fetches both', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    final button = find.descendant(of: card('SmolVLM2 500M'), matching: find.text('Download…'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Download SmolVLM2 500M?'), findsOneWidget);
+    expect(find.text('SmolVLM2 500M: 520 MB from huggingface.co'), findsOneWidget);
+    expect(find.textContaining('llama.cpp runtime (graphics card): 37 MB from github.com'), findsOneWidget);
+    expect(find.textContaining('githubusercontent.com'), findsOneWidget);
+    expect(find.text('557 MB, once'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(engine.calls, isNot(contains('model_download')));
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    final state = {for (final m in engine.modelsInfo.models) m.id: m.state};
+    expect(state['smolvlm2-500m'], ModelUseState.downloading);
+    expect(state['llama-vulkan'], ModelUseState.downloading);
+    expect(state['llama-cpu'], ModelUseState.notDownloaded); // only the runtime this PC uses
+  });
+
+  testWidgets('1.1: a runtime downloaded on its own names github.com and *.githubusercontent.com', (tester) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    final button = find.descendant(of: card('llama.cpp runtime (CPU)'), matching: find.text('Download…'));
+    await tester.ensureVisible(button);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('Download the llama.cpp runtime (CPU)?'), findsOneWidget);
+    expect(
+      find.text('llama.cpp runtime (CPU): 24 MB from github.com (llama.cpp releases, delivered by *.githubusercontent.com)'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Pinned release'), findsOneWidget);
+    await tester.tap(find.text('Download'));
+    await tester.pumpAndSettle();
+    expect(engine.modelsInfo.models.firstWhere((m) => m.id == 'llama-cpu').state, ModelUseState.downloading);
+  });
+
+  testWidgets('1.1: a downloaded talk model or runtime has Remove', (tester) async {
+    final engine = FakeEngine();
+    engine.modelsInfo = ModelsInfo(
+      pc: engine.modelsInfo.pc,
+      tierRecommended: engine.modelsInfo.tierRecommended,
+      tierCurrent: engine.modelsInfo.tierCurrent,
+      languageFocus: engine.modelsInfo.languageFocus,
+      models: [
+        for (final m in engine.modelsInfo.models)
+          m.feature == 'talk' || m.feature == 'runtime' ? m.withState(ModelUseState.ready) : m,
+      ],
+    );
+    await openModels(tester, engine);
+    final remove = find.descendant(of: card('llama.cpp runtime (CPU)'), matching: find.text('Remove'));
+    await tester.ensureVisible(remove);
+    await tester.tap(remove);
+    await tester.pumpAndSettle();
+    expect(engine.calls, contains('model_remove'));
+    expect(engine.modelsInfo.models.firstWhere((m) => m.id == 'llama-cpu').state, ModelUseState.notDownloaded);
+  });
+
   testWidgets('an older engine: says so, and offers the older downloads', (tester) async {
     final engine = FakeEngine()..old = true;
     await openModels(tester, engine);

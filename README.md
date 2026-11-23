@@ -19,6 +19,11 @@ they're about, and tells you why each result matched.
   `electricity-bill-march.pdf`.
 - **Photos by what's in them (optional).** "Dog on a beach" finds `IMG_0042.jpg` even with no words in it, with
   a local image model you download once (about 211 MB) and only if you want it.
+- **Talk about a photo (optional, 1.1).** Describe a photo, ask about it ("what's written here?") or compare
+  two, with a small vision model that runs on your PC (SmolVLM2 500M, 520 MB; Qwen3-VL 2B, 1,481 MB, for deeper
+  answers). One consent covers the model and the llama.cpp runtime it runs on. On the reference PC (i5-12500H,
+  Iris Xe) SmolVLM2 answers in about 1-4 s on the graphics and 3-10 s on the processor (5-16 s while NOBAD Find
+  runs very light), with about 1 GB of memory ([measurements](docs/measurements.md)).
 - **Words in photos and scans.** Screenshots, photos of documents and scanned PDFs are read with the OCR built
   into Windows. Offline; it runs after everything else because it's slower.
 - **Plain-language filters.** Kinds ("pdf", "photos", "spreadsheet", "code"), times ("yesterday",
@@ -71,7 +76,12 @@ they're about, and tells you why each result matched.
   in Settings → Models, pinned to one revision and checked against its SHA-256 before use. The meaning-search
   models are all-MiniLM-L6-v2 (23 MB), GTE small (33 MB), BGE base (106 MB) and multilingual-e5 small and base
   (129 / 282 MB); all MIT or Apache-2.0. The photo models are SigLIP base (211 MB) and SigLIP 2 base (481 MB), by
-  Google, Apache-2.0. (Network drives, if you turn them on, are read over your
+  Google, Apache-2.0. The photo talk models (1.1) are SmolVLM2 500M (520 MB) and Qwen3-VL 2B (1,481 MB), both
+  Apache-2.0, from Hugging Face. Talking about a photo also needs the llama.cpp runtime (MIT, about 24 MB for the
+  CPU or 37 MB for the graphics card), downloaded once from llama.cpp's GitHub release only when you say
+  Download, pinned to release b12602 and checked against its SHA-256; only the DLLs NOBAD Find loads are
+  unpacked (29 MB for the CPU, 71 MB for the graphics card; never llama.cpp's programs), each checked again, and
+  the downloaded zip is deleted. (Network drives, if you turn them on, are read over your
   own network like any other program opening files there.)
 
 ## Windows Search switch

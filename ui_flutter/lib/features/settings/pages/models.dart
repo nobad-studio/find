@@ -154,6 +154,15 @@ class _Catalogue extends StatelessWidget {
           groups: [('', info.byFeature('ocr'))],
           m: m,
         ),
+        // 1.1: not part of a tier; a photo's Describe / Ask / Compare offers the same download
+        _FeatureGroup(
+          title: 'Talk about photos',
+          about:
+              'Describe a photo, ask about it, or compare two, on its detail pane. The models run on this PC only, '
+              'on the llama.cpp runtime; each download asks first.',
+          groups: [('', info.byFeature('talk')), ('Runtime', info.byFeature('runtime'))],
+          m: m,
+        ),
       ],
     );
   }
@@ -215,16 +224,22 @@ String tierWhy(String tier) => switch (tier) {
 class _FeatureGroup extends StatelessWidget {
   const _FeatureGroup({
     required this.title,
-    required this.switchKey,
-    required this.switchLabel,
-    required this.switchHelp,
+    this.switchKey,
+    this.switchLabel = '',
+    this.switchHelp = '',
+    this.about = '',
     required this.groups,
     required this.m,
   });
   final String title;
-  final String switchKey;
+
+  /// The feature's setting (null: a feature with no switch, talk about photos).
+  final String? switchKey;
   final String switchLabel;
   final String switchHelp;
+
+  /// A line on what the group is, for a feature with no switch.
+  final String about;
   final List<(String, List<ModelInfo>)> groups;
   final ModelsController m;
 
@@ -232,12 +247,18 @@ class _FeatureGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     if (groups.every((g) => g.$2.isEmpty)) return const SizedBox.shrink();
+    final key = switchKey;
     return SettingsGroup(
       title,
       rows: [
-        SwitchSetting(switchKey, switchLabel, switchHelp),
+        if (key != null) SwitchSetting(key, switchLabel, switchHelp),
+        if (about.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(about, style: NbType.text(12.5, c.muted, height: 1.4)),
+          ),
         for (final (label, models) in groups) ...[
-          if (label.isNotEmpty)
+          if (label.isNotEmpty && models.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Align(
@@ -313,6 +334,8 @@ class _ModelRow extends StatelessWidget {
                 else if (x.sizeMb > 0)
                   NbFact(NbGlyph.download, '${x.sizeMb.round()} MB download'),
                 if (x.ramMb > 0) NbFact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
+                if (x.vramMb > 0) NbFact(NbGlyph.chip, '${x.vramMb.round()} MB graphics memory'),
+                if (x.runtime.isNotEmpty) NbFact(NbGlyph.gauge, 'Runs on ${m.info.byId(x.runtime)?.name ?? x.runtime}'),
                 if (x.licence.isNotEmpty) NbFact(NbGlyph.shield, x.licence),
                 if (x.languages.isNotEmpty) NbFact(NbGlyph.info, x.languageText),
                 if (q != null) NbFact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
@@ -359,7 +382,14 @@ class _Avatar extends StatelessWidget {
     final (Color a, Color b) = switch (x.feature) {
       'photo' => (const Color(0xFF4F5DFF), const Color(0xFFD0347A)),
       'ocr' => (const Color(0xFF2B8A6E), const Color(0xFF4F5DFF)),
+      'talk' => (const Color(0xFFD0347A), const Color(0xFF4F5DFF)),
+      'runtime' => (const Color(0xFF5B6270), const Color(0xFF2B8A6E)),
       _ => (c.orange, const Color(0xFFD0347A)),
+    };
+    final glyph = switch (x.feature) {
+      'photo' || 'talk' => NbGlyph.image,
+      'runtime' => NbGlyph.chip,
+      _ => NbGlyph.doc,
     };
     return Container(
       width: 44,
@@ -371,7 +401,7 @@ class _Avatar extends StatelessWidget {
       ),
       child: x.feature == 'text'
           ? Text('Aa', style: NbType.text(16, const Color(0xFFFFFFFF), weight: FontWeight.w700, height: 1))
-          : NbIcon(x.feature == 'photo' ? NbGlyph.image : NbGlyph.doc, size: 20, color: const Color(0xFFFFFFFF)),
+          : NbIcon(glyph, size: 20, color: const Color(0xFFFFFFFF)),
     );
   }
 }
@@ -431,7 +461,15 @@ class _Details extends StatelessWidget {
                 ],
               ),
             ),
-          if (!x.builtin)
+          if (x.feature == 'runtime')
+            line(
+              'Checked',
+              val(
+                'Downloaded over HTTPS from that exact release; its size and SHA-256 are checked, and only its '
+                'pinned files are kept (each checked by size and SHA-256).',
+              ),
+            )
+          else if (!x.builtin)
             line(
               'Checked',
               val('Downloaded over HTTPS from that exact revision; its size and SHA-256 are checked before use.'),
@@ -458,9 +496,23 @@ class _Actions extends StatelessWidget {
       );
     }
     void use() => unawaited(m.use(x, consent: (y) => _consent(context, y)));
+    // talk models and runtimes have no Use: they are fetched (one consent with the runtime) and used on a photo
+    final talk = x.feature == 'talk' || x.feature == 'runtime';
+    void fetch() => unawaited(
+      x.feature == 'talk'
+          ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt))
+          : m.download(x, consent: (y) => askRuntimeConsent(context, y)),
+    );
     final List<Widget> buttons;
     if (busy) {
       buttons = const [];
+    } else if (talk) {
+      buttons = [
+        if (x.onDisk)
+          NbButton('Remove', small: true, kind: NbButtonKind.quiet, onPressed: () => unawaited(m.remove(x)))
+        else
+          NbButton(x.capable ? 'Download…' : 'Download anyway…', small: true, kind: NbButtonKind.ghost, onPressed: fetch),
+      ];
     } else if (x.onDisk) {
       buttons = [
         NbButton('Use', small: true, onPressed: use),

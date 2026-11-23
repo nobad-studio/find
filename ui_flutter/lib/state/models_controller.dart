@@ -16,6 +16,29 @@ import 'toast_controller.dart';
 
 enum ModelsLoad { loading, ready, needsNewer, offline }
 
+/// The consent for a talk model and the runtime it still needs (null: on this PC already).
+typedef TalkConsent = Future<bool> Function(ModelInfo model, ModelInfo? runtime);
+
+/// 1.1, Settings → Models and the photo talk panel: ONE consent for talk model [m] and its runtime, then a
+/// `model_download` for each still missing. Returns the models whose download started, or an error sentence
+/// ('' with nothing started: the user said Not now).
+Future<({List<ModelInfo> started, String error})> fetchTalkModel(
+  EngineApi engine,
+  ModelsInfo info,
+  ModelInfo m, {
+  required TalkConsent consent,
+}) async {
+  final rt = info.runtimeToFetch(m);
+  if (!await consent(m, rt)) return (started: const <ModelInfo>[], error: '');
+  final started = <ModelInfo>[];
+  for (final x in [if (!m.onDisk && m.state != ModelUseState.downloading) m, ?rt]) {
+    final r = await engine.modelDownload(x.id);
+    if (!r.ok) return (started: started, error: r.error.isNotEmpty ? r.error : 'The download did not start.');
+    started.add(x);
+  }
+  return (started: started, error: '');
+}
+
 /// A download in progress (from `download` events).
 class ModelProgress {
   const ModelProgress({this.gotMb = 0, this.sizeMb = 0, this.mbS = 0, this.error = ''});
@@ -149,6 +172,22 @@ class ModelsController extends ChangeNotifier {
     if (r.ok) _progress[m.id] = ModelProgress(sizeMb: m.sizeMb);
     _changed();
     return r.ok;
+  }
+
+  /// A talk model (1.1): one consent names it and the runtime it needs; Download fetches both.
+  Future<bool> downloadTalk(ModelInfo m, {required TalkConsent consent}) async {
+    final r = await _run(m.id, () => fetchTalkModel(engine, _info, m, consent: consent));
+    if (r == null) return false;
+    for (final x in r.started) {
+      _progress[x.id] = ModelProgress(sizeMb: x.sizeMb);
+    }
+    if (r.error.isNotEmpty) {
+      _say(r.error);
+    } else if (r.started.isNotEmpty) {
+      _say('Downloading ${r.started.map((x) => x.name).join(' and ')}…');
+    }
+    _changed();
+    return r.error.isEmpty && r.started.isNotEmpty;
   }
 
   /// File Explorer on the folder [m] is downloaded to (the engine opens it; the UI never hands it a path).
