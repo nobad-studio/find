@@ -141,18 +141,57 @@ def test_a_deleted_photo_leaves_the_next_set_too(tmp_path):
     s.close()
 
 
-def test_an_old_model_no_longer_on_this_pc_is_not_kept(tmp_path, monkeypatch):
-    """Nothing can ask the old vectors without their model: the new identity takes over at once."""
+def _run_rebuild_not_asking_the_old_set(s, ix, monkeypatch, old_tag, new_tag, n):
+    """One photo per pass: before each pass the old rows and tag are all still there, nothing asks them, and no
+    partial set is swapped in; after the last photo, one swap."""
+    monkeypatch.setattr(indexer, "PHOTO_BATCH", 1)
+    ix._photo_one_by_one = True
+    for done in range(n):
+        assert s.meta("pvec_model") == old_tag and s.meta("pvec_next_model") == new_tag
+        assert {v for (v,) in s.q("SELECT v FROM pvecs")} == {OLD} and _count(s, "pvecs") == n
+        assert ix.pindex.n == 0 and ix.photo_old_answers is False         # kept, but never asked
+        assert _count(s, "pvecs_next") == done == ix.pindex_next.n
+        turns = iter([False, True])
+        ix._round_over = lambda: next(turns, True)
+        ix._photo_one_by_one = True                                     # one photo this pass
+        ix._photo_vectors()
+    ix._round_over = lambda: False
+    ix._photo_vectors()                                                  # finds nothing left: the swap
+    assert s.meta("pvec_model") == new_tag and not s.meta("pvec_next_model")
+    assert {v for (v,) in s.q("SELECT v FROM pvecs")} == {NEW} and _count(s, "pvecs") == n == ix.pindex.n
+    assert ix.photo_old_answers is True and ix.photo_model_next is None
+
+
+def test_an_old_model_no_longer_on_this_pc_keeps_its_rows_until_the_swap(tmp_path, monkeypatch):
+    """Nothing can ask the old vectors without their model: they aren't searched, but their rows and tag stay
+    until the new set covers every photo (never dropped, never a partial swap)."""
     s = Store(str(tmp_path / "i.db"), encrypt=False)
-    for fid in _photos(s, 2):
+    for fid in _photos(s, 3):
         s.set_photo_vector(fid, 1.0, OLD)
     s.set_meta("pvec_model", "siglip-base")
     _patch(monkeypatch, [])
     monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: mid == "siglip2-base")
     ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
     ix._load_photo()
-    assert s.meta("pvec_model") == "siglip2-base#2" and not s.meta("pvec_next_model")
-    assert ix.photo_model == "siglip2-base" and ix.photo_model_next is None
+    assert ix.photo_model == ix.photo_model_next == "siglip2-base" and ix.photo_text is ix.photo_text_next
+    _run_rebuild_not_asking_the_old_set(s, ix, monkeypatch, "siglip-base", "siglip2-base#2", 3)
+    s.close()
+
+
+def test_a_half_built_set_is_not_swapped_in_when_the_old_model_goes(tmp_path, monkeypatch):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ids = _photos(s, 3)
+    for fid in ids:
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip-base")
+    s.set_meta("pvec_next_model", "siglip2-base#2")
+    s.set_photo_vector(ids[0], 1.0, NEW, next=True)                     # a rebuild was a third done
+    _patch(monkeypatch, [])
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: mid == "siglip2-base")
+    ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
+    ix._load_photo()
+    assert s.meta("pvec_model") == "siglip-base" and _count(s, "pvecs") == 3 and _count(s, "pvecs_next") == 1
+    assert ix.pindex.n == 0 and ix.pindex_next.n == 1                    # the partial set answers alone
     s.close()
 
 
@@ -385,18 +424,71 @@ def test_a_photo_in_both_sets_counts_no_more_than_in_one(tmp_path, monkeypatch):
     s.close()
 
 
-def test_a_repin_that_changed_the_text_side_does_not_ask_the_old_vectors(tmp_path, monkeypatch):
-    """"vectors_text": the old vectors were asked with a text file that isn't on disk any more: not kept as a
-    channel (they would be asked with the wrong text half); the new set answers as it is built."""
+def _repinned(monkeypatch, **kw):
+    base = {k: v for k, v in models.get("siglip2-base").items() if k not in ("vectors", "text_changed_at")}
+    monkeypatch.setitem(models._BY_ID, "siglip2-base", dict(base, **kw))
+
+
+def test_a_repin_that_changed_the_text_side_keeps_the_old_rows_but_does_not_ask_them(tmp_path, monkeypatch):
+    """"text_changed_at": 3: re-pin #3 changed the text half, so #2 vectors can't be asked with the text file on
+    disk now. They stay (rows and tag) until the swap; only the new set answers meanwhile."""
     s = Store(str(tmp_path / "i.db"), encrypt=False)
     for fid in _photos(s, 2):
         s.set_photo_vector(fid, 1.0, OLD)
     s.set_meta("pvec_model", "siglip2-base#2")
     _patch(monkeypatch, [])
-    monkeypatch.setitem(models._BY_ID, "siglip2-base", dict(models.get("siglip2-base"), vectors=3,
-                                                            vectors_text=True))
+    _repinned(monkeypatch, vectors=3, text_changed_at=3)
     ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
     ix._load_photo()
-    assert s.meta("pvec_model") == "siglip2-base#3" and not s.meta("pvec_next_model")
-    assert ix.photo_model_next is None and ix.pindex.n == 0
+    _run_rebuild_not_asking_the_old_set(s, ix, monkeypatch, "siglip2-base#2", "siglip2-base#3", 2)
+    s.close()
+
+
+def test_text_changed_at_belongs_to_the_version_it_describes(monkeypatch):
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: True)
+    _repinned(monkeypatch, vectors=4, text_changed_at=3)
+    assert models.old_vectors_askable("siglip2-base#3", "siglip2-base")      # #3 -> #4: vision only
+    assert not models.old_vectors_askable("siglip2-base#2", "siglip2-base")  # #2 -> #4 crosses the text change
+    assert not models.old_vectors_askable("siglip2-base", "siglip2-base")
+    _repinned(monkeypatch, vectors=3)
+    assert models.old_vectors_askable("siglip2-base#2", "siglip2-base")      # no marker: vision only
+    assert models.old_vectors_askable("siglip-base", "siglip2-base")
+    assert not models.old_vectors_askable("gone-model#1", "siglip2-base")
+
+
+def test_a_later_vision_only_repin_still_asks_the_old_set(tmp_path, monkeypatch):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    for fid in _photos(s, 2):
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip2-base#3")
+    _patch(monkeypatch, [])
+    _repinned(monkeypatch, vectors=4, text_changed_at=3)
+    ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
+    ix._load_photo()
+    assert ix.pindex.n == 2 and ix.photo_old_answers is True and s.meta("pvec_next_model") == "siglip2-base#4"
+    s.close()
+
+
+def test_the_note_says_when_the_old_results_cant_answer(tmp_path, monkeypatch):
+    from nobadfind import api as api_mod, settings
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    st = settings.Settings(str(tmp_path / "s.json"))
+    st.update({"photo_meaning": True, "photo_model": "siglip2-base"})
+
+    class Ix:
+        embedder = None
+        photo_text = None
+        pindex = embed.VectorIndex(photo.PHOTO_DIM, ())
+        drive_list = []
+        photo_model = photo_model_next = "siglip2-base"
+        photo_old_answers = False
+
+        def roots(self, drives):
+            return []
+    a = api_mod.Api(s, st, Ix(), None)
+    monkeypatch.setattr(api_mod.models, "ready", lambda mid, d=None: True)
+    a._totals = (0.0, None, {"photos": (11033, 11033 - 4210)})
+    n = a.search("black shirt image")["needs"][0]
+    assert n["text"] == ("Looking at your photos again with SigLIP 2: 4,210 of 11,033; "
+                         "until then only those photos can be found by what is in them")
     s.close()

@@ -294,12 +294,34 @@ def measured(mid, variant, backend, profile):
 
 def vector_tag(mid):
     """What photo vectors are stored under (meta pvec_model): the model id, plus "#<n>" once the catalog changed a
-    file that alters the vectors. A different tag means the photos are looked at again, beside the old vectors,
-    which answer meanwhile with the model's text half (indexer._load_photo). That is only right while a re-pin
-    changes the vision file alone: a re-pin that changes the text side too sets "vectors_text": True on the entry,
-    and the old vectors of that id are then not asked at all (the new set answers as it is built)."""
+    file that alters the vectors. A different tag means the photos are looked at again, beside the old vectors
+    (indexer._load_photo): their rows and tag stay until the new set covers every photo and the two swap in one
+    transaction. Meanwhile the old ones answer with the model's text half, which is only right while the re-pins
+    since they were made changed vision files alone: a re-pin that changes the text side too sets
+    "text_changed_at": <its "vectors" number> (old_vectors_askable), and older vectors are then kept but not asked."""
     m = get(mid) or {}
     return f"{mid}#{m['vectors']}" if m.get("vectors") else mid
+
+
+def _tag_number(tag):
+    try:
+        return int(tag.split("#", 1)[1]) if "#" in tag else 0
+    except ValueError:
+        return 0
+
+
+def old_vectors_askable(old_tag, mid):
+    """True when photo vectors stored under old_tag can answer during a rebuild to mid's vectors: their model is a
+    photo model on this PC, and (same model) no re-pin between them changed its text half, i.e. not
+    old #n < text_changed_at <= mid's "vectors"."""
+    old = old_tag.split("#", 1)[0]
+    spec = get(old) or {}
+    if spec.get("feature") != "photo" or not ready(old):
+        return False
+    if old != mid:
+        return True
+    at = spec.get("text_changed_at")
+    return not (at and _tag_number(old_tag) < at <= (spec.get("vectors") or 0))
 
 
 def ids(feature=None):

@@ -1103,7 +1103,10 @@ class Indexer:
         models.vector_tag); SigLIP and SigLIP 2 vectors, or a re-pinned file's and the old file's, are never
         compared. Another identity is built beside the old vectors (pvecs_next, meta pvec_next_model), which keep
         answering with their own model until the new set covers every photo; then they swap in one transaction
-        (_finish_photo_rebuild). 1.0.0 dropped them at once instead: photo search was near empty for an hour+."""
+        (_finish_photo_rebuild). 1.0.0 dropped them at once instead: photo search was near empty for an hour+.
+        When nothing can ask the old vectors (their model isn't on this PC, or a re-pin changed the text half:
+        models.old_vectors_askable), their rows and tag still stay until that swap; only search leaves them out, and
+        the partial new set is the one photo channel meanwhile. A partial set is never swapped in."""
         pid = models.selected(self.settings, "photo")
         if not pid or not models.ready(pid):
             if self.settings.get("photo_meaning"):
@@ -1114,30 +1117,21 @@ class Indexer:
                 "SELECT 1 FROM pvecs LIMIT 1") else "")
             tag = models.vector_tag(pid)           # the id, plus "#n" when the catalog re-pinned a vision file
             building = self.store.meta("pvec_next_model") or ""
-            if had and had != tag:
+            if had and had != tag and (building == tag or self.store.one("SELECT 1 FROM pvecs LIMIT 1")):
                 old = had.split("#")[0]
-                spec_old = models.get(old) or {}
-                # a re-pin that changed the text half too ("vectors_text"): the text file on disk now isn't the one
-                # the old vectors were asked with, so nothing can ask them (treated as an old model gone)
-                askable = not (old == pid and spec_old.get("vectors_text"))
-                if spec_old.get("feature") == "photo" and models.ready(old) and askable and \
-                        self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"):
-                    if building != tag:
-                        self.store.drop_next_photo_vectors()     # another rebuild was half done: start over
-                        self.store.set_meta("pvec_next_model", tag)
-                        log(f"photo model is now {tag}: the photos are looked at again beside the {had} vectors, "
-                            "which answer until then")
-                    self._use_photo_model(old, next=pid)
-                    log(f"photo meaning on with {old} ({self.pindex.n} photos ready); rebuilding with {pid} "
-                        f"({self.pindex_next.n} done)")
-                    return
-                # nothing can ask the old vectors (their model is gone, or there are none): the new identity
-                # takes over now, with whatever of it was already built
-                if building == tag:
-                    self.store.swap_photo_vectors(tag)
-                else:
-                    self.store.drop_photo_vectors()
-                log(f"photo model is now {tag}: the photos are looked at again")
+                # the old vectors answer only with their own model's text half, verified on this PC
+                ask_old = bool(models.old_vectors_askable(had, pid)
+                               and self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"))
+                if building != tag:
+                    self.store.drop_next_photo_vectors()     # another rebuild was half done: start over
+                    self.store.set_meta("pvec_next_model", tag)
+                    log(f"photo model is now {tag}: the photos are looked at again beside the {had} vectors"
+                        + (", which answer until then" if ask_old else " (kept until then; they can't be asked)"))
+                self._use_photo_model(old if ask_old else pid, next=pid, ask_old=ask_old)
+                log(f"photo meaning on with {self.photo_model} ({self.pindex.n} photos ready); rebuilding with "
+                    f"{pid} ({self.pindex_next.n} done)")
+                return
+            # else nothing was kept or built for another identity: this one is used at once
             if self.store.meta("pvec_next_model"):
                 self.store.drop_next_photo_vectors()     # switched back to the searched identity
                 log(f"photo vectors of {building} aren't needed any more")
@@ -1157,14 +1151,17 @@ class Indexer:
         spec, d = models.get(pid), models.model_dir(pid)
         return embed.Lazy(lambda: photo.TextEncoder(d, style=spec.get("style", "siglip")), "photo text", model_id=pid)
 
-    def _use_photo_model(self, pid, next=None):
+    def _use_photo_model(self, pid, next=None, ask_old=True):
         """Search photos with `pid` (its question encoder and the pvecs made with it); next: the model whose
-        vectors are being built beside them (pvecs_next), searched in its own channel."""
+        vectors are being built beside them (pvecs_next), searched in its own channel. ask_old=False: nothing can
+        ask the pvecs rows (kept on disk until the swap), so pindex stays empty and only the new set answers."""
         spec = models.get(pid)
         self.photo_model = pid
         self.photo_text = self._photo_encoder(pid)
         self.pindex.reset(spec["dim"], pid)
-        self.pindex.load(self.store)
+        if ask_old:
+            self.pindex.load(self.store)
+        self.photo_old_answers = ask_old
         self.photo_model_next = next
         if next is None:
             self.photo_text_next = None
@@ -1190,14 +1187,17 @@ class Indexer:
         # isn't searched: api._photo_next), then model, encoder and index one by one. A search in between pairs at
         # worst the new encoder with the old index (or the other way round): different model ids are refused by
         # search._photo_hits; the same id (a re-pin) shares one text half, which is only kept when the re-pin left
-        # the text side alone ("vectors_text"), so either pairing asks vectors with the encoder they belong to.
+        # the text side alone (models.old_vectors_askable; otherwise pindex is empty), so either pairing asks
+        # vectors with the encoder they belong to.
         self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)
         self.photo_model_next, self.photo_text_next = None, None
         self.photo_model, self.photo_text, self.pindex = pid, text, idx
+        self.photo_old_answers = True
         self._note(f"Photo search now uses {models.get(pid)['name']}")
 
     _photos_logged = False
     photo_model_next = photo_text_next = None      # (set in __init__; also for stand-ins made without it)
+    photo_old_answers = True                       # False: a rebuild whose old vectors can't be asked
 
     def _photo_vectors(self):
         """What's in each photo, made in one separate low-priority process (photos are decoded there)."""

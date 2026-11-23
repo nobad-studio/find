@@ -193,9 +193,11 @@ class Api:
                 total, todo = self._totals[2]["photos"]
                 done = max(0, total - todo)
                 name = (models.get(nxt) or {}).get("short") or (models.get(nxt) or {}).get("name") or nxt
+                until = ("the old results answer until then" if getattr(self._indexer, "photo_old_answers", True)
+                         else "until then only those photos can be found by what is in them")
                 out.append({"model": "photo", "state": "analyzing", "id": nxt, "size_mb": mb, "done": done,
                             "total": total, "text": f"Looking at your photos again with {name}: {done:,} of "
-                                                    f"{total:,}; the old results answer until then"})
+                                                    f"{total:,}; {until}"})
             else:
                 total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
                 where = asks.get("where")
