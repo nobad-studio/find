@@ -11,6 +11,7 @@ import '../../../app/theme/colors.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../app/theme/typography.dart';
 import '../../../engine/models/format.dart';
+import '../../../engine/models/graphics.dart';
 import '../../../engine/models/settings.dart';
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
@@ -198,12 +199,21 @@ const _names = {
 
 String _name(Object? v) => v is String ? (_names[v] ?? v) : '${v ?? ''}';
 
+/// What NOBAD Find uses instead of a choice this PC doesn't have: auto's pick, in a sentence.
+String _uses(Object? auto) => switch (auto) {
+  null || 'cpu' || 'off' => 'the processor',
+  _ => _name(auto),
+};
+
 /// The row's help, then "Auto now: X. Why." and its note (spec 8b rule 5): what the user is overriding.
 class _AutoNow extends StatelessWidget {
-  const _AutoNow(this.help, this.row, {this.unit = ''});
+  const _AutoNow(this.help, this.row, {this.unit = '', this.gone = ''});
   final String help;
   final PerformanceRow? row;
   final String unit;
+
+  /// "Not on this PC now: ..." for a choice this PC no longer has (it replaces the engine's note on it).
+  final String gone;
 
   @override
   Widget build(BuildContext context) {
@@ -217,7 +227,10 @@ class _AutoNow extends StatelessWidget {
         children: [
           if (help.isNotEmpty) Text(help, style: style),
           if (r != null && r.auto != null) Text('Auto now: ${_name(r.auto)}$unit. ${r.why}', style: style),
-          if (r != null && r.note.isNotEmpty) Text(r.note, style: NbType.text(NbSize.small, c.orange, height: 1.4)),
+          if (gone.isNotEmpty)
+            Text(gone, style: NbType.text(NbSize.small, c.orange, height: 1.4))
+          else if (r != null && r.note.isNotEmpty)
+            Text(r.note, style: NbType.text(NbSize.small, c.orange, height: 1.4)),
         ],
       ),
     );
@@ -260,10 +273,25 @@ class WorkersSetting extends StatelessWidget {
 
 /// One choice that beats auto (spec 8b): only the values the engine offers on this PC, and what auto would pick.
 class _OverrideChoice extends StatelessWidget {
-  const _OverrideChoice(this.k, this.label, [this.help = '']);
+  const _OverrideChoice(
+    this.k,
+    this.label, [
+    this.help = '',
+    this.graphics,
+    this.installed = const [],
+    this.notHere = false,
+  ]);
   final String k;
   final String label;
   final String help;
+
+  /// This PC's graphics (null: not known, the engine's options stand) and the backends installed for this
+  /// choice's family: a graphics backend is offered only when the PC has it (task D2).
+  final Graphics? graphics;
+  final List<String> installed;
+
+  /// The row is about hardware this PC doesn't have (shown only because the user's choice is set).
+  final bool notHere;
 
   @override
   Widget build(BuildContext context) =>
@@ -273,12 +301,21 @@ class _OverrideChoice extends StatelessWidget {
     final s = AppScope.of(context).settings;
     final row = s.performance?.rows[k];
     final value = s.settings.text(k);
-    final options = [...?row?.options];
+    final g = graphics;
+    final options = [
+      for (final o in row?.options ?? const <String>[])
+        if (g == null || g.offers(o, installed)) o,
+    ];
     if (options.isEmpty) options.add('auto');
-    if (!options.contains(value)) options.add(value); // a forced choice not available now: its note says so
+    // a choice the user made is never hidden: one this PC doesn't have now says what is used instead
+    final here = options.contains(value);
+    if (!here) options.add(value);
+    final gone = (!here || notHere) && value != 'auto'
+        ? 'Not on this PC now: NOBAD Find uses ${_uses(row?.auto)}.'
+        : '';
     return SettingRow(
       label: label,
-      helpWidget: _AutoNow(help, row),
+      helpWidget: _AutoNow(help, row, gone: gone),
       control: NbSelect(
         label: label,
         value: value,
@@ -296,40 +333,78 @@ class OverridesGroup extends StatelessWidget {
 
   static const reserveLabel = 'Graphics memory left free (MB)';
 
+  /// The one plain line on built-in graphics or none (task D2).
+  static const graphicsLineKey = ValueKey('graphics-line');
+  static String integratedLine(String name) =>
+      "Built-in graphics ($name): it shares your PC's memory, so NOBAD Find counts its use as memory.";
+  static const noneLine = 'No graphics card: everything runs on the processor.';
+
   @override
   Widget build(BuildContext context) =>
       ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
 
   Widget _build(BuildContext context) {
     final s = AppScope.of(context).settings;
+    final c = NbColors.of(context);
+    final hw = s.hardware;
+    // null: the engine didn't say (an older one): every row as before
+    final g = hw == null ? null : graphicsOf(hw);
+    final kind = g?.kind ?? GraphicsKind.discrete;
+    final onnx = hw?.onnxBackends ?? const <String>[];
+    final llama = hw?.llamacppBackends ?? const <String>[];
+    // a graphics row hidden on this PC stays while the user's own choice is set (a choice made is never hidden)
+    bool shows(String k, {required bool here}) => here || s.settings.text(k) != 'auto';
+    final builtIn = kind == GraphicsKind.integrated;
+    final line = switch (kind) {
+      GraphicsKind.integrated => integratedLine(g!.title),
+      GraphicsKind.none => noneLine,
+      GraphicsKind.discrete => '',
+    };
     return SettingsGroup(
       'Your choices',
       icon: NbGlyph.sliders,
       rows: [
-        const _OverrideChoice(
-          'gpu_background',
-          'Graphics card for background work',
-          'On beats the goal. Off also beats a graphics backend chosen below. Battery saver, a creative app in front '
-          'and the graphics memory left free still decide.',
-        ),
-        const _OverrideChoice('backend_photos', 'Photos run on'),
-        const _OverrideChoice('backend_text', 'Meaning for documents runs on'),
-        const _OverrideChoice('backend_talk', 'Talk about a photo runs on'),
+        if (line.isNotEmpty)
+          SettingRow(
+            key: graphicsLineKey,
+            label: '',
+            helpWidget: Text(line, style: NbType.text(13, c.muted, height: 1.4)),
+          ),
+        if (shows('gpu_background', here: kind != GraphicsKind.none))
+          _OverrideChoice(
+            'gpu_background',
+            builtIn ? 'Built-in graphics for background work' : 'Graphics card for background work',
+            'On beats the goal. Off also beats a graphics backend chosen below. Battery saver, a creative app in front '
+                'and the graphics memory left free still decide.',
+            g,
+            const [],
+            kind == GraphicsKind.none && s.settings.text('gpu_background') == 'on',
+          ),
+        _OverrideChoice('backend_photos', 'Photos run on', '', g, onnx),
+        _OverrideChoice('backend_text', 'Meaning for documents runs on', '', g, onnx),
+        _OverrideChoice('backend_talk', 'Talk about a photo runs on', '', g, llama),
         const _OverrideChoice('variant_siglip2-base', 'SigLIP 2 build'),
-        const _OverrideChoice('profile_override_gpu', 'Plan the graphics card as'),
+        if (shows('profile_override_gpu', here: kind != GraphicsKind.none))
+          _OverrideChoice(
+            'profile_override_gpu',
+            builtIn ? 'Plan the built-in graphics as' : 'Plan the graphics card as',
+          ),
         const _OverrideChoice('profile_override_cpu', 'Plan the processor as'),
         const _OverrideChoice('profile_override_storage', 'Plan the storage as'),
         const _OverrideChoice('profile_override_memory', 'Plan the memory as'),
-        SettingRow(
-          label: reserveLabel,
-          helpWidget: _AutoNow('512 to 4096.', s.performance?.rows['gpu_reserve_min_mb'], unit: ' MB'),
-          control: NbField(
+        // a graphics card's own memory: only with a card, or while the user's own number is set
+        if (kind == GraphicsKind.discrete ||
+            s.settings.number('gpu_reserve_min_mb') != Settings.defaults['gpu_reserve_min_mb'])
+          SettingRow(
             label: reserveLabel,
-            number: true,
-            value: '${s.settings.number('gpu_reserve_min_mb')}',
-            onSubmit: (v) => s.set('gpu_reserve_min_mb', int.tryParse(v) ?? -1),
+            helpWidget: _AutoNow('512 to 4096.', s.performance?.rows['gpu_reserve_min_mb'], unit: ' MB'),
+            control: NbField(
+              label: reserveLabel,
+              number: true,
+              value: '${s.settings.number('gpu_reserve_min_mb')}',
+              onSubmit: (v) => s.set('gpu_reserve_min_mb', int.tryParse(v) ?? -1),
+            ),
           ),
-        ),
         SettingRow(
           label: 'Reset to safe defaults',
           help:

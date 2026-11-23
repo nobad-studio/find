@@ -130,6 +130,16 @@ class Demo {
         s.nav.openSettings(p);
         await _wait(800);
         await _shot('tour-settings-${p.name}-$theme.png');
+        // the long pages whose rows change with the PC's graphics (task D2): the rest of the page too, dark only
+        if (theme == 'dark' && (p == SettingsPage.performance || p == SettingsPage.models)) {
+          final pos = _pageScroll();
+          for (var i = 2; pos != null && pos.pixels < pos.maxScrollExtent && i <= 6; i++) {
+            pos.jumpTo((pos.pixels + pos.viewportDimension * .85).clamp(0, pos.maxScrollExtent));
+            await _wait(500);
+            await _shot('tour-settings-${p.name}-$theme-$i.png');
+          }
+          pos?.jumpTo(0);
+        }
       }
       final ctx = appNavigator.currentContext;
       if (ctx != null && ctx.mounted) {
@@ -142,6 +152,24 @@ class Demo {
     }
     s.nav.go(AppTab.search);
     recordTiming('tour-done');
+  }
+
+  /// The page's own scroll position: the window's tallest vertical scrollable.
+  static ScrollPosition? _pageScroll() {
+    ScrollPosition? best;
+    void visit(Element e) {
+      if (e is StatefulElement && e.state is ScrollableState) {
+        final p = (e.state as ScrollableState).position;
+        final bigger = best == null || p.maxScrollExtent > best!.maxScrollExtent;
+        if (p.axis == Axis.vertical && p.hasContentDimensions && bigger) {
+          best = p;
+        }
+      }
+      e.visitChildren(visit);
+    }
+
+    shotBoundary.currentContext?.visitChildElements(visit);
+    return best;
   }
 
   static Future<void> _shot(String name) async {

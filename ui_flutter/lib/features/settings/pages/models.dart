@@ -12,6 +12,7 @@ import '../../../app/theme/colors.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../app/theme/typography.dart';
 import '../../../engine/models/format.dart';
+import '../../../engine/models/graphics.dart';
 import '../../../engine/models/models_info.dart';
 import '../../../engine/models/settings.dart';
 import '../../../state/models_controller.dart';
@@ -194,7 +195,11 @@ class _PcAndTier extends StatelessWidget {
         if (m.capability != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: LiveTiles(m.capability!, models: info.models.length),
+            child: LiveTiles(
+              m.capability!,
+              models: info.models.length,
+              graphics: info.pc == null ? null : graphicsOf(info.pc!),
+            ),
           ),
         if (rec.isNotEmpty)
           SettingRow(
@@ -281,11 +286,32 @@ class _FeatureGroup extends StatelessWidget {
                 child: Text(label.toUpperCase(), style: NbType.data(12, c.dim, weight: FontWeight.w600)),
               ),
             ),
-          for (final x in models) _ModelRow(x, m),
+          for (final x in models)
+            if (modelOffered(x, m.info.pc)) _ModelRow(x, m),
         ],
       ],
     );
   }
+}
+
+/// Whether the page offers [x] on this PC: a graphics runtime (llama.cpp Vulkan) only when Windows lists a
+/// graphics adapter, unless it is already downloaded, downloading or in use (a choice made is never hidden).
+bool modelOffered(ModelInfo x, Hardware? pc) {
+  if (pc == null || x.feature != 'runtime' || !x.id.endsWith('-vulkan')) return true;
+  if (x.onDisk || x.state != ModelUseState.notDownloaded) return true;
+  return graphicsOf(pc).kind != GraphicsKind.none;
+}
+
+/// A talk model's measured graphics memory, as this PC has it: a card's own (video) memory, the shared memory
+/// built-in graphics borrow (it counts as memory), nothing without an adapter.
+String graphicsCost(double vramMb, Hardware? pc) {
+  final n = '${vramMb.round()} MB';
+  return switch (pc == null ? null : graphicsOf(pc).kind) {
+    null => '$n graphics memory',
+    GraphicsKind.discrete => '$n video memory',
+    GraphicsKind.integrated => '$n shared memory (counts as memory)',
+    GraphicsKind.none => '',
+  };
 }
 
 /// One model as a card: an avatar for what it does, its name and tags, one line on what it improves, the facts as
@@ -349,7 +375,8 @@ class _ModelRow extends StatelessWidget {
                 else if (x.sizeMb > 0)
                   NbFact(NbGlyph.download, '${x.sizeMb.round()} MB download'),
                 if (x.ramMb > 0) NbFact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
-                if (x.vramMb > 0) NbFact(NbGlyph.chip, '${x.vramMb.round()} MB graphics memory'),
+                if (x.vramMb > 0 && graphicsCost(x.vramMb, m.info.pc).isNotEmpty)
+                  NbFact(NbGlyph.chip, graphicsCost(x.vramMb, m.info.pc)),
                 if (x.runtime.isNotEmpty) NbFact(NbGlyph.gauge, 'Runs on ${m.info.byId(x.runtime)?.name ?? x.runtime}'),
                 if (x.licence.isNotEmpty) NbFact(NbGlyph.shield, x.licence),
                 if (x.languages.isNotEmpty) NbFact(NbGlyph.info, x.languageText),
@@ -695,9 +722,13 @@ class _LegacyModelRow extends StatelessWidget {
 /// "Your PC, now" (capability_state, 2026-11-21): free memory, commit, graphics memory and power right now, and how
 /// many models can run now. Live: the page asks again every few seconds. Unknown readings show a dash.
 class LiveTiles extends StatelessWidget {
-  const LiveTiles(this.cap, {super.key, required this.models});
+  const LiveTiles(this.cap, {super.key, required this.models, this.graphics});
   final CapabilityState cap;
   final int models;
+
+  /// This PC's graphics (null: not known): no graphics tile without an adapter; built-in graphics' memory is
+  /// shared, never called video memory.
+  final Graphics? graphics;
 
   static String mb(int? v) => v == null ? '–' : (v >= 1024 ? '${(v / 1024).toStringAsFixed(1)} GB' : '$v MB');
 
@@ -706,7 +737,8 @@ class LiveTiles extends StatelessWidget {
     final c = NbColors.of(context);
     final b = cap.budget;
     final runs = cap.canRun.values.where((v) => v).length;
-    final shared = b.gpuKind == 'shared';
+    final kind = graphics?.kind;
+    final shared = kind == GraphicsKind.integrated || (kind == null && b.gpuKind == 'shared');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -731,13 +763,16 @@ class LiveTiles extends StatelessWidget {
               value: b.commitPct == null ? '–' : '${b.commitPct!.round()}%',
               label: 'Of the memory Windows can promise programs',
             ),
-            StatTile(
-              icon: NbGlyph.graphics,
-              value: mb(b.gpuFreeMb),
-              label: b.gpuKind == null
-                  ? 'Graphics memory free'
-                  : (shared ? 'Graphics memory free (shared with the PC)' : 'Video memory free'),
-            ),
+            if (kind != GraphicsKind.none)
+              StatTile(
+                icon: NbGlyph.graphics,
+                value: mb(b.gpuFreeMb),
+                label: shared
+                    ? 'Graphics memory free (shared with the PC)'
+                    : (kind == GraphicsKind.discrete || b.gpuKind == 'dedicated'
+                          ? 'Video memory free'
+                          : 'Graphics memory free'),
+              ),
             StatTile(
               icon: NbGlyph.battery,
               value: b.batterySaver ? 'Battery saver' : (b.battery ? 'On battery' : 'Plugged in'),
@@ -766,6 +801,7 @@ class HardwareTiles extends StatelessWidget {
     final h = this.h;
     if (h == null) return Text('Not available here.', style: NbType.text(13, c.dim));
     final fast = [if (h.avx2) 'AVX2', if (h.avx512Vnni) 'AVX-512 VNNI'].join(' + ');
+    final g = graphicsOf(h);
     final drive = h.ssd == true
         ? 'SSD'
         : h.ssd == false
@@ -780,13 +816,7 @@ class HardwareTiles extends StatelessWidget {
           label: '${groupDigits(h.threads)} threads',
           icon: NbGlyph.processor,
         ),
-        StatTile(
-          icon: NbGlyph.graphics,
-          value: h.gpu.isEmpty ? 'None found' : h.gpu,
-          label: h.gpu.isEmpty
-              ? 'Graphics card'
-              : '${h.vramGb > 0 ? '${gb(h.vramGb)} video memory' : 'Graphics card'}${h.directml ? ', usable for models' : ''}',
-        ),
+        StatTile(icon: NbGlyph.graphics, value: g.title, label: g.detail[0].toUpperCase() + g.detail.substring(1)),
         StatTile(value: fast.isEmpty ? 'Standard' : fast, label: 'Processor speed-ups', icon: NbGlyph.bolt),
         StatTile(
           value: drive,

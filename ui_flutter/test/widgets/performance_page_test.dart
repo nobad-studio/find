@@ -73,8 +73,8 @@ void main() {
       find.text("Auto now: 15. 15 while you're away and 8 while you use the PC, from 16 threads."),
       findsOneWidget,
     );
-    // every override row says what auto would pick now
-    expect(find.textContaining('Auto now: '), findsNWidgets(11));
+    // every override row says what auto would pick now (built-in graphics: no graphics-memory reserve row)
+    expect(find.textContaining('Auto now: '), findsNWidgets(10));
   });
 
   testWidgets('Reset to safe defaults asks once, then resets the goal and the overrides', (tester) async {

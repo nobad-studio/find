@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' show MaterialApp, Tooltip;
 import 'package:nobad_find/app/scope.dart';
 import 'package:nobad_find/app/theme/tokens.dart';
+import 'package:nobad_find/engine/models/graphics.dart';
 import 'package:nobad_find/features/search/home_view.dart';
 import 'package:nobad_find/features/search/search_screen.dart';
 import 'package:nobad_find/features/settings/settings_parts.dart';
@@ -186,9 +187,34 @@ void main() {
     }
   });
 
-  for (final page in SettingsPage.values) {
-    testWidgets('Settings > ${page.label}: one width for every card, one column for every control', (tester) async {
-      await pumpApp(tester, FakeEngine(settings: seen), size: const Size(1180, 760));
+  for (final gpu in GraphicsKind.values) {
+    testWidgets('Welcome (${gpu.name} graphics): the Your PC tiles are even and have room', (tester) async {
+      await pumpApp(
+        tester,
+        FakeEngine(settings: const {'welcome_seen': false, 'bg_notice_seen': true}, gpu: gpu),
+        size: const Size(1180, 760),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(TileGrid), findsOneWidget);
+      gridsAreEven(tester, 'Welcome');
+      tilesHaveRoom(tester, 'Welcome');
+    });
+  }
+
+  // every page on the reference PC (built-in graphics); the pages that change with the graphics (task D2) also on
+  // a PC with a graphics card and on one without any adapter
+  for (final (page, gpu) in [
+    for (final page in SettingsPage.values) (page, GraphicsKind.integrated),
+    for (final page in [SettingsPage.models, SettingsPage.performance])
+      for (final gpu in [GraphicsKind.discrete, GraphicsKind.none]) (page, gpu),
+  ]) {
+    final on = gpu == GraphicsKind.integrated ? '' : ' (${gpu.name} graphics)';
+    testWidgets('Settings > ${page.label}$on: one width for every card, one column for every control', (tester) async {
+      await pumpApp(
+        tester,
+        FakeEngine(settings: seen, gpu: gpu),
+        size: const Size(1180, 760),
+      );
       await tester.pumpAndSettle();
       AppScope.of(tester.element(find.byType(Text).first)).nav.openSettings(page);
       await tester.pumpAndSettle();

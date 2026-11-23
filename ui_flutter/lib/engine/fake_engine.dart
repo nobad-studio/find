@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 
 import 'engine_api.dart';
 import 'events.dart';
+import 'models/graphics.dart';
 import 'models/json.dart';
 import 'models/models_info.dart';
 import 'models/scope_info.dart';
@@ -28,6 +29,7 @@ class FakeEngine implements EngineApi {
     this.live = false,
     this.suggestions = false,
     DateTime Function()? clock,
+    this.gpu = GraphicsKind.integrated,
   }) : files = files ?? sampleFiles(),
        _clock = clock ?? (() => DateTime(2026, 11, 19, 14, 30)) {
     _link.value = link;
@@ -48,6 +50,12 @@ class FakeEngine implements EngineApi {
 
   final List<FileResult> files;
   final bool live;
+
+  /// The made-up PC's graphics (NOBAD_FIND_FAKE_GPU in the demo): Iris Xe only by default, like the reference PC.
+  final GraphicsKind gpu;
+
+  /// `hardware` for that PC (tests may replace it, e.g. with a backend that is gone).
+  late Hardware pc = fakeHardware(gpu);
 
   /// Answer `suggest` (0.8.5). Off: like an engine without autocomplete (the older tests count rows and texts).
   final bool suggestions;
@@ -465,9 +473,28 @@ class FakeEngine implements EngineApi {
     const unused = 'Not used yet: the model suggestions that plan by these classes come in a later update.';
     PerformanceRow row(String k, Object? auto, String why, [List<String> options = const [], String note = '']) =>
         PerformanceRow(value: _settings[k], auto: auto, why: why, options: options, note: note);
+    // like performance.state: the backend options are the ones installed on this PC
+    final onnx = pc.onnxBackends.isEmpty ? const ['cpu'] : pc.onnxBackends;
+    final llama = pc.llamacppBackends.isEmpty ? const ['cpu'] : pc.llamacppBackends;
+    final dml = onnx.contains('directml');
+    final vulkan = llama.contains('vulkan');
+    String gone(String k, List<String> avail, String instead) {
+      final v = _settings[k];
+      const names = {'directml': 'DirectML', 'vulkan': 'Vulkan', 'cuda': 'CUDA'};
+      return v is String && v != 'auto' && !avail.contains(v)
+          ? "${names[v] ?? v} isn't available on this PC now, so $instead."
+          : '';
+    }
+
     return PerformanceState(goal, {
       'gpu_background': goal == 'quiet'
           ? row('gpu_background', 'off', 'The goal is Quiet, which keeps background work off the graphics card.', [
+              'auto',
+              'on',
+              'off',
+            ])
+          : !dml
+          ? row('gpu_background', 'off', 'No graphics backend for background work is installed on this PC.', [
               'auto',
               'on',
               'off',
@@ -485,15 +512,22 @@ class FakeEngine implements EngineApi {
       ]),
       'backend_text': row(
         'backend_text',
-        goal == 'quiet' ? 'cpu' : 'directml',
-        'Meaning for documents uses DirectML at Full and the processor otherwise.',
-        ['auto', 'cpu', 'directml'],
+        goal == 'quiet' || !dml ? 'cpu' : 'directml',
+        dml
+            ? 'Meaning for documents uses DirectML at Full and the processor otherwise.'
+            : 'Meaning for documents runs on the processor: no graphics backend is installed on this PC.',
+        ['auto', ...onnx],
+        gone('backend_text', onnx, 'meaning runs on the processor'),
       ),
-      'backend_talk': row('backend_talk', 'vulkan', 'Talk about a photo uses the Vulkan runtime installed here.', [
-        'auto',
-        'cpu',
-        'vulkan',
-      ]),
+      'backend_talk': row(
+        'backend_talk',
+        vulkan ? 'vulkan' : 'cpu',
+        vulkan
+            ? 'Talk about a photo uses the Vulkan runtime installed here.'
+            : 'Talk about a photo uses the processor runtime.',
+        ['auto', ...llama],
+        gone('backend_talk', llama, 'talk about a photo uses the processor'),
+      ),
       'variant_siglip2-base': row(
         'variant_siglip2-base',
         fast ? 'fp32-vision' : 'fp16-vision',
@@ -511,8 +545,16 @@ class FakeEngine implements EngineApi {
       ),
       'profile_override_gpu': row(
         'profile_override_gpu',
-        'efficiency',
-        'Background work: a built-in GPU.',
+        switch (gpu) {
+          GraphicsKind.discrete => 'performance',
+          GraphicsKind.integrated => 'efficiency',
+          GraphicsKind.none => 'compatibility',
+        },
+        switch (gpu) {
+          GraphicsKind.discrete => 'Background work: a graphics card with 6 GB of its own memory.',
+          GraphicsKind.integrated => 'Background work: a built-in GPU.',
+          GraphicsKind.none => 'Background work: no graphics adapter.',
+        },
         classes,
         unused,
       ),
@@ -546,22 +588,7 @@ class FakeEngine implements EngineApi {
   });
 
   @override
-  Future<Hardware?> hardware() => _answer(
-    'hardware',
-    () => const Hardware(
-      ramGb: 15.7,
-      cores: 12,
-      threads: 16,
-      avx2: true,
-      gpu: 'Intel(R) Iris(R) Xe Graphics',
-      vramGb: 0.1,
-      diskFreeGb: 211.4,
-      ssd: true,
-      gpus: [GpuInfo(vendor: 'intel', name: 'Intel(R) Iris(R) Xe Graphics', dedicatedMb: 128, sharedMb: 8038, integrated: true)],
-      onnxBackends: ['cpu'],
-      llamacppBackends: ['vulkan', 'cpu'],
-    ),
-  );
+  Future<Hardware?> hardware() => _answer('hardware', () => pc);
 
   // ---------- settings ----------
   @override
@@ -717,7 +744,7 @@ class FakeEngine implements EngineApi {
 
   /// The `channel` of every search, in order.
   final channels = <String>[];
-  late ModelsInfo modelsInfo = demoModels();
+  late ModelsInfo modelsInfo = demoModels(gpu: gpu);
 
   /// `status_full.limits` (2026-11-21); null by default, as from an older engine (tests set it).
   OpLimits? limits;
@@ -736,7 +763,7 @@ class FakeEngine implements EngineApi {
 
   /// The live capability (tests and the demo): 2.2 GB free on the 15.7 GB demo PC, so the bigger models are "not
   /// now", as the contract transcript shows.
-  late CapabilityState capability = demoCapability();
+  late CapabilityState capability = demoCapability(gpu: gpu);
 
   @override
   Future<CapabilityState> capabilityState() => _new('capability_state', () => capability);
@@ -746,7 +773,7 @@ class FakeEngine implements EngineApi {
   Future<ActionResult> modelLanguage(String focus) => _new('model_language', () {
     final f = LanguageFocus.parse(focus);
     if (f == null) return const ActionResult(false, 'Choose English, many languages or Hindi.');
-    modelsInfo = demoModels(focus: f, from: modelsInfo);
+    modelsInfo = demoModels(focus: f, from: modelsInfo, gpu: gpu);
     emit(ModelsEvent(modelsInfo));
     return _ok;
   });
@@ -1558,7 +1585,13 @@ List<FileResult> manyFiles(int n) => [
 /// The engine's 0.8 catalogue (nobadfind/models.py) as a made-up 6-core laptop would see it: Balanced is
 /// recommended, the Best models need more than it has. [focus] picks the recommended text model like the engine's
 /// TEXT_CHOICE; [from] keeps the download and use states of an earlier catalogue.
-ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsInfo? from}) {
+ModelsInfo demoModels({
+  LanguageFocus focus = LanguageFocus.multilingual,
+  ModelsInfo? from,
+  GraphicsKind gpu = GraphicsKind.integrated,
+}) {
+  // like models.talk_runtime: the graphics runtime when Windows lists an adapter, else the processor one
+  final talkRuntime = gpu == GraphicsKind.none ? 'llama-cpu' : 'llama-vulkan';
   const best = 'Needs 16 GB of memory and 8 cores (or a graphics card with 4 GB for DirectML)';
   final text = focus == LanguageFocus.english ? 'bge-small-en-v1.5' : 'multilingual-e5-small';
   const hiEn = ['hi', 'en', 'multilingual'];
@@ -1680,7 +1713,7 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       state: ModelUseState.active,
     ),
     // 1.1: talk about a photo and the llama.cpp runtimes (nobadfind/models.py, measured memory)
-    const ModelInfo(
+    ModelInfo(
       id: 'smolvlm2-500m',
       feature: 'talk',
       name: 'SmolVLM2 500M',
@@ -1690,14 +1723,14 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       sizeMb: 520,
       ramMb: 1031,
       vramMb: 665,
-      runtime: 'llama-vulkan',
+      runtime: talkRuntime,
       speedNote:
           "an answer in about 1-3 s on the reference PC's graphics (Iris Xe), 3-11 s on its processor "
           '(5-15 s while NOBAD Find runs very light)',
       languages: ['en'],
       improves: 'Answers questions about a photo, on this PC',
     ),
-    const ModelInfo(
+    ModelInfo(
       id: 'qwen3vl-2b',
       feature: 'talk',
       name: 'Qwen3-VL 2B',
@@ -1707,12 +1740,15 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       sizeMb: 1481,
       ramMb: 2483,
       vramMb: 2062,
-      runtime: 'llama-vulkan',
+      runtime: talkRuntime,
       languages: ['en', 'multilingual'],
       improves: 'Deeper answers about a photo, on this PC',
-      capable: false,
+      // the hybrid laptop's 6 GB card can run it
+      capable: gpu == GraphicsKind.discrete,
       // talk models never use DirectML: their own check (models._talk_capable)
-      capableReason: 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory',
+      capableReason: gpu == GraphicsKind.discrete
+          ? ''
+          : 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory',
     ),
     const ModelInfo(
       id: 'llama-cpu',
@@ -1737,19 +1773,7 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
   ];
   final was = {for (final m in from?.models ?? const <ModelInfo>[]) m.id: m.state};
   return ModelsInfo(
-    pc: const Hardware(
-      ramGb: 15.7,
-      cores: 6,
-      threads: 12,
-      avx2: true,
-      gpu: 'Intel(R) Iris(R) Xe Graphics',
-      vramGb: 0.1,
-      diskFreeGb: 211.4,
-      ssd: true,
-      gpus: [GpuInfo(vendor: 'intel', name: 'Intel(R) Iris(R) Xe Graphics', dedicatedMb: 128, sharedMb: 8038, integrated: true)],
-      onnxBackends: ['cpu'],
-      llamacppBackends: ['vulkan', 'cpu'],
-    ),
+    pc: from?.pc ?? fakeHardware(gpu, cores: 6, threads: 12),
     tierRecommended: 'balanced',
     tierCurrent: from?.tierCurrent ?? 'light',
     languageFocus: focus,
@@ -1761,16 +1785,77 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
 }
 
 /// The demo PC right now: 2.2 GB of its 15.7 GB free (contract transcript 06).
-CapabilityState demoCapability() {
+CapabilityState demoCapability({GraphicsKind gpu = GraphicsKind.integrated}) {
   const fits = 'Fits now: needs about 56 MB, 2.1 GB free';
   const notNow = 'Not now: it needs about 544 MB plus 392 MB to spare, and 2.1 GB of memory is free (NOBAD Find '
       'leaves 1.5 GB to Windows)';
-  return const CapabilityState(
-    canRun: {'minilm-l6-v2': true, 'gte-small': true, 'multilingual-e5-small': false, 'multilingual-e5-base': false,
-      'siglip-base': true, 'siglip2-base': false, 'windows-ocr': true},
-    why: {'minilm-l6-v2': fits, 'gte-small': fits, 'multilingual-e5-small': notNow, 'multilingual-e5-base': notNow,
-      'siglip-base': fits, 'siglip2-base': notNow, 'windows-ocr': 'Built into Windows'},
-    budget: CapabilityBudget(live: true, installedMb: 16076, freeMb: 2200, reserveMb: 1500, usableMb: 700,
-        commitPct: 62, commitFreeMb: 9000, gpuKind: 'shared', gpuFreeMb: 7300, gpuBudgetMb: 8000, cpu: 20, gpu: 3),
+  return CapabilityState(
+    canRun: const {'minilm-l6-v2': true, 'gte-small': true, 'multilingual-e5-small': false,
+      'multilingual-e5-base': false, 'siglip-base': true, 'siglip2-base': false, 'windows-ocr': true},
+    why: const {'minilm-l6-v2': fits, 'gte-small': fits, 'multilingual-e5-small': notNow,
+      'multilingual-e5-base': notNow, 'siglip-base': fits, 'siglip2-base': notNow, 'windows-ocr': 'Built into Windows'},
+    budget: switch (gpu) {
+      GraphicsKind.discrete => const CapabilityBudget(live: true, installedMb: 16076, freeMb: 2200, reserveMb: 1500,
+          usableMb: 700, commitPct: 62, commitFreeMb: 9000, gpuKind: 'dedicated', gpuFreeMb: 5400, gpuBudgetMb: 6144,
+          cpu: 20, gpu: 3),
+      GraphicsKind.integrated => const CapabilityBudget(live: true, installedMb: 16076, freeMb: 2200, reserveMb: 1500,
+          usableMb: 700, commitPct: 62, commitFreeMb: 9000, gpuKind: 'shared', gpuFreeMb: 7300, gpuBudgetMb: 8000,
+          cpu: 20, gpu: 3),
+      GraphicsKind.none => const CapabilityBudget(live: true, installedMb: 16076, freeMb: 2200, reserveMb: 1500,
+          usableMb: 700, commitPct: 62, commitFreeMb: 9000, cpu: 20),
+    },
   );
+}
+
+/// The made-up PC per graphics kind: a hybrid laptop (Iris Xe and an RTX 3060 with 6 GB of its own), Iris Xe only
+/// (the reference PC), or no adapter at all; the backends are what such a PC would have installed.
+Hardware fakeHardware(GraphicsKind gpu, {int cores = 12, int threads = 16}) {
+  const iris = GpuInfo(
+    vendor: 'intel',
+    name: 'Intel(R) Iris(R) Xe Graphics',
+    dedicatedMb: 128,
+    sharedMb: 8038,
+    integrated: true,
+  );
+  const rtx = GpuInfo(vendor: 'nvidia', name: 'NVIDIA GeForce RTX 3060 Laptop GPU', dedicatedMb: 6144, sharedMb: 8038);
+  return switch (gpu) {
+    GraphicsKind.discrete => Hardware(
+      ramGb: 15.7,
+      cores: cores,
+      threads: threads,
+      avx2: true,
+      gpu: rtx.name,
+      vramGb: 6,
+      directml: true,
+      diskFreeGb: 211.4,
+      ssd: true,
+      gpus: const [iris, rtx],
+      onnxBackends: const ['cpu', 'directml'],
+      llamacppBackends: const ['vulkan', 'cpu'],
+    ),
+    GraphicsKind.integrated => Hardware(
+      ramGb: 15.7,
+      cores: cores,
+      threads: threads,
+      avx2: true,
+      gpu: iris.name,
+      vramGb: 0.1,
+      directml: true,
+      diskFreeGb: 211.4,
+      ssd: true,
+      gpus: const [iris],
+      onnxBackends: const ['cpu', 'directml'],
+      llamacppBackends: const ['vulkan', 'cpu'],
+    ),
+    GraphicsKind.none => Hardware(
+      ramGb: 15.7,
+      cores: cores,
+      threads: threads,
+      avx2: true,
+      diskFreeGb: 211.4,
+      ssd: true,
+      onnxBackends: const ['cpu'],
+      llamacppBackends: const ['cpu'],
+    ),
+  };
 }
