@@ -1,6 +1,6 @@
 # NOBAD Find changelog
 
-## 1.1.1 · (in development)
+## 1.1.1 · 2026-11-23
 
 ### Fixed
 - **The Index, Models and What to index pages open at once on a big index,** and searching no longer stops with
