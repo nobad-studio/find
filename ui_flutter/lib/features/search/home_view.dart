@@ -194,7 +194,7 @@ NbGlyph tileGlyph(SearchFilters f) => switch (f) {
 };
 
 /// A row of starting tiles (Home's categories, a category's narrower searches): every tile the same width, the
-/// row spanning the search box's width (two rows of equal tiles when the window is narrow).
+/// row spanning the search box's width (full rows of equal tiles when the window is narrow).
 class CategoryTiles extends StatelessWidget {
   const CategoryTiles({super.key, required this.tiles, required this.onTile, this.current});
   final List<CategoryTile> tiles;
@@ -208,7 +208,12 @@ class CategoryTiles extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
-      final cols = ((box.maxWidth + _gap) / (_min + _gap)).floor().clamp(1, tiles.isEmpty ? 1 : tiles.length);
+      // the most columns that fit and divide the tiles evenly (6, 3, 2 or 1 for six), so every row spans the box
+      final fit = ((box.maxWidth + _gap) / (_min + _gap)).floor().clamp(1, tiles.isEmpty ? 1 : tiles.length);
+      var cols = fit;
+      while (cols > 1 && tiles.length % cols != 0) {
+        cols--;
+      }
       final w = (box.maxWidth - _gap * (cols - 1)) / cols;
       return Wrap(
         spacing: _gap,

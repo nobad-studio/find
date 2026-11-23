@@ -60,7 +60,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Expanded(
             child: SmoothScroll(builder: (sc) => SingleChildScrollView(controller: sc, 
               key: PageStorageKey(s.nav.page),
-              padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x6),
+              // 10 px on top: room for the first group's icon tile, which sits beside its title line
+              padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 10, NbSpace.gutter, NbSpace.x6),
               // top-left at a reading width
               child: Align(
                 alignment: Alignment.topLeft,

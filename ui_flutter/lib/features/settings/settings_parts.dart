@@ -13,6 +13,7 @@ import '../../app/theme/typography.dart';
 import '../../engine/models/safe_text.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/glass.dart';
+import '../../widgets/panels.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
@@ -37,16 +38,23 @@ class SettingsGroup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 8),
+            padding: const EdgeInsets.only(left: 2, bottom: 6),
+            // the original header line; the icon tile sits beside the title without adding height (it overhangs
+            // the space above, lifted 2 px so it clears the card's rim)
             child: Row(
               children: [
-                GlyphTile(icon),
+                SizedBox(
+                  width: GlyphTile.size,
+                  height: 0,
+                  child: OverflowBox(
+                    minHeight: GlyphTile.size,
+                    maxHeight: GlyphTile.size,
+                    child: Transform.translate(offset: const Offset(0, -2), child: GlyphTile(icon)),
+                  ),
+                ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Text(title, style: NbType.text(13.5, c.text, weight: FontWeight.w600, height: 1.3)),
-                  ),
+                  child: Semantics(header: true, child: Text(title, style: sectionStyle(c))),
                 ),
               ],
             ),

@@ -172,22 +172,16 @@ class StatTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // shown in full (they wrap): the icon tile beside them takes some of the width
         Text(
           value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
           // a number reads as data; a long name (a graphics card) reads better as text
           style: value.length > 12
               ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
               : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
         ),
         const SizedBox(height: 2),
-        Text(
-          label,
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          style: NbType.text(NbSize.small, c.dim, height: 1.35),
-        ),
+        Text(label, style: NbType.text(NbSize.small, c.dim, height: 1.35)),
       ],
     );
     return NbPanel(

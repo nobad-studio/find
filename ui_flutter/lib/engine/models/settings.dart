@@ -88,8 +88,8 @@ class Settings {
   bool get dark => true;
   bool get glass => flag('glass');
 
-  /// The window's look: Minimal ice (Acrylic, cold frost) or Classic (Mica, warm glows; the default, and what an
-  /// engine that doesn't know the setting gives).
+  /// The window's look: Minimal ice (cold frost) or Classic (the original colours and warm glows; the default, and
+  /// what an engine that doesn't know the setting gives). Both are see-through over Windows' Acrylic.
   bool get ice => text('theme_style') == 'ice';
 
   Settings merged(Map<String, Object?> changes) => Settings({...values, ...changes});

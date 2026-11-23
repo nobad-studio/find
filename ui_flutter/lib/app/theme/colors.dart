@@ -58,7 +58,7 @@ class NbColors extends ThemeExtension<NbColors> {
   final Color shadow;
 
   /// Windows draws its Acrylic backdrop behind the window (Mica if it refuses Acrylic): the canvas is see-through
-  /// and every surface is frosted glass, macOS style.
+  /// and the surfaces over it are translucent, the desktop frosted behind them.
   final bool glass;
 
   /// The Minimal ice style was chosen: cool frost and monochrome icon tiles. Classic (false) keeps the original

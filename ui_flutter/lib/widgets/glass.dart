@@ -1,8 +1,8 @@
 /// Frosted spatial glass: the backdrop and the three layers that float over it.
 ///
 /// - [Backdrop]: the window's deep (or pale) base with soft glows, painted once into its own layer. Over Windows'
-///   system backdrop (Mica for Classic, Acrylic for Minimal ice; composited by Windows, free for this process) it
-///   is translucent.
+///   Acrylic system backdrop (both styles; Mica if Windows refuses Acrylic; composited by Windows, free for this
+///   process) it is translucent.
 /// - [Glass]: a floating layer with continuous (superellipse) corners, a translucent fill, a 1 px light rim on the
 ///   top edge fading down the sides, and a soft large shadow. Real blur ([GlassLevel.blur]) only for dialogs,
 ///   which float over content. Measured (docs/measurements.md): a blurred palette cost 40-135 MB at 1080p while

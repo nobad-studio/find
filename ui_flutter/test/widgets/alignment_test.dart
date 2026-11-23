@@ -2,6 +2,7 @@
 // the search box, Home's category row, its Recent card and the status line share their left and right edges, and
 // the category tiles are one width in one row; on every Settings page every card spans the same width and every
 // row's control ends on one column.
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/app/scope.dart';
@@ -50,6 +51,45 @@ void main() {
     }
     expect(tiles.first.left, moreOrLessEquals(box.left, epsilon: .5));
     expect(tiles.last.right, moreOrLessEquals(box.right, epsilon: .5));
+  });
+
+  testWidgets('a narrow window (860 px): every row of category tiles spans the search box', (tester) async {
+    await pumpApp(tester, FakeEngine(settings: seen), size: const Size(860, 760));
+    await tester.pumpAndSettle();
+    final box = tester.getRect(find.byKey(SearchScreen.boxKey));
+    final tiles = [
+      for (final e in find.descendant(of: find.byKey(HomeView.tilesKey), matching: find.byType(Pressable)).evaluate())
+        tester.getRect(find.byWidget(e.widget)),
+    ];
+    expect(tiles, hasLength(6));
+    final rows = <double, List<Rect>>{};
+    for (final t in tiles) {
+      (rows[t.top] ??= []).add(t);
+    }
+    expect(rows.length, greaterThan(1)); // it does wrap at this width
+    for (final row in rows.values) {
+      expect(row.length, rows.values.first.length, reason: 'every row holds as many tiles');
+      expect(row.first.left, moreOrLessEquals(box.left, epsilon: .5));
+      expect(row.last.right, moreOrLessEquals(box.right, epsilon: .5));
+    }
+  });
+
+  testWidgets('Models: the graphics card name and the memory labels show in full beside their icon tiles', (
+    tester,
+  ) async {
+    await pumpApp(tester, FakeEngine(settings: seen), size: const Size(1180, 760));
+    await tester.pumpAndSettle();
+    AppScope.of(tester.element(find.byType(Text).first)).nav.openSettings(SettingsPage.models);
+    await tester.pumpAndSettle();
+    for (final words in ['Intel(R) Iris(R) Xe', 'Memory free of', 'Of the memory Windows', 'Graphics memory free']) {
+      final f = find.textContaining(words);
+      expect(f, findsWidgets, reason: words);
+      for (final e in f.evaluate()) {
+        final p = e.renderObject! as RenderParagraph;
+        expect(p.didExceedMaxLines, isFalse, reason: '$words is cut short');
+        expect((e.widget as Text).overflow, isNot(TextOverflow.ellipsis), reason: words);
+      }
+    }
   });
 
   for (final page in SettingsPage.values) {
