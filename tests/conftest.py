@@ -35,12 +35,20 @@ def _never_a_window(monkeypatch):
         monkeypatch.setattr(os, "startfile", _no_window)
     real_popen = subprocess.Popen
 
-    class GuardedPopen(real_popen):
-        def __init__(self, args, *a, **k):
-            first = args if isinstance(args, str) else (args[0] if args else "")
-            if os.path.basename(str(first)).lower().split(" ")[0] in ("explorer.exe", "explorer"):
-                _no_window()
-            super().__init__(args, *a, **k)
+    def check(args):
+        first = args if isinstance(args, str) else (args[0] if args else "")
+        if os.path.basename(str(first)).lower().split(" ")[0] in ("explorer.exe", "explorer"):
+            _no_window()
+
+    if isinstance(real_popen, type):
+        class GuardedPopen(real_popen):
+            def __init__(self, args, *a, **k):
+                check(args)
+                super().__init__(args, *a, **k)
+    else:                                   # another plugin already replaced Popen with a function
+        def GuardedPopen(args, *a, **k):
+            check(args)
+            return real_popen(args, *a, **k)
 
     monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
 
