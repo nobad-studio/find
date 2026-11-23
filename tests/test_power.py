@@ -17,7 +17,9 @@ def test_boost_plans_every_thread(monkeypatch):
     boost = indexer.plan(S(power="boost"), [], ssd=True)
     assert (boost["text_workers"], boost["text_workers_idle"], boost["model_threads"]) == (16, 16, 16)
     assert boost["walk_threads"] > calm["walk_threads"] and boost["boost"] is True
-    assert indexer.plan(S(power="boost", workers=6), [], ssd=True)["text_workers"] == 6   # your number wins
+    # 1.2.0 (maintainer): Boost is the goal fast, which uses every thread; the manual number isn't used then
+    assert indexer.plan(S(power="boost", workers=6), [], ssd=True)["text_workers"] == 16
+    assert indexer.plan(S(workers=6), [], ssd=True)["text_workers"] == 6                   # your number wins
     hdd = indexer.plan(S(power="boost"), [], ssd=False)
     assert hdd["text_workers"] == 2 and hdd["walk_threads"] == 2   # a spinning disk only seeks with more
 
@@ -31,7 +33,7 @@ def test_power_setting_is_checked():
 def test_boost_works_hard_while_you_use_the_pc():
     assert brain().decide(smp()).level == g.GENTLE
     d = brain(power="boost").decide(smp())
-    assert d.level == g.FULL and d.reason.startswith("Boost")
+    assert d.level == g.FULL and d.reason.startswith("Fast")
 
 
 def test_the_safety_net_steps_boost_down_before_it_pauses():

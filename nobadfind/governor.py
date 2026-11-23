@@ -13,7 +13,8 @@ from dataclasses import dataclass
 
 from . import hardware as _hw
 from . import jobs as _jobs
-from .const import CREATIVE_APPS
+from .const import CREATIVE_APPS, GPU_RESERVE_MIN_MB
+from .settings import goal as _goal
 from . import notify, winapi
 from .log import log
 
@@ -48,6 +49,14 @@ LIMITS = {
     "ON_FOR": 4,             # seconds a measured condition must hold to turn its rule on
     "OFF_FOR": 10,           # seconds its clear condition must hold to turn it off
     "RULE_HOLD": 30,         # the least time a rule stays on once it turned on
+    # 1.2.0, the goal quiet (spec 4.2): more sensitive to what makes a PC feel busy. These only step NOBAD Find
+    # down (or pace the disk work); a lag is learned at the standard thresholds above, whatever the goal.
+    "QUIET_HOT_CPU": 60,     # others' CPU: one level lower (instead of only pausing at HOT_CPU)
+    "QUIET_THERMAL_LIMIT": 95,   # passive limit below this: one level lower (instead of THERMAL_LIMIT)
+    "QUIET_DISK_SLOW_MS": 30,    # io_slow earlier (instead of DISK_SLOW_MS / DISK_BUSY)
+    "QUIET_DISK_BUSY": 70,
+    "QUIET_STEP_UP_X": 2,    # the step up waits this many times STEP_UP_AFTER
+    "GPU_RESERVE_SHARE": 0.15,   # the GPU reserve: max(gpu_reserve_min_mb (>= 512 MB), this share of free) (6.1)
 }
 
 _EASING = {
@@ -89,6 +98,7 @@ class Decision:
     level: str
     reason: str
     gpu: bool = True             # graphics-card work allowed (no: battery saver, a creative app in front)
+    gpu_background: bool = True  # the goal and gpu_background let background work use it (quiet: not on auto)
     io_slow: bool = False        # the disk is slow: the names walk and the readers slow down (not the meaning step)
     release_models: bool = False     # let go of the models now (high commit; once per episode)
 
@@ -151,6 +161,26 @@ WALK_SLOW_SHARE = 4      # a slow disk (or Light): a quarter of the walk threads
 VISION_GPU_MB = 1024     # free graphics memory one vision stream needs; at most one stream per graphics card
 
 
+def gpu_reserve_mb(free_mb, settings=None):
+    """Graphics memory left alone (spec 6.1): max(512 MB or the user's higher minimum, 15% of what is free)."""
+    low = GPU_RESERVE_MIN_MB
+    if settings is not None:
+        try:
+            low = max(low, int(settings.get("gpu_reserve_min_mb") or 0))
+        except (TypeError, ValueError):
+            pass
+    return int(max(low, LIMITS["GPU_RESERVE_SHARE"] * max(0, free_mb or 0)))
+
+
+def gpu_background_allowed(settings):
+    """Background work may use the graphics card: the user's gpu_background beats the goal (8b rule 0); on auto,
+    every goal but quiet. The safety rules (battery saver, a creative app in front, the reserve) still decide."""
+    v = settings.get("gpu_background") if settings is not None else None
+    if v in ("on", "off"):
+        return v == "on"
+    return _goal(settings) != "quiet"
+
+
 def _fallback_plan(cpu):
     return {"cpu": cpu, "walk_threads": min(32, cpu * 2), "text_workers": max(1, min(8, cpu - 2)),
             "text_workers_idle": max(1, min(16, cpu - 1)), "model_threads": max(1, cpu // 2)}
@@ -164,8 +194,10 @@ def op_limits(level, plan, s=None, d=None, settings=None, cpu_count=None):
     plan = dict(_fallback_plan(cpu), **{k: v for k, v in (plan or {}).items() if v})
     free = getattr(s, "free_mb", None) or None
     spare = None if free is None else max(0, free - LIMITS["LOW_FREE_MB"])
-    io_slow, gpu_ok = bool(getattr(d, "io_slow", False)), bool(getattr(d, "gpu", True))
+    io_slow = bool(getattr(d, "io_slow", False))
+    gpu_ok = bool(getattr(d, "gpu", True)) and bool(getattr(d, "gpu_background", True))
     get = settings.get if settings is not None else (lambda k: None)
+    fast = settings is not None and _goal(settings) == "fast"     # every thread: the manual number isn't used
 
     def mem(op, user):
         return user if spare is None else min(user, spare // OP_MB[op])
@@ -176,16 +208,20 @@ def op_limits(level, plan, s=None, d=None, settings=None, cpu_count=None):
     if io_slow:
         gov = min(gov, max(1, walk // WALK_SLOW_SHARE))
     out["walk"] = {"user": walk, "cpu": cpu * 4, "memory": mem("walk", walk), "governor": gov}
-    readers = int(get("workers") or plan["text_workers_idle"])
+    readers = int((not fast and get("workers")) or plan["text_workers_idle"])
     gov = workers_for(level, plan)
     if io_slow and gov:
         gov = max(1, gov // 2)
     out["readers"] = {"user": readers, "cpu": max(1, cpu - 1), "memory": mem("readers", readers), "governor": gov}
     photo = int(plan["model_threads"]) if get("photo_meaning") is not False else 0
-    out["photo"] = {"user": photo, "cpu": max(1, cpu // 2), "memory": mem("photo", photo),
+    out["photo"] = {"user": photo, "cpu": cpu if fast else max(1, cpu // 2), "memory": mem("photo", photo),
                     "governor": 0 if level == PAUSED else max(1, workers_for(level, plan))}
     gm = getattr(s, "gpu_mem", None)
-    gpu = 1 if gpu_ok and (gm is None or gm.get("free_mb", 0) >= VISION_GPU_MB) else 0
+    if gm is None:
+        gpu = 1 if gpu_ok else 0
+    else:                                           # what is usable once the reserve is left alone
+        free_gpu = gm.get("free_mb", 0) or 0
+        gpu = 1 if gpu_ok and free_gpu - gpu_reserve_mb(free_gpu, settings) >= VISION_GPU_MB else 0
     out["vision"] = {"user": 1, "cpu": 1, "memory": mem("vision", 1), "governor": 1 if level in (FULL, GENTLE) else 0,
                      "gpu": gpu}
     for row in out.values():
@@ -221,6 +257,8 @@ class Brain:
         self.saver = _Latch(on_for=0)                            # battery saver: at once, off after OFF_FOR
         self.thermal = _Latch(off_for=60)                        # held back by heat; it cools slowly
         self.creative = _Latch(on_for=0)                         # a heavy creative app in front
+        self.quiet_cpu = _Latch()                                # quiet: others' CPU >= QUIET_HOT_CPU
+        self._goal = "balanced"                                  # this decision's goal (read once per decide)
         self._creative_exe = ""
 
     def _creative_apps(self):
@@ -230,15 +268,25 @@ class Brain:
     def _sense_rules(self, s):
         """Every 2026-11-21 rule's latch from this sample; True when high commit started now (let go of models)."""
         L = LIMITS
+        quiet = self._goal == "quiet"
+        slow_ms, busy = (L["QUIET_DISK_SLOW_MS"], L["QUIET_DISK_BUSY"]) if quiet else (L["DISK_SLOW_MS"],
+                                                                                       L["DISK_BUSY"])
         started = self.commit.update(s.t, s.commit_pct is not None and s.commit_pct >= L["HIGH_COMMIT"],
                                      s.commit_pct is None or s.commit_pct < L["COMMIT_CLEAR"])
-        self.disk.update(s.t, (s.disk_ms is not None and s.disk_ms >= L["DISK_SLOW_MS"])
-                         or (s.disk_busy is not None and s.disk_busy >= L["DISK_BUSY"]),
+        self.disk.update(s.t, (s.disk_ms is not None and s.disk_ms >= slow_ms)
+                         or (s.disk_busy is not None and s.disk_busy >= busy),
                          (s.disk_ms is None or s.disk_ms < L["DISK_CLEAR_MS"])
                          and (s.disk_busy is None or s.disk_busy < L["DISK_CLEAR_BUSY"]))
         self.saver.update(s.t, s.battery_saver is True, s.battery_saver is not True)
-        self.thermal.update(s.t, s.thermal is not None and s.thermal < L["THERMAL_LIMIT"],
+        limit = L["QUIET_THERMAL_LIMIT"] if quiet else L["THERMAL_LIMIT"]
+        self.thermal.update(s.t, s.thermal is not None and s.thermal < limit,
                             s.thermal is None or s.thermal >= L["THERMAL_CLEAR"])
+        if quiet:
+            others = None if s.cpu is None else max(0.0, s.cpu - (s.find_cpu or 0.0))
+            self.quiet_cpu.update(s.t, others is not None and others >= L["QUIET_HOT_CPU"],
+                                  others is None or others < L["QUIET_HOT_CPU"])
+        elif self.quiet_cpu.on:
+            self.quiet_cpu = _Latch()                            # another goal now: forgotten at once
         front = _app_listed(s.foreground, self._creative_apps()) and not s.foreground_is_self
         self.creative.update(s.t, front, not front)
         if self.creative.on and front:
@@ -258,6 +306,12 @@ class Brain:
             lower = ORDER[ORDER.index(level) - 1]
             held = f" to {round(s.thermal)}% of its speed" if s.thermal is not None else ""
             return lower, (f"{_prefix(lower)}: Windows is holding the processor back{held} to cool it, "
+                           "so NOBAD Find works one level lower")
+        if self.quiet_cpu.on and level != PAUSED:
+            # quiet only: one level down, never a lag (record_lag stays at HOT_CPU in _wanted_base)
+            lower = ORDER[ORDER.index(level) - 1]
+            use = "" if s.cpu is None else f" ({round(max(0.0, s.cpu - (s.find_cpu or 0.0)))}%)"
+            return lower, (f"{_prefix(lower)}: other apps use the processor{use} and the goal is Quiet, "
                            "so NOBAD Find works one level lower")
         return level, reason
 
@@ -315,11 +369,11 @@ class Brain:
         if stage == 2:
             return PAUSED, (f"Paused: Windows is close to the memory it can promise programs (commit {commit}) "
                             "for a minute")
-        boost = self.settings.get("power") == "boost"
+        boost = self._goal == "fast"            # 0.9.3's Boost: every thread; the safety net steps it down
         if net and boost and s.free_mb < LIMITS["TIGHT_FREE_MB"]:
             return LIGHT, f"Light: memory is getting tight ({s.free_mb} MB free), so NOBAD Find uses 1 worker"
         if net and hot and boost:
-            return GENTLE, "Gentle: other apps need the processor, so Boost steps down"
+            return GENTLE, "Gentle: other apps need the processor, so Fast steps down"
         if stage == 1:
             return LIGHT, (f"Light: Windows is close to the memory it can promise programs (commit {commit}), "
                            "so NOBAD Find let go of its models and uses 1 worker")
@@ -342,19 +396,21 @@ class Brain:
                            "1 worker and leaves the graphics card to it")
         if (s.idle_s >= LIMITS["IDLE_AFTER"] and others is not None
                 and others < LIMITS["IDLE_CPU_MAX"]):
-            return FULL, "Boost: every thread" if boost else "Full: you're away"
+            return FULL, "Fast: every thread" if boost else "Full: you're away"
         if boost:
-            return FULL, "Boost: every thread, even while you use the PC"
+            return FULL, "Fast: every thread, even while you use the PC"
         return GENTLE, "Gentle: you're using the PC"
 
     def decide(self, s):
         if self.fixed in ORDER:
             self._level = self.fixed
             return Decision(self.fixed, f"{_prefix(self.fixed)}: fixed for a measurement")
+        self._goal = _goal(self.settings)
         release = self._sense_rules(s)
         d = self._step(s)
         d.release_models = release
         d.gpu = not (self.saver.on or self.creative.on)
+        d.gpu_background = gpu_background_allowed(self.settings)
         d.io_slow = self.disk.on
         if d.io_slow and d.level != PAUSED:
             if s.disk_ms is not None and s.disk_ms >= LIMITS["DISK_CLEAR_MS"]:
@@ -380,7 +436,8 @@ class Brain:
         # A higher level is allowed: it must hold for a while, then one step.
         if self._up_since is None:
             self._up_since = s.t
-        if s.t - self._up_since >= LIMITS["STEP_UP_AFTER"]:
+        wait = LIMITS["STEP_UP_AFTER"] * (LIMITS["QUIET_STEP_UP_X"] if self._goal == "quiet" else 1)
+        if s.t - self._up_since >= wait:
             self._level = ORDER[cur + 1]
             self._up_since = s.t
             if self._level == wanted:

@@ -4,7 +4,8 @@ import os
 import re
 import threading
 
-from .const import DEFAULTS
+from .const import (DEFAULTS, FEATURE_BACKENDS, GOALS, GPU_BACKGROUND, GPU_RESERVE_MAX_MB,
+                    GPU_RESERVE_MIN_MB, PROFILE_CLASSES, VARIANTS)
 
 _HOTKEY = re.compile(r"^(?:(?:ctrl|alt|shift|win)\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$")
 WSEARCH_STARTS = ("", "auto", "delayed-auto", "demand", "disabled")
@@ -43,6 +44,36 @@ def _paths(v):
     return list(dict.fromkeys(out))[-MAX_PATHS:]
 
 
+def goal_from_power(power):
+    """1.2.0's goal for 0.9.3's power setting: boost -> fast, anything else -> balanced (spec §4.2)."""
+    return "fast" if power == "boost" else "balanced"
+
+
+def power_from_goal(goal):
+    """The power value older UIs and transcripts read: fast -> boost, anything else -> balanced."""
+    return "boost" if goal == "fast" else "balanced"
+
+
+def goal(settings):
+    """The performance goal of any settings-like object with get(key): performance_goal when it has one, else
+    taken from power (callers and tests that only know power keep working)."""
+    g = settings.get("performance_goal") if settings is not None else None
+    return g if g in GOALS else goal_from_power(settings.get("power") if settings is not None else None)
+
+
+def power_compat(new, current):
+    """The power compatibility layer (spec §4.2), on checked changes `new` against the `current` settings, in
+    place: the goal decides and power mirrors it; an older UI that changes power changes the goal (boost -> fast,
+    balanced -> balanced). Writing the power it read changes nothing."""
+    if "performance_goal" not in new and "power" in new and new["power"] != current.get("power"):
+        new["performance_goal"] = goal_from_power(new["power"])
+    if "performance_goal" in new:
+        new["power"] = power_from_goal(new["performance_goal"])
+    elif "power" in new:
+        new["power"] = current.get("power")
+    return new
+
+
 def coerce(key, value):
     """Return a safe value for key, or the default if value doesn't fit."""
     d = DEFAULTS[key]
@@ -74,6 +105,23 @@ def coerce(key, value):
         return value if value in ("smart", "always", "off") else d
     if key == "power":
         return value if value in ("balanced", "boost") else d
+    if key == "performance_goal":
+        return value if value in GOALS else d
+    if key == "gpu_background":
+        return value if value in GPU_BACKGROUND else d
+    if key.startswith("backend_"):
+        return value if value == "auto" or value in FEATURE_BACKENDS.get(key[8:], ()) else d
+    if key.startswith("variant_"):
+        return value if value == "auto" or value in VARIANTS.get(key[8:], ()) else d
+    if key.startswith("profile_override_"):
+        return value if value == "auto" or value in PROFILE_CLASSES else d
+    if key == "gpu_reserve_min_mb":
+        if isinstance(value, bool):
+            return d
+        try:
+            return max(GPU_RESERVE_MIN_MB, min(GPU_RESERVE_MAX_MB, int(value)))
+        except (TypeError, ValueError, OverflowError):
+            return d
     if key == "settings_rev":
         return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 1000 else d
     if key == "wsearch_prev":
@@ -131,6 +179,7 @@ class Settings:
         self._retry_thread = None                       # _retry_later
         self._retry_now = threading.Event()             # set: the waiting retry tries at once (tests, quit)
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
+        self.goal_pending = True                        # performance_goal isn't in the file yet (settle_goal)
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
@@ -142,6 +191,11 @@ class Settings:
                     self.data["games_mode"] = "off"
                 if "scope" not in raw:          # before scopes: a folder list meant exactly those folders
                     self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
+                if "performance_goal" in raw:   # 1.2.0: the goal decides; power only mirrors it
+                    self.goal_pending = False
+                else:                           # older settings: the goal from power, saved once (Api._migrate_goal)
+                    self.data["performance_goal"] = goal_from_power(self.data["power"])
+                self.data["power"] = power_from_goal(self.data["performance_goal"])
                 rev = raw.get("settings_rev") if isinstance(raw.get("settings_rev"), int) else 0
                 self.data["settings_rev"] = rev
                 self._plain = set(self.data["exclude"])
@@ -317,6 +371,17 @@ class Settings:
         except OSError:
             pass                                    # read-only folder: the same changes run at the next start
 
+    def settle_goal(self):
+        """Save the goal taken from power (an older settings file, or none yet), once. True when the file holds
+        performance_goal now; False when it couldn't be saved (the same goal is taken again at the next start)."""
+        with self._lock:
+            if self.goal_pending:
+                try:
+                    self._save()
+                except OSError:
+                    return False
+        return True
+
     def get(self, key):
         return self.data.get(key, DEFAULTS.get(key))
 
@@ -328,6 +393,7 @@ class Settings:
         then they are applied and saved together."""
         new = {k: coerce(k, v) for k, v in (changes or {}).items() if k in DEFAULTS}
         with self._lock:
+            power_compat(new, self.data)
             changed = [k for k, v in new.items() if v != self.data.get(k)]
             if changed:
                 old = dict(self.data)
@@ -365,3 +431,4 @@ class Settings:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plain, f, indent=1)
         os.replace(tmp, self.path)
+        self.goal_pending = False                       # the file holds performance_goal now

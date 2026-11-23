@@ -15,6 +15,17 @@
   needs 4 GB, even on a 16 GB PC).
 - The Index page shows how many file-walk threads, text readers, photo threads and vision streams may run at once
   now, and what set each number (your setting, the processor, free memory, the current level, the graphics card).
+- Settings > Performance has a goal: Quiet, Balanced (the default) or Fast. Your Boost choice becomes Fast, once.
+  Quiet steps down earlier (other apps using 60% of the processor, Windows holding it below 95% of its speed) and
+  slows the file walk on a disk busy 70% of the time or at 30 ms a transfer, waits twice as long before working
+  harder, and keeps background work off the graphics card. Fast uses every thread for indexing (the photo step
+  too), ignores the text reading workers number (the field is greyed out, with the reason) and still steps down
+  when other apps need the PC or memory gets tight.
+- New choices beside it: the graphics card for background work, what photos, meaning and talk run on, the SigLIP 2
+  build, the class each part of the PC is planned as (not used yet: the model suggestions read it later), and the graphics memory left free. Each shows what Auto would
+  pick right now and why. No choice gets past the limits that protect the PC (the memory kept for Windows, the
+  graphics memory left free, the worker memory cap, the pauses). "Reset to safe defaults" asks once, then puts the
+  goal and these choices back; the index, your models, privacy settings, folders and learned apps stay.
 
 ### Talk about a photo
 - Both talk models now use the same check as the search models ("Right now" in Settings > Models): free memory

@@ -56,11 +56,13 @@ class PipeEngine implements EngineApi {
     _letEngineToFront(); // 0.9.5: what it opens may come to the front (Windows' foreground rule)
     return _pipe.open(id);
   }
+
   @override
   Future<ActionResult> reveal(int id) {
     _letEngineToFront();
     return _pipe.reveal(id);
   }
+
   @override
   Future<Uint8List?> thumbnail(int id) => _pipe.thumbnail(id);
 
@@ -110,6 +112,10 @@ class PipeEngine implements EngineApi {
   Future<ActionResult> resetLearned([String? exe]) => _pipe.resetLearned(exe);
   @override
   Future<Hardware?> hardware() => _pipe.hardware();
+  @override
+  Future<PerformanceState> performanceState() => _pipe.performanceState();
+  @override
+  Future<ResetResult> resetSafeDefaults() => _pipe.resetSafeDefaults();
 
   // ---- settings and the index ----
   @override
@@ -174,6 +180,7 @@ class PipeEngine implements EngineApi {
   void _letEngineToFront() {
     if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid);
   }
+
   @override
   Future<UpdateState> updateState() => _pipe.updateState();
   @override

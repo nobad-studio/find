@@ -151,7 +151,21 @@ DEFAULTS = {
     "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
-    "power": "balanced",            # 0.9.3: balanced (leaves you room) | boost (every thread, even while you use the PC)
+    "power": "balanced",            # 0.9.3: balanced | boost. 1.2.0: read and written through performance_goal
+                                    # (fast <-> boost, anything else <-> balanced) for older UIs; never decides
+    # 1.2.0 (spec 2026-11-22 §4.2, §8b): the goal and the user's overrides (Settings > Performance). Precedence:
+    # safety limits, then an override, then the goal, then auto. "Reset to safe defaults" puts SAFE_DEFAULTS back.
+    "performance_goal": "balanced", # quiet | balanced | fast (fast = 0.9.3's Boost); taken once from power
+    "gpu_background": "auto",       # auto | on | off: the graphics card for background work (auto: not at quiet)
+    "backend_photos": "auto",       # auto | one of FEATURE_BACKENDS[feature] (only the installed ones are offered)
+    "backend_text": "auto",
+    "backend_talk": "auto",
+    "variant_siglip2-base": "auto", # auto | one of VARIANTS["siglip2-base"]
+    "profile_override_gpu": "auto", # auto | one of PROFILE_CLASSES, per axis (profile.effective)
+    "profile_override_cpu": "auto",
+    "profile_override_storage": "auto",
+    "profile_override_memory": "auto",
+    "gpu_reserve_min_mb": 512,      # the minimum of the GPU reserve max(this, 15% of free graphics memory): 512-4096
     "safety_net": True,             # 0.9.3: even at Boost, step down and free memory before the PC struggles
     "hotkey": "win+shift+f",
     "autostart": False,
@@ -204,4 +218,23 @@ CREATIVE_APPS = [
     "photoshop.exe", "lightroom.exe",
 ]
 DEFAULTS["creative_apps"] = list(CREATIVE_APPS)
+
+# 1.2.0 Settings > Performance (spec 2026-11-22 §4.2, §8b)
+GOALS = ("quiet", "balanced", "fast")
+GPU_BACKGROUND = ("auto", "on", "off")
+PERF_FEATURES = ("photos", "text", "talk")           # backend_<feature>
+# the backends each feature can run on in this version (spec 8b lists CUDA too: no CUDA build ships yet); only
+# the installed ones are offered (hardware.backends)
+FEATURE_BACKENDS = {"photos": ("cpu",), "text": ("cpu", "directml"), "talk": ("cpu", "vulkan")}
+VARIANTS = {"siglip2-base": ("fp16-vision", "fp32-vision")}    # variant_<model>: the lighter one first
+PROFILE_AXES = ("gpu", "cpu", "storage", "memory")   # profile_override_<axis>
+PROFILE_CLASSES = ("performance", "balanced", "efficiency", "compatibility")
+GPU_RESERVE_MIN_MB, GPU_RESERVE_MAX_MB = 512, 4096
+# "Reset to safe defaults" (§8b rule 3) puts these back to DEFAULTS (power follows the goal) ...
+SAFE_DEFAULTS = (("performance_goal", "gpu_background") + tuple(f"backend_{f}" for f in PERF_FEATURES)
+                 + tuple(f"variant_{m}" for m in VARIANTS) + ("workers",)
+                 + tuple(f"profile_override_{a}" for a in PROFILE_AXES) + ("gpu_reserve_min_mb",))
+# ... and keeps these: the index, the chosen models (Settings > Models), privacy settings, folders, and the
+# learned per-app game levels (Settings > Performance has their own Reset)
+SAFE_DEFAULTS_KEEP = ("index", "models", "privacy", "folders", "learned_apps")
 CREATIVE_MAX = 100              # at most this many names in the list

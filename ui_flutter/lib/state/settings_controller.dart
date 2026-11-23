@@ -2,6 +2,8 @@
 /// consent first; the dangerous ones (wipe, forget every app) ask for confirmation. Messages are the 0.7.0 words.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../engine/engine_api.dart';
@@ -37,6 +39,29 @@ class SettingsController extends ChangeNotifier {
   List<LearnedApp> get learned => _learned;
   Hardware? get hardware => _hardware;
   WsearchState? get wsearch => _wsearch;
+
+  PerformanceState? _performance;
+
+  /// Settings > Performance's overrides with what "auto" would pick now (`performance_state`); null from an older
+  /// engine or before the first answer.
+  PerformanceState? get performance => _performance;
+
+  /// The settings whose change can change what "auto" picks or what a row says (the Performance page asks again).
+  static const performanceKeys = {
+    'performance_goal',
+    'power',
+    'workers',
+    'gpu_background',
+    'backend_photos',
+    'backend_text',
+    'backend_talk',
+    'variant_siglip2-base',
+    'profile_override_gpu',
+    'profile_override_cpu',
+    'profile_override_storage',
+    'profile_override_memory',
+    'gpu_reserve_min_mb',
+  };
   bool get wsearchBusy => _wsearchBusy;
 
   HotkeyState _hotkeys = HotkeyState.unknown;
@@ -78,6 +103,30 @@ class SettingsController extends ChangeNotifier {
       // shown as "not available"
     }
     _changed();
+    await loadPerformance();
+  }
+
+  Future<void> loadPerformance() async {
+    try {
+      _performance = await engine.performanceState();
+    } on Object {
+      return; // an older engine: the page shows the settings without "auto now"
+    }
+    _changed();
+  }
+
+  /// "Reset to safe defaults": asks once ([confirm]), then the engine puts the goal and every override back at once.
+  Future<bool> resetSafeDefaults({required Future<bool> Function() confirm}) async {
+    if (!await confirm()) return false;
+    try {
+      final r = await engine.resetSafeDefaults();
+      if (!r.ok) return _sayFalse("The settings weren't reset. Try again.");
+    } on Object catch (e) {
+      return _sayFalse(errorText(e, other: "The settings weren't reset. Try again."));
+    }
+    _say('Back to the safe defaults.');
+    await Future.wait([load(), loadPerformance()]);
+    return true;
   }
 
   /// Change one setting. Shown at once; if the engine doesn't take it, says so and shows the real value again.
@@ -98,6 +147,7 @@ class SettingsController extends ChangeNotifier {
     _settings = r.settings;
     if (r.hotkeys != null) _hotkeys = r.hotkeys!;
     _changed();
+    if (performanceKeys.contains(key)) unawaited(loadPerformance());
     final now = r.settings[key];
     final took = now is List && value is List ? listEquals(now, value) : now == value;
     if (!took) _say("That value wasn't accepted.");

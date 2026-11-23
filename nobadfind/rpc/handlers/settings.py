@@ -1,5 +1,5 @@
 """get_settings, set_settings, hotkey_state, hotkey_probe, pick_folder, rescan, wipe, scope_info, turbo_state, turbo_set,
-turbo_helper.
+turbo_helper, performance_state, reset_safe_defaults.
 
 Every value goes through settings.coerce inside Api.set_settings. pick_folder shows
 Windows' folder dialog from the engine, so the UI never hands the engine a folder path of its own."""
@@ -69,6 +69,11 @@ def methods(api, events=None):
             events.turbo(out["state"])
         return out
 
+    def reset_safe_defaults(params, conn=None):
+        r = api.reset_safe_defaults() or {}
+        return {"ok": bool(r.get("ok")), "reset": [str(k) for k in r.get("reset") or []],
+                "kept": [str(k) for k in r.get("kept") or []]}
+
     return {"get_settings": lambda params, conn=None: api.get_settings(),
             "scope_info": lambda params, conn=None: api.scope_info(),
             "turbo_state": lambda params, conn=None: api.turbo_state(),
@@ -78,5 +83,7 @@ def methods(api, events=None):
             "hotkey_state": lambda params, conn=None: api.hotkey_state(),
             "hotkey_probe": hotkey_probe,
             "pick_folder": pick_folder,
+            "performance_state": lambda params, conn=None: api.performance_state(),
+            "reset_safe_defaults": reset_safe_defaults,
             "rescan": lambda params, conn=None: ok(api.rescan()),
             "wipe": lambda params, conn=None: ok(api.wipe(str_param(params, "confirm")))}

@@ -185,6 +185,23 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.
+  1.2.0: `performance_goal` (`quiet`|`balanced`|`fast`) decides how hard NOBAD Find works; `power` stays readable
+  and writable for older UIs and mirrors it (`fast` ↔ `boost`, anything else ↔ `balanced`): writing a changed
+  `power` changes the goal, writing the `power` you read changes nothing, and when both come in one call the goal
+  wins. Under `fast` the manual `workers` number isn't used (every thread). The overrides (`gpu_background`,
+  `backend_<feature>`, `variant_<model>`, `profile_override_<axis>`, `gpu_reserve_min_mb`) beat the goal but never
+  a safety limit (spec 8b rule 0).
+- **`performance_state`** `{}` → `{goal, rows: {name: {value, auto, why, options: [string], note}}}` (1.2.0):
+  Settings > Performance. One row per override (`gpu_background`, `backend_photos`, `backend_text`,
+  `backend_talk`, `variant_siglip2-base`, `workers`, `profile_override_gpu|cpu|storage|memory`,
+  `gpu_reserve_min_mb`): its `value`, what `auto` would pick on this PC right now and `why` (one sentence),
+  the `options` it may take here (only installed backends; `[]` for numbers), and `note` when the value isn't
+  used now (`""` if none). From the cached hardware scan and the plan; ask again after a change.
+- **`reset_safe_defaults`** `{}` → `{ok, reset: [string], kept: [string]}` (1.2.0): "Reset to safe defaults". The UI
+  asks once first. The goal goes back to `balanced`, every override to `auto` (`workers` to 0, auto) and `gpu_reserve_min_mb` to 512,
+  at once (the governor and the plan follow). `reset` names those settings; `kept` is always
+  `["index", "models", "privacy", "folders", "learned_apps"]`: the index, the chosen models, privacy settings,
+  folders and the learned apps (their own Reset) are never touched.
 - **`pick_folder`** `{}` → `{path: string, busy: bool}`: Windows' folder dialog, shown by the engine, topmost;
   `path` `""` if cancelled. The answer comes when the user closes the dialog: **no time limit** on this call. Only
   one dialog at a time: while one is open, another call answers at once with `busy: true` (and `path: ""`) and
@@ -413,4 +430,5 @@ lines, rewrites the `recv` lines), then review the diff.
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
+| `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |
 | `09-notifications.jsonl` | notifications_list (empty, three), notification events, a duplicate key not posted, a path kept out of the text, notifications_read (some ids, all, and bad ones), notifications_clear |

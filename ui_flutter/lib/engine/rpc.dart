@@ -371,6 +371,8 @@ class EngineClient {
   Future<List<LearnedApp>> learnedApps() async => LearnedApp.listFromJson(await call('learned_apps'));
   Future<ActionResult> resetLearned([String? exe]) => _ok('reset_learned', {'exe': exe});
   Future<Hardware?> hardware() async => Hardware.fromJson(await call('hardware'));
+  Future<PerformanceState> performanceState() async => PerformanceState.fromJson(await call('performance_state'));
+  Future<ResetResult> resetSafeDefaults() async => ResetResult.fromJson(await call('reset_safe_defaults'));
 
   // ---- settings and the index ----
   Future<Settings> getSettings() async => Settings.fromJson(await call('get_settings'));

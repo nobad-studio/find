@@ -56,6 +56,18 @@ class Settings {
     'notify_level': 'warning',
     'notify_quiet': true,
     'notify_show_names': false,
+    // 1.2.0 Settings > Performance (spec 8b): the goal and the overrides; power mirrors the goal for older UIs
+    'performance_goal': 'balanced',
+    'gpu_background': 'auto',
+    'backend_photos': 'auto',
+    'backend_text': 'auto',
+    'backend_talk': 'auto',
+    'variant_siglip2-base': 'auto',
+    'profile_override_gpu': 'auto',
+    'profile_override_cpu': 'auto',
+    'profile_override_storage': 'auto',
+    'profile_override_memory': 'auto',
+    'gpu_reserve_min_mb': 512,
   };
 
   static const initial = Settings(defaults);
@@ -298,5 +310,56 @@ class ActionResult {
   static ActionResult fromJson(Object? v) {
     final m = jMap(v);
     return ActionResult(jBool(m['ok']), jStr(m['error']));
+  }
+}
+
+/// One Settings > Performance override as `performance_state` describes it (spec 8b rule 5): its [value], what
+/// "auto" would pick on this PC right now ([auto], a string or a number) and [why], the [options] it may take here
+/// (empty for numbers) and a [note] when the value isn't used now.
+class PerformanceRow {
+  const PerformanceRow({this.value, this.auto, this.why = '', this.options = const [], this.note = ''});
+  final Object? value;
+  final Object? auto;
+  final String why;
+  final List<String> options;
+  final String note;
+
+  static PerformanceRow fromJson(Object? v) {
+    final m = jMap(v);
+    return PerformanceRow(
+      value: m['value'],
+      auto: m['auto'],
+      why: jStr(m['why']),
+      options: jStrs(m['options']),
+      note: jStr(m['note']),
+    );
+  }
+}
+
+/// `performance_state` (1.2.0 engines): the goal, and every override row by its setting name.
+class PerformanceState {
+  const PerformanceState(this.goal, this.rows);
+  final String goal;
+  final Map<String, PerformanceRow> rows;
+
+  static PerformanceState fromJson(Object? v) {
+    final m = jMap(v);
+    final g = jStr(m['goal']);
+    return PerformanceState(g.isEmpty ? 'balanced' : g, {
+      for (final e in jMap(m['rows']).entries) e.key: PerformanceRow.fromJson(e.value),
+    });
+  }
+}
+
+/// `reset_safe_defaults`: whether it worked, the settings put back, and what was kept.
+class ResetResult {
+  const ResetResult(this.ok, this.reset, this.kept);
+  final bool ok;
+  final List<String> reset;
+  final List<String> kept;
+
+  static ResetResult fromJson(Object? v) {
+    final m = jMap(v);
+    return ResetResult(jBool(m['ok']), jStrs(m['reset']), jStrs(m['kept']));
   }
 }

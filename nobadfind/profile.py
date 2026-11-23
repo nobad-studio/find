@@ -72,3 +72,24 @@ def classify(facts):
     for axis, fn in (("cpu", _cpu), ("storage", _storage), ("memory", _memory)):
         out[axis], why[axis] = fn(facts)
     return out
+
+
+def effective(classes, settings):
+    """classify()'s classes with the user's profile_override_<axis> applied (spec 8b): an override redirects
+    which class a kind of work plans for; it is not a resource, so the live budget and the safety limits still
+    decide what runs. The gpu override applies to both families. why says which axes the user chose."""
+    out = {"gpu": dict(classes.get("gpu") or {}), "why": dict(classes.get("why") or {})}
+    for axis in ("cpu", "storage", "memory"):
+        out[axis] = classes.get(axis)
+    for axis in ("gpu", "cpu", "storage", "memory"):
+        v = settings.get(f"profile_override_{axis}") if settings is not None else None
+        if v not in _ORDER:
+            continue
+        if axis == "gpu":
+            out["gpu"] = {fam: v for fam in FAMILIES}
+            for fam in FAMILIES:
+                out["why"][f"gpu_{fam}"] = f"you chose {v} (auto: {(classes.get('gpu') or {}).get(fam)})"
+        else:
+            out[axis] = v
+            out["why"][axis] = f"you chose {v} (auto: {classes.get(axis)})"
+    return out

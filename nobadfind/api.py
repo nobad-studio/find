@@ -11,10 +11,10 @@ import threading
 import time
 from collections import deque
 
-from . import capability, embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
 from . import governor as governor_mod
 from . import hardware as hw
-from .const import APP_VER, COUNT_SHARE
+from .const import APP_VER, COUNT_SHARE, DEFAULTS, SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
 from .indexer import NAME_KINDS
 from .kinds import READABLE_EXT
 from .log import log
@@ -71,6 +71,7 @@ class Api:
         self._on_vision = None            # engine.py: push one `vision` event to the UI
         self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
         self._migrate_forgotten()         # once: forgotten paths out of settings.json (fix round 1, I5)
+        self._migrate_goal()              # once: 1.2.0's performance_goal from power (spec 4.2)
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -350,6 +351,23 @@ class Api:
                 log(f"{n} forgotten entries moved out of settings.json")
         except Exception as e:
             log(f"forgotten list move failed: {type(e).__name__}", "warn")
+
+    def _migrate_goal(self):
+        """Once (1.2.0, spec 4.2, A18): performance_goal is taken from power (boost -> fast, else balanced; done by
+        Settings when it reads a file without the goal), saved, and recorded as meta goal_migrated. After that
+        the goal is the only setting that decides; power only mirrors it for older UIs."""
+        if self._store is None or not hasattr(self._settings, "settle_goal"):
+            return                                       # (tests that make an Api without an index)
+        try:
+            if self._store.meta("goal_migrated") == "1":
+                return
+            if not self._settings.settle_goal():
+                log("performance goal: settings couldn't be saved; taken from power again at the next start", "warn")
+                return
+            self._store.set_meta("goal_migrated", "1")
+            log(f"performance goal {self._settings.get('performance_goal')} (from power)")
+        except Exception as e:
+            log(f"performance goal move failed: {type(e).__name__}", "warn")
 
     # ---------- status and settings ----------
     def status(self):
@@ -685,6 +703,20 @@ class Api:
     def hardware(self):
         return hw.scan()
 
+    def reset_safe_defaults(self):
+        """Settings > Performance "Reset to safe defaults" (spec 8b rule 3): the goal back to balanced, every
+        override to auto and the GPU reserve minimum to 512 MB; the governor and the plan follow at once. Keeps
+        the index, the chosen models, privacy settings, folders and the learned per-app game levels. (The learned
+        per-adapter reserve increases of spec 6.1 don't exist yet; when they do, they are cleared here too.)"""
+        self.set_settings({k: DEFAULTS[k] for k in SAFE_DEFAULTS})
+        return {"ok": True, "reset": list(SAFE_DEFAULTS), "kept": list(SAFE_DEFAULTS_KEEP)}
+
+    def performance_state(self):
+        """Settings > Performance: what auto would pick for each override right now, and why (performance.state)."""
+        pc = hw.scan() or {}
+        plan_ = (getattr(self._indexer, "status", None) or {}).get("plan") or {}
+        return performance.state(self._settings, pc, plan_, models.talk_runtime(pc, self._mdir()))
+
     def capability_state(self):
         """Settings -> Models "Your PC, now": what this PC can run right now (capability.assess) from the
         governor's last reading. measured: per-model numbers from this PC (an in-app benchmark, later)."""
@@ -729,9 +761,10 @@ class Api:
         if "photo_model" in changed and self._settings.get("photo_meaning") and "photo_meaning" not in changed:
             threading.Thread(target=self._indexer._load_photo, daemon=True).start()
             self._indexer.wake.set()
-        if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
+        if set(changed) & {"workers", "power", "performance_goal"} and hasattr(self._indexer, "replan"):
             self._indexer.replan()                     # 0.9.3: the new workers now, no restart
-        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call", "creative_apps"}:
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call", "creative_apps",
+                           "gpu_background", "backend_text", "gpu_reserve_min_mb"}:
             g = getattr(self._indexer, "governor", None)
             if g is not None and hasattr(g, "now"):
                 g.now()
@@ -1245,7 +1278,7 @@ class Api:
                           "error": f"To talk about photos, download {names} first ({mb} MB, once).",
                           "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
                                        for x in need]}
-        vulkan = rid == "llama-vulkan"
+        vulkan = rid == "llama-vulkan" and self._settings.get("backend_talk") != "cpu"    # 1.2.0: processor only
         settings = dict(m["talk"])
         settings["need_mb"] = models.talk_need_mb(m, rid) or None
         mdir = models.model_dir(m["id"], d)

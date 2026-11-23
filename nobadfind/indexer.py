@@ -20,6 +20,7 @@ from .governor import FULL, PAUSED, workers_for
 from .const import APP_SECRET_FILES, COUNT_SHARE, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
 from .log import log
+from .settings import goal as settings_goal
 from .walker import Walker
 
 RESCAN_EVERY = 6 * 3600
@@ -78,20 +79,22 @@ def vector_model(store):
 
 def plan(settings, roots, ssd=None):
     """How hard to work on this PC: walk threads per drive type, text workers from the CPU, model threads.
-    Boost (power, 0.9.3): every thread, even while you use the PC; the safety net still steps down."""
+    The goal fast (0.9.3's Boost): every thread, even while you use the PC, and the manual workers number isn't
+    used (maintainer, 1.2.0); the governor's levels and the safety net still step it down."""
     cpu = os.cpu_count() or 2
     if ssd is None:
         ssd = all(winapi.is_ssd(os.path.splitdrive(r)[0] + "\\") is not False for r in roots)
-    boost = settings.get("power") == "boost"
+    goal = settings_goal(settings)
+    boost = goal == "fast"
     walk = (min(64, cpu * 4) if boost else min(32, cpu * 2)) if ssd else 2   # parallel reads help SSDs only
-    chosen = settings.get("workers")
+    chosen = None if boost else settings.get("workers")
     text = chosen or (cpu if boost else max(1, min(8, cpu - 2)))       # while you use the PC: two threads free
     idle = chosen or (cpu if boost else max(1, min(16, cpu - 1)))      # while you're away: one thread free
     if not ssd and not chosen:
         text, idle = min(text, 2), min(idle, 2)    # a spinning disk is the bottleneck, more readers only seek
     models = cpu if boost else max(1, cpu // 2)     # threads for the meaning and photo workers at most
     return {"cpu": cpu, "ssd": ssd, "walk_threads": walk, "text_workers": text, "text_workers_idle": idle,
-            "model_threads": models, "boost": boost}
+            "model_threads": models, "boost": boost, "goal": goal}
 
 
 def user_roots():
@@ -947,8 +950,12 @@ class Indexer:
         if not self._vectors_in_worker:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
-        # not with battery saver on or a creative app in front (Decision.gpu): processor only
-        gpu = level == FULL and (self.governor is None or getattr(self.governor.decision, "gpu", True))
+        # not with battery saver on or a creative app in front (Decision.gpu): processor only. Then the user's
+        # backend_text (processor, or a graphics backend: beats the goal), then the goal (Decision.gpu_background)
+        d = self.governor.decision if self.governor is not None else None
+        backend = self.settings.get("backend_text") or "auto"
+        gpu = level == FULL and getattr(d, "gpu", True) and backend != "cpu" and (
+            backend != "auto" or getattr(d, "gpu_background", True))
         plan_now = self.status.get("plan") or {}
         if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid
                                         or getattr(self, "_mpool_plan", None) != plan_now.get("model_threads")):

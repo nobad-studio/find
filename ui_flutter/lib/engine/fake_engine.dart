@@ -439,6 +439,112 @@ class FakeEngine implements EngineApi {
     return _ok;
   });
 
+  /// The settings "Reset to safe defaults" puts back (const.SAFE_DEFAULTS) and the things it keeps.
+  static const safeDefaults = [
+    'performance_goal',
+    'gpu_background',
+    'backend_photos',
+    'backend_text',
+    'backend_talk',
+    'variant_siglip2-base',
+    'workers',
+    'profile_override_gpu',
+    'profile_override_cpu',
+    'profile_override_storage',
+    'profile_override_memory',
+    'gpu_reserve_min_mb',
+  ];
+  static const safeDefaultsKept = ['index', 'models', 'privacy', 'folders', 'learned_apps'];
+
+  /// `performance_state` for the demo PC (16 threads, DirectML, the Vulkan runtime), from the current settings.
+  @override
+  Future<PerformanceState> performanceState() => _new('performance_state', () {
+    final goal = jStr(_settings['performance_goal']);
+    final fast = goal == 'fast';
+    const classes = ['auto', 'performance', 'balanced', 'efficiency', 'compatibility'];
+    const unused = 'Not used yet: the model suggestions that plan by these classes come in a later update.';
+    PerformanceRow row(String k, Object? auto, String why, [List<String> options = const [], String note = '']) =>
+        PerformanceRow(value: _settings[k], auto: auto, why: why, options: options, note: note);
+    return PerformanceState(goal, {
+      'gpu_background': goal == 'quiet'
+          ? row('gpu_background', 'off', 'The goal is Quiet, which keeps background work off the graphics card.', [
+              'auto',
+              'on',
+              'off',
+            ])
+          : row(
+              'gpu_background',
+              'on',
+              'Background work may use the graphics card at Full, not with battery saver on or a creative app in '
+                  'front.',
+              ['auto', 'on', 'off'],
+            ),
+      'backend_photos': row('backend_photos', 'cpu', 'Photos are looked at on the processor in this version.', [
+        'auto',
+        'cpu',
+      ]),
+      'backend_text': row(
+        'backend_text',
+        goal == 'quiet' ? 'cpu' : 'directml',
+        'Meaning for documents uses DirectML at Full and the processor otherwise.',
+        ['auto', 'cpu', 'directml'],
+      ),
+      'backend_talk': row('backend_talk', 'vulkan', 'Talk about a photo uses the Vulkan runtime installed here.', [
+        'auto',
+        'cpu',
+        'vulkan',
+      ]),
+      'variant_siglip2-base': row(
+        'variant_siglip2-base',
+        fast ? 'fp32-vision' : 'fp16-vision',
+        '${fast ? 'Fast takes the faster build.' : 'Quiet and Balanced take the lighter build.'} Both made the same '
+            'vectors on 50 test photos.',
+        ['auto', 'fp16-vision', 'fp32-vision'],
+        'Not used yet: this version downloads only the lighter build.',
+      ),
+      'workers': row(
+        'workers',
+        fast ? 16 : 15,
+        fast ? 'Fast uses all 16 threads.' : "15 while you're away and 8 while you use the PC, from 16 threads.",
+        const [],
+        fast ? "Fast uses every thread, so this number isn't used." : '',
+      ),
+      'profile_override_gpu': row(
+        'profile_override_gpu',
+        'efficiency',
+        'Background work: a built-in GPU.',
+        classes,
+        unused,
+      ),
+      'profile_override_cpu': row('profile_override_cpu', 'performance', '8 cores with AVX2.', classes, unused),
+      'profile_override_storage': row(
+        'profile_override_storage',
+        'performance',
+        'A solid-state drive.',
+        classes,
+        unused,
+      ),
+      'profile_override_memory': row('profile_override_memory', 'balanced', '16 GB of memory.', classes, unused),
+      'gpu_reserve_min_mb': row(
+        'gpu_reserve_min_mb',
+        512,
+        'NOBAD Find leaves the larger of this and 15% of the free graphics memory to Windows and other apps. A higher '
+            'number only leaves more.',
+        const [],
+        'In this version it only changes the graphics-card check under Index > Running at once now.',
+      ),
+    });
+  });
+
+  @override
+  Future<ResetResult> resetSafeDefaults() => _new('reset_safe_defaults', () {
+    for (final k in safeDefaults) {
+      _settings[k] = Settings.defaults[k];
+    }
+    _settings['power'] = 'balanced';
+    return const ResetResult(true, safeDefaults, safeDefaultsKept);
+  });
+
   @override
   Future<Hardware?> hardware() => _answer(
     'hardware',
@@ -489,6 +595,14 @@ class FakeEngine implements EngineApi {
       if (!_same(_settings[e.key], v)) {
         _settings[e.key] = v;
         changed.add(e.key);
+      }
+    }
+    // the power compatibility layer (settings.power_compat): the goal decides, power mirrors it
+    if (changed.contains('performance_goal')) {
+      final p = _settings['performance_goal'] == 'fast' ? 'boost' : 'balanced';
+      if (_settings['power'] != p) {
+        _settings['power'] = p;
+        if (!changed.contains('power')) changed.add('power');
       }
     }
     final keys = changed.any((k) => k == 'hotkey' || k == 'bar_hotkey' || k == 'bar');

@@ -1259,6 +1259,24 @@
       "result": {
         "$ref": "#/$defs/ok"
       }
+    },
+    "performance_state": {
+      "description": "Settings > Performance (1.2.0): the goal, and for every override what auto would pick on this PC right now and why (spec 8b rule 5). From the cached hardware scan and the plan; ask again after a change.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/performance_state"
+      }
+    },
+    "reset_safe_defaults": {
+      "description": "Settings > Performance \"Reset to safe defaults\" (1.2.0, spec 8b rule 3; the UI asks once first): the goal to balanced, every override to auto, the GPU reserve minimum to 512 MB, applied at once. Keeps the index, the chosen models, privacy settings, folders and the learned apps.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/reset_safe_defaults"
+      }
     }
   },
   "$defs": {
@@ -2894,7 +2912,7 @@
             "balanced",
             "boost"
           ],
-          "description": "0.9.3: balanced leaves you room; boost uses every thread, even while you use the PC."
+          "description": "0.9.3: balanced | boost. 1.2.0: mirrors performance_goal for older UIs (fast <-> boost, anything else <-> balanced); writing it changes the goal."
         },
         "safety_net": {
           "type": "boolean",
@@ -3025,6 +3043,99 @@
         "notify_show_names": {
           "type": "boolean",
           "description": "File names in notifications (off: never a name or a path); turning it off removes the names kept so far."
+        },
+        "performance_goal": {
+          "enum": [
+            "quiet",
+            "balanced",
+            "fast"
+          ],
+          "description": "1.2.0: quiet (least contention: steps down earlier, no graphics card for background work on auto) | balanced | fast (every thread, the manual workers number isn't used; still steps down under pressure). Taken once from power; the only setting that decides."
+        },
+        "gpu_background": {
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ],
+          "description": "1.2.0: the graphics card for background work; auto = every goal but quiet. Battery saver, a creative app in front and the GPU reserve still decide."
+        },
+        "backend_photos": {
+          "enum": [
+            "auto",
+            "cpu"
+          ],
+          "description": "1.2.0: what photos runs on; auto = performance_state's pick."
+        },
+        "backend_text": {
+          "enum": [
+            "auto",
+            "cpu",
+            "directml"
+          ],
+          "description": "1.2.0: what text runs on; auto = performance_state's pick."
+        },
+        "backend_talk": {
+          "enum": [
+            "auto",
+            "cpu",
+            "vulkan"
+          ],
+          "description": "1.2.0: what talk runs on; auto = performance_state's pick."
+        },
+        "variant_siglip2-base": {
+          "enum": [
+            "auto",
+            "fp16-vision",
+            "fp32-vision"
+          ],
+          "description": "1.2.0: which build of the model; auto: fast takes the faster one, the other goals the lighter one."
+        },
+        "profile_override_gpu": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ],
+          "description": "1.2.0: the gpu class to plan for instead of the detected one."
+        },
+        "profile_override_cpu": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ],
+          "description": "1.2.0: the cpu class to plan for instead of the detected one."
+        },
+        "profile_override_storage": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ],
+          "description": "1.2.0: the storage class to plan for instead of the detected one."
+        },
+        "profile_override_memory": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ],
+          "description": "1.2.0: the memory class to plan for instead of the detected one."
+        },
+        "gpu_reserve_min_mb": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 4096,
+          "description": "1.2.0: the GPU reserve is max(this, 15% of free graphics memory)."
         }
       },
       "required": [
@@ -3077,7 +3188,18 @@
         "notify_toasts",
         "notify_level",
         "notify_quiet",
-        "notify_show_names"
+        "notify_show_names",
+        "performance_goal",
+        "gpu_background",
+        "backend_photos",
+        "backend_text",
+        "backend_talk",
+        "variant_siglip2-base",
+        "profile_override_gpu",
+        "profile_override_cpu",
+        "profile_override_storage",
+        "profile_override_memory",
+        "gpu_reserve_min_mb"
       ],
       "additionalProperties": false
     },
@@ -3264,6 +3386,88 @@
         "notify_show_names": {
           "type": "boolean",
           "description": "File names in notifications (off: never a name or a path); turning it off removes the names kept so far."
+        },
+        "performance_goal": {
+          "enum": [
+            "quiet",
+            "balanced",
+            "fast"
+          ]
+        },
+        "gpu_background": {
+          "enum": [
+            "auto",
+            "on",
+            "off"
+          ]
+        },
+        "backend_photos": {
+          "enum": [
+            "auto",
+            "cpu"
+          ]
+        },
+        "backend_text": {
+          "enum": [
+            "auto",
+            "cpu",
+            "directml"
+          ]
+        },
+        "backend_talk": {
+          "enum": [
+            "auto",
+            "cpu",
+            "vulkan"
+          ]
+        },
+        "variant_siglip2-base": {
+          "enum": [
+            "auto",
+            "fp16-vision",
+            "fp32-vision"
+          ]
+        },
+        "profile_override_gpu": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ]
+        },
+        "profile_override_cpu": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ]
+        },
+        "profile_override_storage": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ]
+        },
+        "profile_override_memory": {
+          "enum": [
+            "auto",
+            "performance",
+            "balanced",
+            "efficiency",
+            "compatibility"
+          ]
+        },
+        "gpu_reserve_min_mb": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 4096
         }
       },
       "additionalProperties": false
@@ -4253,6 +4457,147 @@
       "required": [
         "items",
         "unread"
+      ],
+      "additionalProperties": false
+    },
+    "performance_row": {
+      "description": "One Settings > Performance override: its value, what auto would pick on this PC right now and why, the values it may take here, and a note when the value isn't used now (\"\" if none).",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "auto": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "why": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "auto",
+        "why",
+        "options",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "performance_state": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "enum": [
+            "quiet",
+            "balanced",
+            "fast"
+          ]
+        },
+        "rows": {
+          "type": "object",
+          "properties": {
+            "gpu_background": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "backend_photos": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "backend_text": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "backend_talk": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "variant_siglip2-base": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "workers": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "profile_override_gpu": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "profile_override_cpu": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "profile_override_storage": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "profile_override_memory": {
+              "$ref": "#/$defs/performance_row"
+            },
+            "gpu_reserve_min_mb": {
+              "$ref": "#/$defs/performance_row"
+            }
+          },
+          "required": [
+            "gpu_background",
+            "backend_photos",
+            "backend_text",
+            "backend_talk",
+            "variant_siglip2-base",
+            "workers",
+            "profile_override_gpu",
+            "profile_override_cpu",
+            "profile_override_storage",
+            "profile_override_memory",
+            "gpu_reserve_min_mb"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "goal",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "reset_safe_defaults": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "reset": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The settings put back to their defaults."
+        },
+        "kept": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "index",
+              "models",
+              "privacy",
+              "folders",
+              "learned_apps"
+            ]
+          },
+          "description": "What a reset never touches."
+        }
+      },
+      "required": [
+        "ok",
+        "reset",
+        "kept"
       ],
       "additionalProperties": false
     }

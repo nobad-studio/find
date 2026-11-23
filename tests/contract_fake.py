@@ -6,7 +6,7 @@ from nobadfind.activity import Activity
 from nobadfind.const import DEFAULTS
 from nobadfind.rpc import handlers
 from nobadfind.rpc.events import Events
-from nobadfind.settings import coerce
+from nobadfind.settings import coerce, power_compat
 
 UPDATE_NOTES = "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0"
 RESULT = {"id": 7, "path": "C:\\Users\\me\\Documents\\tax 2025.pdf", "name": "tax 2025.pdf",
@@ -176,12 +176,25 @@ class FakeApi:
                if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
         if new.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del new["secret_app_files"]
+        power_compat(new, self.settings)
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)
         out = {"changed": changed}
         if set(changed) & {"hotkey", "bar_hotkey", "bar"}:
             out["hotkeys"] = self.hotkey_state()
         return out
+
+    def performance_state(self):
+        """The real performance.state over the fixed PC (Iris Xe, no DirectML, the Vulkan runtime), a 16-thread plan."""
+        from nobadfind import performance
+        plan = {"cpu": 16, "text_workers": 8, "text_workers_idle": 15}
+        return performance.state(self.settings, self.hardware(), plan, "llama-vulkan")
+
+    def reset_safe_defaults(self):
+        from nobadfind.const import SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
+        self._note("reset_safe_defaults")
+        self.set_settings({k: DEFAULTS[k] for k in SAFE_DEFAULTS})
+        return {"ok": True, "reset": list(SAFE_DEFAULTS), "kept": list(SAFE_DEFAULTS_KEEP)}
 
     def hotkey_state(self):
         """Both registered, except the bar's when the bar is off (no Windows here: nothing is ever taken)."""

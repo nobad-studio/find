@@ -353,12 +353,16 @@ class NbField extends StatefulWidget {
     this.number = false,
     this.width = 190,
     required this.label,
+    this.enabled = true,
   });
   final String value;
   final ValueChanged<String> onSubmit;
   final bool number;
   final double width;
   final String label;
+
+  /// false: greyed out and not editable (the row says why).
+  final bool enabled;
 
   @override
   State<NbField> createState() => _NbFieldState();
@@ -384,7 +388,7 @@ class _NbFieldState extends State<NbField> {
   }
 
   void _submit() {
-    if (_ctl.text != widget.value) widget.onSubmit(_ctl.text);
+    if (widget.enabled && _ctl.text != widget.value) widget.onSubmit(_ctl.text);
   }
 
   @override
@@ -406,13 +410,15 @@ class _NbFieldState extends State<NbField> {
       child: Semantics(
         label: widget.label,
         textField: true,
+        enabled: widget.enabled,
         child: TextField(
           controller: _ctl,
           focusNode: _focus,
+          enabled: widget.enabled,
           onSubmitted: (_) => _submit(),
           keyboardType: widget.number ? TextInputType.number : TextInputType.text,
           inputFormatters: widget.number ? [FilteringTextInputFormatter.digitsOnly] : null,
-          style: NbType.data(13, c.text),
+          style: NbType.data(13, widget.enabled ? c.text : c.dim),
           cursorColor: c.orange,
           decoration: InputDecoration(
             isDense: true,
@@ -420,6 +426,7 @@ class _NbFieldState extends State<NbField> {
             fillColor: c.raised,
             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             enabledBorder: edge(c.line2),
+            disabledBorder: edge(c.line),
             focusedBorder: edge(c.orange),
           ),
         ),

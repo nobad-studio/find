@@ -115,8 +115,16 @@ abstract class EngineApi {
   Future<ActionResult> resetLearned([String? exe]);
   Future<Hardware?> hardware();
 
+  /// Settings > Performance (1.2.0 engines): every override with what "auto" would pick now and why. An older
+  /// engine answers -32601.
+  Future<PerformanceState> performanceState();
+
+  /// "Reset to safe defaults" (1.2.0): the goal to balanced, every override to auto. Only after the user's yes.
+  Future<ResetResult> resetSafeDefaults();
+
   // ---- settings and the index ----
   Future<Settings> getSettings();
+
   /// [consent]: `appFilesConsent` after the user's yes in the confirm dialog; the engine turns `secret_app_files`
   /// on only with it.
   Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent});
