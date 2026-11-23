@@ -35,8 +35,8 @@ class PerformancePage extends StatelessWidget {
               const ChoiceSetting(
                 'performance_goal',
                 'Goal',
-                'Quiet steps down earlier when other apps, the disk or heat keep the PC busy, and keeps background '
-                    'work off the graphics card. Balanced leaves threads free for you. Fast uses every thread, even '
+                'Quiet slows its disk work earlier when the disk is busy, steps down earlier when other apps or heat '
+                    'keep the PC busy, and keeps background work off the graphics card. Balanced leaves threads free for you. Fast uses every thread, even '
                     'while you use the PC, and still steps down when the PC needs it. Changes apply at once.',
                 [('quiet', 'Quiet'), ('balanced', 'Balanced (recommended)'), ('fast', 'Fast: every thread')],
               )
@@ -304,7 +304,8 @@ class OverridesGroup extends StatelessWidget {
         const _OverrideChoice(
           'gpu_background',
           'Graphics card for background work',
-          'On beats the goal. Battery saver, a creative app in front and the graphics memory left free still decide.',
+          'On beats the goal. Off also beats a graphics backend chosen below. Battery saver, a creative app in front '
+          'and the graphics memory left free still decide.',
         ),
         const _OverrideChoice('backend_photos', 'Photos run on'),
         const _OverrideChoice('backend_text', 'Meaning for documents runs on'),

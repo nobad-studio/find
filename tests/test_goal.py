@@ -55,6 +55,45 @@ def test_power_migrates_once(tmp_path):
     store2.close()
 
 
+def _unreadable(monkeypatch, path):
+    """settings.json can't be opened for reading (antivirus or a backup holding it); writing still works."""
+    real = open
+
+    def fake(p, mode="r", *a, **kw):
+        if str(p) == str(path) and "r" in mode:
+            raise PermissionError(13, "in use", str(p))
+        return real(p, mode, *a, **kw)
+    monkeypatch.setattr(settings_mod, "open", fake, raising=False)
+
+
+def test_a_settings_file_that_cant_be_read_is_never_overwritten_and_migrates_later(tmp_path, monkeypatch):
+    raw = {"settings_rev": 3, "power": "boost", "roots": [str(tmp_path)], "scope": "custom",
+           "exclude": [str(tmp_path / "private")], "hotkey": "ctrl+alt+f"}
+    cases = {"unreadable": json.dumps(raw).encode("utf-8"), "corrupt": b'{"power": "boost", "roots": [',
+             "not a dict": b'["power", "boost"]'}
+    for name, body in cases.items():
+        d = tmp_path / name.replace(" ", "_")
+        d.mkdir()
+        path = d / "s.json"
+        path.write_bytes(body)
+        with monkeypatch.context() as m:
+            if name == "unreadable":
+                _unreadable(m, path)
+            a, store, st = _api(d, str(path))
+            assert st.settle_goal() is False, name                      # nothing saved over it
+        assert path.read_bytes() == body, name                          # byte for byte
+        assert store.meta("goal_migrated") is None, name                # tried again at the next start
+        store.close()
+    # the next start reads the file: it migrates as usual, with everything the user had
+    d = tmp_path / "unreadable"
+    a, store, st = _api(d, str(d / "s.json"))
+    assert st.get("performance_goal") == "fast" and store.meta("goal_migrated") == "1"
+    saved = json.loads((d / "s.json").read_text(encoding="utf-8"))
+    assert saved["performance_goal"] == "fast" and saved["scope"] == "custom" and saved["hotkey"] == "ctrl+alt+f"
+    assert saved["exclude"] == [str(tmp_path / "private")] and saved["roots"] == [str(tmp_path)]
+    store.close()
+
+
 def test_balanced_power_migrates_to_balanced_and_a_new_install_is_balanced(tmp_path):
     a, store, st = _api(tmp_path, _settings_file(tmp_path, power="balanced"))
     assert st.get("performance_goal") == "balanced" and store.meta("goal_migrated") == "1"
@@ -143,6 +182,19 @@ def test_quiet_steps_down_earlier():
     assert d.level == g.PAUSED and len(apps.lags) == 1
 
 
+def test_back_at_quiet_the_cpu_rule_waits_its_full_on_for_again():
+    b = brain(performance_goal="quiet")
+    busy = dict(cpu=75.0, find_cpu=10.0)                 # others' CPU 65%
+    for t in (0, 2):                                     # counting towards ON_FOR, not on yet
+        assert b.decide(smp(t, **busy)).level == g.GENTLE
+    b.settings.kw["performance_goal"] = "balanced"
+    assert b.decide(smp(3, **busy)).level == g.GENTLE    # another goal: the half-counted wait is forgotten
+    b.settings.kw["performance_goal"] = "quiet"
+    assert b.decide(smp(4, **busy)).level == g.GENTLE    # not on at once (it would be, counted from t=0)
+    assert b.decide(smp(6, **busy)).level == g.GENTLE
+    assert b.decide(smp(8, **busy)).level == g.LIGHT     # ON_FOR (4 s) from t=4
+
+
 def test_quiet_waits_twice_as_long_to_step_up_and_keeps_background_work_off_the_gpu():
     b = brain(performance_goal="quiet")
     assert b.decide(smp(0, battery_saver=True)).level == g.LIGHT
@@ -196,6 +248,29 @@ def test_override_never_crosses_safety_limit():
     assert eff["cpu"] == "efficiency" and eff["gpu"] == {"onnx": "balanced", "llamacpp": "balanced"}
     assert eff["memory"] == classes["memory"] and "you chose" in eff["why"]["cpu"].lower()
     assert profile.effective(classes, FakeSettings())["cpu"] == classes["cpu"]
+
+
+def test_graphics_card_off_beats_a_forced_directml_for_meaning():
+    full = g.Decision(g.FULL, "")
+    quiet = g.Decision(g.FULL, "", gpu_background=False)
+    S = FakeSettings
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="directml", gpu_background="off")) is False
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto", gpu_background="off")) is False
+    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="directml")) is True       # an override beats the goal
+    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="auto")) is False          # quiet on auto: processor
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto")) is True
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="cpu", gpu_background="on")) is False
+    assert indexer.text_gpu(g.GENTLE, full, S(backend_text="directml", gpu_background="on")) is False
+    saver = g.Decision(g.FULL, "", gpu=False)                                         # battery saver / creative app
+    assert indexer.text_gpu(g.FULL, saver, S(backend_text="directml", gpu_background="on")) is False
+    # the Performance page says so
+    from nobadfind import performance
+    pc = {"backends": {"onnx": ["cpu", "directml"], "llamacpp": ["cpu"]}}
+    rows = performance.state(S(backend_text="directml", gpu_background="off"), pc, {"cpu": 8}, "llama-cpu")["rows"]
+    assert rows["backend_text"]["auto"] == "cpu" and "Off" in rows["backend_text"]["why"]
+    assert rows["backend_text"]["note"].startswith("The graphics card for background work is Off, and Off wins")
+    rows = performance.state(S(gpu_background="on", performance_goal="quiet"), pc, {"cpu": 8}, "llama-cpu")["rows"]
+    assert rows["backend_text"]["auto"] == "directml" and rows["backend_text"]["note"] == ""
 
 
 def test_reset_safe_defaults_resets_and_keeps(tmp_path):

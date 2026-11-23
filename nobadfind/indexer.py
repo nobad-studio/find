@@ -97,6 +97,21 @@ def plan(settings, roots, ssd=None):
             "model_threads": models, "boost": boost, "goal": goal}
 
 
+def text_gpu(level, d, settings):
+    """Meaning for documents on the graphics card now (DirectML), or the processor. Only at Full, and never with
+    battery saver on or a creative app in front (Decision.gpu). Then the user's choices:
+    - backend_text "cpu" means the processor;
+    - gpu_background "off" means the processor too, even with backend_text "directml" (the narrowing choice wins);
+    - a forced backend_text graphics backend beats the goal.
+    On auto, the goal and gpu_background decide (Decision.gpu_background)."""
+    backend = settings.get("backend_text") or "auto"
+    if level != FULL or not getattr(d, "gpu", True) or backend == "cpu":
+        return False
+    if settings.get("gpu_background") == "off":
+        return False
+    return backend != "auto" or bool(getattr(d, "gpu_background", True))
+
+
 def user_roots():
     """Downloads, Desktop, Documents, Pictures, Videos, Music (Windows' known folders: they follow OneDrive and
     "move this folder") and OneDrive itself: read, looked at and understood before the rest of the PC (0.9.1)."""
@@ -950,12 +965,7 @@ class Indexer:
         if not self._vectors_in_worker:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
-        # not with battery saver on or a creative app in front (Decision.gpu): processor only. Then the user's
-        # backend_text (processor, or a graphics backend: beats the goal), then the goal (Decision.gpu_background)
-        d = self.governor.decision if self.governor is not None else None
-        backend = self.settings.get("backend_text") or "auto"
-        gpu = level == FULL and getattr(d, "gpu", True) and backend != "cpu" and (
-            backend != "auto" or getattr(d, "gpu_background", True))
+        gpu = text_gpu(level, self.governor.decision if self.governor is not None else None, self.settings)
         plan_now = self.status.get("plan") or {}
         if self._mpool is not None and (self._mpool_gpu != gpu or self._mpool_model != mid
                                         or getattr(self, "_mpool_plan", None) != plan_now.get("model_threads")):

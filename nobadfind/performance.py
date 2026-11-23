@@ -34,19 +34,27 @@ def state(st, pc, plan, talk_rid):
                          "creative app in front.")
     row("gpu_background", bg, why, ["auto", "on", "off"])
 
-    def backend(key, avail, auto, why, instead):
+    def backend(key, avail, auto, why, instead, note=""):
         v = st.get(key)
-        note = (f"{name.get(v, v)} isn't available on this PC now, so {instead}."
-                if v not in ("auto", None) and v not in avail else "")
+        if v not in ("auto", None) and v not in avail:
+            note = f"{name.get(v, v)} isn't available on this PC now, so {instead}."
         row(key, auto, why, ["auto"] + list(avail), note)
 
     backend("backend_photos", ["cpu"], "cpu", "Photos are looked at on the processor in this version.",
             "photos run on the processor")
-    text_auto = "directml" if dml and bg == "on" else "cpu"
-    backend("backend_text", onnx, text_auto,
-            "Meaning for documents uses DirectML at Full and the processor otherwise." if text_auto != "cpu"
-            else "Meaning for documents runs on the processor: " + why[0].lower() + why[1:],
-            "meaning runs on the processor")
+    # the user's gpu_background beats the goal; "off" also beats a forced graphics backend (indexer.text_gpu)
+    user_bg = st.get("gpu_background")
+    off = user_bg == "off"
+    text_auto = "directml" if dml and (user_bg if user_bg in ("on", "off") else bg) == "on" else "cpu"
+    if text_auto != "cpu":
+        text_why = "Meaning for documents uses DirectML at Full and the processor otherwise."
+    elif off:
+        text_why = "Meaning for documents runs on the processor: the graphics card for background work is Off."
+    else:
+        text_why = "Meaning for documents runs on the processor: " + why[0].lower() + why[1:]
+    backend("backend_text", onnx, text_auto, text_why, "meaning runs on the processor",
+            "The graphics card for background work is Off, and Off wins: meaning runs on the processor."
+            if off and st.get("backend_text") not in ("auto", "cpu", None) else "")
     talk = "vulkan" if talk_rid == "llama-vulkan" and "vulkan" in llama else "cpu"
     backend("backend_talk", llama, talk, "Talk about a photo uses the Vulkan runtime installed here."
             if talk == "vulkan" else "Talk about a photo uses the processor runtime.",

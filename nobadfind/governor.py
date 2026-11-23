@@ -285,8 +285,8 @@ class Brain:
             others = None if s.cpu is None else max(0.0, s.cpu - (s.find_cpu or 0.0))
             self.quiet_cpu.update(s.t, others is not None and others >= L["QUIET_HOT_CPU"],
                                   others is None or others < L["QUIET_HOT_CPU"])
-        elif self.quiet_cpu.on:
-            self.quiet_cpu = _Latch()                            # another goal now: forgotten at once
+        elif self.quiet_cpu.on or self.quiet_cpu._want_since is not None:
+            self.quiet_cpu = _Latch()       # another goal now: forgotten at once, so back at quiet it waits ON_FOR
         front = _app_listed(s.foreground, self._creative_apps()) and not s.foreground_is_self
         self.creative.update(s.t, front, not front)
         if self.creative.on and front:

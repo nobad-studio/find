@@ -362,7 +362,7 @@ class Api:
             if self._store.meta("goal_migrated") == "1":
                 return
             if not self._settings.settle_goal():
-                log("performance goal: settings couldn't be saved; taken from power again at the next start", "warn")
+                log("performance goal: settings couldn't be read or saved; taken from power again at the next start", "warn")
                 return
             self._store.set_meta("goal_migrated", "1")
             log(f"performance goal {self._settings.get('performance_goal')} (from power)")

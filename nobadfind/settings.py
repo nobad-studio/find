@@ -179,7 +179,8 @@ class Settings:
         self._retry_thread = None                       # _retry_later
         self._retry_now = threading.Event()             # set: the waiting retry tries at once (tests, quit)
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
-        self.goal_pending = True                        # performance_goal isn't in the file yet (settle_goal)
+        self.goal_pending = False                       # the file was read and has no performance_goal (settle_goal)
+        self.read_failed = False                        # settings.json is there but couldn't be read or isn't settings
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
@@ -191,17 +192,20 @@ class Settings:
                     self.data["games_mode"] = "off"
                 if "scope" not in raw:          # before scopes: a folder list meant exactly those folders
                     self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
-                if "performance_goal" in raw:   # 1.2.0: the goal decides; power only mirrors it
-                    self.goal_pending = False
-                else:                           # older settings: the goal from power, saved once (Api._migrate_goal)
+                if "performance_goal" not in raw:   # older settings: the goal from power, saved once (_migrate_goal)
                     self.data["performance_goal"] = goal_from_power(self.data["power"])
+                    self.goal_pending = True
                 self.data["power"] = power_from_goal(self.data["performance_goal"])
                 rev = raw.get("settings_rev") if isinstance(raw.get("settings_rev"), int) else 0
                 self.data["settings_rev"] = rev
                 self._plain = set(self.data["exclude"])
                 self._migrate()
+            else:
+                self.read_failed = True                 # not a settings object: never saved over by settle_goal
+        except FileNotFoundError:
+            pass                                        # a new install: the defaults, nothing to migrate
         except (OSError, ValueError):
-            pass
+            self.read_failed = True                     # in use, unreadable or corrupt: left as it is
         self._load_forgotten()
 
     # ---------- what Forget added (DPAPI-protected, apart from settings.json) ----------
@@ -372,9 +376,13 @@ class Settings:
             pass                                    # read-only folder: the same changes run at the next start
 
     def settle_goal(self):
-        """Save the goal taken from power (an older settings file, or none yet), once. True when the file holds
-        performance_goal now; False when it couldn't be saved (the same goal is taken again at the next start)."""
+        """Save the goal taken from power (an older settings file), once. True when nothing is left to do (the file
+        holds performance_goal now, or there is no file and the goal is the default); False when the file couldn't
+        be read or saved, so the migration runs again at the next start. A file that couldn't be read is never
+        written here: that would replace the user's settings with the defaults."""
         with self._lock:
+            if self.read_failed:
+                return False
             if self.goal_pending:
                 try:
                     self._save()
