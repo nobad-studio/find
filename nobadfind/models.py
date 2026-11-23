@@ -10,6 +10,7 @@ Tiers (the spec's table):
   best      16 GB+ and 8+ cores, or DirectML   multilingual-e5-base, SigLIP 2 base, Windows OCR
             with 4 GB+ of video memory
 """
+import json
 import math
 import os
 
@@ -178,6 +179,117 @@ NEEDS = {"light": (0.0, 1), "balanced": (7.5, 4), "best": (15.0, 8)}
 
 def get(mid):
     return _BY_ID.get(mid)
+
+
+# ---------- variants and their measured needs (spec 2026-11-22 hardware intelligence §5.1) ----------
+# A variant is one way to run a model: its files (None = the model's own files above), the backends it runs on with
+# what it was measured to need there (ram_mb, vram_mb, and items_s, or first_word_s for talk; "source" names the
+# docs/measurements.md section), its ONNX session options and the variants whose vectors are interchangeable with
+# it (equivalent_to). These per-backend needs are the earlier single measurements, not a profile: what a reference
+# profile measured is MEASURED below, and only that may be used to suggest a model for a PC.
+BACKENDS = ("cpu", "directml", "cuda", "vulkan")
+_REPIN = "2026-11-22: SigLIP 2 \"best\" tier re-pinned (4 threads, quiet PC, process private memory)"
+_TEXT_SRC = "2026-11-19 (0.8.0 engine): text models (one process, passages/s while indexing on 8 threads)"
+_TALK_SRC = ("2026-11-22 (1.1.0): talk about a photo through the real worker (memory: peak private or working set, "
+             "the bigger; graphics: shared) and release fix (first_word_s: slowest warm first word at Gentle)")
+# passages a second while indexing, English set (measurements.md 2026-11-19 0.8.0, the text-models table)
+_TEXT_ITEMS_S = {"minilm-l6-v2": 32.9, "gte-small": 54.3, "multilingual-e5-small": 30.2,
+                 "multilingual-e5-base": 8.3, "bge-base-en-v1.5": 16.3}
+_VARIANTS = {
+    "siglip-base": [
+        {"id": "8bit", "files": None, "session": {}, "equivalent_to": [],
+         "backends": {"cpu": {"ram_mb": 148, "vram_mb": 0, "items_s": 4.0, "source": _REPIN}}}],
+    # fp16 and fp32 vision gave the same vectors on 50 photos (cosine 1.00000, measurements.md _REPIN); the spec's
+    # 200-input equivalence check is still to be run before the fp32 variant ships.
+    "siglip2-base": [
+        {"id": "fp16-vision", "files": None, "session": {"basic_opt": True, "no_arena": True},
+         "equivalent_to": ["fp32-vision"],
+         "backends": {"cpu": {"ram_mb": 207, "vram_mb": 0, "items_s": 2.9, "source": _REPIN}}},
+        # not downloadable yet: its file (onnx/vision_model.onnx at the model's revision) has no pinned size and
+        # SHA-256 in this catalog, so embed._fetch_verified can't fetch it
+        {"id": "fp32-vision", "files": {"vision.onnx": ("onnx/vision_model.onnx", None, None)}, "pinned": False,
+         "session": {"no_arena": True}, "equivalent_to": ["fp16-vision"],
+         "backends": {"cpu": {"ram_mb": 370, "vram_mb": 0, "items_s": 4.6, "source": _REPIN}}}],
+    "smolvlm2-500m": [
+        {"id": "q8_0", "files": None, "session": {}, "equivalent_to": [],
+         "backends": {"cpu": {"ram_mb": 610, "vram_mb": 0, "first_word_s": 9.25, "source": _TALK_SRC},
+                      "vulkan": {"ram_mb": 1031, "vram_mb": 665, "first_word_s": 2.58, "source": _TALK_SRC}}}],
+    "qwen3vl-2b": [
+        {"id": "q4_k_m", "files": None, "session": {}, "equivalent_to": [],
+         "backends": {"cpu": {"ram_mb": 2373, "vram_mb": 0, "first_word_s": 9.65, "source": _TALK_SRC},
+                      "vulkan": {"ram_mb": 2483, "vram_mb": 2062, "first_word_s": 3.26, "source": _TALK_SRC}}}],
+}
+
+
+def variants(mid):
+    """The model's variants (a copy). A text model has one, from its measured row. KeyError for an unknown id."""
+    m = _BY_ID[mid]
+    if m["feature"] == "text":
+        vs = [{"id": "default", "files": None, "session": {}, "equivalent_to": [],
+               "backends": {"cpu": {"ram_mb": m["ram_mb"], "vram_mb": 0, "items_s": _TEXT_ITEMS_S[mid],
+                                    "source": _TEXT_SRC}}}]
+    else:
+        vs = _VARIANTS.get(mid, [])
+    out = []
+    for v in vs:
+        v = dict(v, backends={b: dict(n) for b, n in v["backends"].items()}, equivalent_to=list(v["equivalent_to"]),
+                 session=dict(v["session"]))
+        v["tag"] = vector_tag(mid)
+        out.append(v)
+    return out
+
+
+# What tools/bench_profiles.py measured on the reference PC (i5-12500H, 16 threads, 15.7 GB, Iris Xe: no
+# dedicated graphics memory) emulating each reference profile at Gentle: (model, variant, backend, profile) -> row.
+# docs/measurements.md "2026-11-23: reference-profile benchmark (mid measured)" lists every run. A combination missing here was
+# NOT measured: it is never suggested. "floor" is each floor dimension's verdict: pass | fail | not measured.
+# ram_mb = the worker's whole-process peak private bytes; ws_mb its peak working set. On Vulkan (Iris Xe: shared
+# memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own, and
+# ram_upper_bound_mb = private + shared is only the upper bound for the RAM budget (the two may overlap).
+# Measured 2026-11-23 on mid only (8 threads by job affinity, Gentle): the low and high runs were stopped by memory
+# pressure on the PC and are not measured; degradation needs them, so it is "not measured" everywhere.
+_BENCH = "measurements.md 2026-11-23: reference-profile benchmark (mid)"
+_NOT_DEGR = {"degradation": "not measured"}
+MEASURED = {
+    ("siglip2-base", "fp16-vision", "cpu", "mid"): {
+        "workload": "photo_search", "items_s": 1.416, "query_ms": 196.5, "query_p50_ms": 179.6, "ram_mb": 598,
+        "ws_mb": 621, "vram_mb": 0, "shared_mb": 0, "first_vector_s": 5.4, "photos": 500, "searches": 50,
+        "crashes": 0, "kills": 0, "visual_ndcg10": 0.812, "visual_recall10": 0.866,
+        "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
+                      availability="pass"), "source": _BENCH},
+    ("smolvlm2-500m", "q8_0", "cpu", "mid"): {
+        "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 13.53, "cold_first_word_s": 7.94,
+        "load_s": 0.38, "ram_mb": 535, "ws_mb": 628, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 628,
+        "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
+        "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
+                      availability="pass"), "source": _BENCH},
+    ("smolvlm2-500m", "q8_0", "vulkan", "mid"): {
+        "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 5.77, "cold_first_word_s": 5.14,
+        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "ram_upper_bound_mb": 1696,
+        "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
+        "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
+                      availability="pass"), "source": _BENCH},
+    ("qwen3vl-2b", "q4_k_m", "cpu", "mid"): {
+        "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 17.62, "cold_first_word_s": 12.74,
+        "load_s": 3.87, "ram_mb": 1743, "ws_mb": 2410, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 2410,
+        "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
+        "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="fail", memory="pass",
+                      availability="pass"), "source": _BENCH},
+    ("qwen3vl-2b", "q4_k_m", "vulkan", "mid"): {
+        "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 12.08, "cold_first_word_s": 12.08,
+        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "ram_upper_bound_mb": 4549,
+        "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
+        "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
+                      availability="pass"), "source": _BENCH},
+}
+
+
+def measured(mid, variant, backend, profile):
+    """The benchmark's row for this model, variant, backend and reference profile (a copy), or None when it was not
+    measured: {"workload", "items_s", "query_ms", "ram_mb", "vram_mb", ["first_word_s", "load_s"], "floor",
+    "source", ...}."""
+    row = MEASURED.get((mid, variant, backend, profile))
+    return None if row is None else json.loads(json.dumps(row))
 
 
 def vector_tag(mid):

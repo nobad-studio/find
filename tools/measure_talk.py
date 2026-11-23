@@ -285,7 +285,7 @@ def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi,
     if a.alloc_limit_mb:
         jobs.WORKERS.set_memory_limit(a.alloc_limit_mb)
     t = worker.Talker(emit, on_budget=budget, trace=seen)
-    peak = {"ded": 0.0, "sh": 0.0, "ws": 0.0, "private": 0.0, "min_free": free0}
+    peak = {"ded": 0.0, "sh": 0.0, "ws": 0.0, "private": 0.0, "min_free": free0, "hang_kills": 0}
     state = {"in_job": False, "eco": False, "pid": None}
     stop = threading.Event()
 
@@ -308,6 +308,7 @@ def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi,
                 except Exception:
                     pass
             if t.check_deadline():                            # the governor's tick: the real hang deadline
+                peak["hang_kills"] += 1
                 print("DEADLINE: the worker was ended as hung", flush=True)
             time.sleep(0.25)
     threading.Thread(target=sampler, daemon=True).start()
@@ -341,7 +342,7 @@ def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi,
         return None
 
     rows = []
-    jobs_to_run = JOBS[:1] if a.alloc_limit_mb else JOBS
+    jobs_to_run = JOBS[:1] if a.alloc_limit_mb else (getattr(a, "job_list", None) or JOBS)   # bench_profiles: 10
     for op, imgs, q in jobs_to_run:
         jid, t0 = submit(op, imgs, q)
         done = finished(jid)
@@ -427,7 +428,8 @@ def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi,
             "min_free_mb": round(peak["min_free"]), "hog": bool(hogp), "floor_mb": a.floor_mb if hogp else None,
             "alloc_limit_mb": a.alloc_limit_mb or None, "assess": verdict,
             "peak_private_mb": round(peak["private"]), "peak_working_set_mb": round(peak["ws"]),
-            "gpu_dedicated_mb": round(peak["ded"]), "gpu_shared_mb": round(peak["sh"]), "jobs": rows, "stops": stops}
+            "gpu_dedicated_mb": round(peak["ded"]), "gpu_shared_mb": round(peak["sh"]), "hang_kills": peak["hang_kills"],
+            "jobs": rows, "stops": stops}
 
 
 if __name__ == "__main__":

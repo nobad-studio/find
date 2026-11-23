@@ -4,6 +4,97 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-23: reference-profile benchmark (mid measured)
+
+`tools/bench_profiles.py` (dev only). It measures each model, variant and runtime against every dimension of the
+floor (the plan's floors table), on the reference PC (i5-12500H, 16 threads, 15.7 GB, Iris Xe with no dedicated
+graphics memory: its "video" memory is system RAM).
+- **Emulation of `mid`:** 8 threads (CPUs 0-7) set by the job object's affinity. Every process in each run was
+  checked to be on CPUs 0-7.
+- **Level:** Gentle, for an 8-thread PC: the worker group's CPU hard cap is 35 % of 8 threads (job CPU rate 17.5 %
+  of this PC's 16). The photo worker gets 4 threads (`governor.op_limits` at Gentle) and idle priority.
+- **Memory cap:** Find's worker cap for 16 GB, 4,096 MB. The talk worker gets the model's measured need on top, as
+  in the app.
+- **Code measured:** the app's own: `photo.embed_photo` / `photo.open_session`, which loads the fp16 vision with
+  basic optimization and the arena off; ONNX Runtime logs the first, failed attempt. Talk goes through
+  `vlm.worker.Talker` via `tools/measure_talk.py`'s runner.
+- **Free memory:** before each run, at least 2.5 GB free and no full-screen game. Free memory was 4.3-4.5 GB
+  before the runs (other programs were open). During the Qwen runs it fell to 1.6-1.7 GB.
+- **Cold loads:** every cold load found the model files already in Windows' file cache. A first load after a
+  restart was not measured.
+
+**What was measured, and what wasn't:**
+- Only `mid` was measured (5 runs, 14.7 min of PC time).
+- The `low` and `high` runs were stopped because the PC ran low on memory, and nothing was recorded for them.
+  Every low and high cell is **not measured**.
+- **Graceful degradation** needs the run on the next smaller profile, so it is **not measured** everywhere.
+- **Not on the PC, so not run:** SigLIP 2 fp32 vision (its file isn't pinned in the catalog yet) and SigLIP base.
+- **Discrete GPU:** no rows, and no estimates published (this PC has none).
+
+### photo_search
+
+- **Indexing:** 500 photos (the first 500 of the 556-photo set's folder).
+- **Searches:** 50 searches (the first 50 non-negative questions), warm: the question encoded as the app does
+  (`encode_question`, uncached), then scored against the 500 vectors.
+- **Usefulness:** not measured by this benchmark. It comes from the recorded evaluation (`eval_photo_search`,
+  2026-11-22 "SigLIP 2 base vs SigLIP base, side by side", result files `pm-s2-tq-v16.json` and
+  `pm-siglip-base.json`): Find's pipeline on the searches whose channels include V (look) or C (caption), weighted
+  by their counts (56 + 28). Nothing was tuned.
+- **Memory:** worker peak = the whole process's peak private bytes. That is more than the vision-only 207 MB in
+  the re-pin section, which was the vision session's own memory.
+
+| profile | model, variant | photos/s (Gentle) | first vector | worker peak private / working set | search p50 / p95 | crashes / watchdog kills | usefulness V+C nDCG@10 / recall@10 | Usefulness | Reliability | Responsiveness | Memory (≤ 1,638 MB) | Availability | Degradation |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mid | SigLIP 2 base, fp16 vision + 8-bit text | 1.42 (500/500) | 5.4 s | 598 / 621 MB | 180 / 197 ms | 0 / 0 | 0.812 / 0.866 (V 0.821 / 0.877, C 0.794 / 0.844) | pass | pass | pass | pass | pass (CPU) | not measured |
+| mid | SigLIP 2 base, fp32 vision | not measured | not measured | not measured | not measured | not measured | same vectors as fp16 on 50 photos (re-pin section) | not measured | not measured | not measured | not measured | not measured | not measured |
+| mid | SigLIP base (8-bit) | not measured (side by side: 556 photos in 151 s, CPU, not at a profile, while a Qwen job ran) | not measured | not measured | not measured | not measured | 0.776 / 0.856 (V 0.778 / 0.860, C 0.771 / 0.849; side by side, 2026-11-22) | pass (2026-11-22) | not measured | not measured | not measured | not measured | not measured |
+| low, high | every photo model | not measured | | | | | | | | | | | |
+
+The search-time figure is the question encoder plus a plain dot over 500 vectors, not the whole `search.search`;
+the search process peaked at 632 MB private (the engine side, not the worker). 368 s for the run.
+
+### photo_talk
+
+10 jobs on one fresh worker: Describe, Ask, Compare on the `tools/vision_bench` photos, plus the three checks of
+`tests/test_vlm_session.py`'s real-model test (a red circle described as red or a circle, "What colour is the
+shape?" answered red, a compare that answers). The first job is the cold load.
+- **First word:** p95 by nearest rank (with 10 jobs, the slowest).
+- **Load:** model + context + vision part, in the cold job.
+- **Memory:** private, working set and shared graphics memory are listed separately. The shared memory is never
+  counted as graphics capacity. Private + shared is listed only as an upper bound for the RAM budget on this
+  integrated GPU; the two may overlap.
+- **Floor memory:** the biggest single figure, against 25 % of 16 GB = 4,096 MB. Qwen on Vulkan passes by that
+  figure (2,491 MB), but its upper bound (4,549 MB) is over the budget. If private and shared don't overlap, it
+  would fail.
+
+| profile | model, runtime | runs done | first word p95 | cold first word | load | private / working set / shared graphics | private + shared (upper bound) | crashes / hang kills / watchdog kills | checks | Usefulness | Reliability | Responsiveness (≤ 15 s, ≤ 30 s) | Memory (≤ 4,096 MB) | Availability | Degradation |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| mid | SmolVLM2 500M, llama-cpu | 10/10 | 13.5 s | 7.9 s | 0.4 s | 535 / 628 / 0 MB | 535 MB | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass | pass | not measured |
+| mid | SmolVLM2 500M, llama-vulkan | 10/10 | 5.8 s | 5.1 s | 1.3 s | 1,033 / 786 / 663 MB | 1,696 MB | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass | pass (CPU path passed) | not measured |
+| mid | Qwen3-VL 2B, llama-cpu | 10/10 | **17.6 s** | 12.7 s | 3.9 s | 1,743 / 2,410 / 0 MB | 1,743 MB | 0 / 0 / 0 | 3/3 | pass | pass | **fail** (first word) | pass | pass | not measured |
+| mid | Qwen3-VL 2B, llama-vulkan | 10/10 | 12.1 s | 12.1 s | 6.2 s | 2,491 / 2,247 / 2,058 MB | 4,549 MB (over 4,096 if they don't overlap) | 0 / 0 / 0 | 3/3 | pass | pass | pass | pass (biggest figure) | pass (CPU path passed) | not measured |
+| low, high | every talk model and runtime | not measured | | | | | | | | | | | | | |
+
+**Runs, in order:**
+- SmolVLM2 on the CPU: first words 7.94, 9.38, 13.33, 6.74, 6.75, 7.03, 13.4, 6.86, 6.72, 13.53 s.
+- SmolVLM2 on Vulkan: 5.14, 3.25, 5.77, 2.41, 2.36, 2.72, 5.64, 2.92, 2.85, 4.6 s.
+- Qwen on the CPU: 12.74, 8.17, 17.45, 8.6, 7.88, 8.35, 15.51, 8.96, 8.76, 17.62 s.
+- Qwen on Vulkan: 12.08, 4.54, 8.21, 4.95, 5.31, 4.6, 6.87, 5.66, 5.65, 9.49 s.
+
+**What the slow ones were and how long each run took:**
+- The Compares were the slowest first words.
+- Every run read the sign as "EXIT".
+- Run times: 99 / 47 / 189 / 180 s.
+
+**Catalog:** `models.MEASURED` holds these 5 rows only. `models.measured()` returns None for everything else
+("not measured": never suggested).
+
+### text
+
+No text model files were on the PC, so the text workload was not benchmarked per profile. Its only figures are the
+earlier ones: 2026-11-19 (0.8.0 engine), the text-models table (passages/s on 8 threads, at no particular level,
+and RAM of one process). `models.variants` carries them, labelled with that source.
+
 ## 2026-11-23 (1.1.1): the index totals on a big index (`Store.stats`)
 
 A user's index, read-only on the maintainer's PC: SQLCipher, 10.8 GB plus a 417 MB WAL; 950,903 files, 6.3 M
