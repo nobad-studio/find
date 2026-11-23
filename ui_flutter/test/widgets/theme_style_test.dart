@@ -1,5 +1,5 @@
-// The theme style (Settings > General): Classic by default, Minimal ice at once when chosen (the window's glass and
-// the palette), and the icon tiles follow it.
+// The theme style (Settings > General): Classic by default, Minimal ice at once when chosen (the palette and the
+// icons), and back. Both styles ask Windows for the same glass (Acrylic), so the backdrop isn't asked for again.
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/app/scope.dart';
@@ -8,10 +8,12 @@ import 'package:nobad_find/widgets/icons.dart';
 
 import '../support/fake_engine.dart';
 
-/// The colour of [g]'s glyph inside its icon tile.
-Color glyphColour(WidgetTester tester, NbGlyph g) {
-  final icon = find.byWidgetPredicate((w) => w is NbIcon && w.glyph == g);
-  return tester.widget<NbIcon>(find.descendant(of: find.byType(GlyphTile), matching: icon).first).color;
+/// The palette's icon box: its glyph's colour, and whether it draws a tile.
+(Color, bool) glyphLook(WidgetTester tester, NbGlyph g) {
+  final tile = find.byWidgetPredicate((w) => w is GlyphTile && w.glyph == g).first;
+  final icon = tester.widget<NbIcon>(find.descendant(of: tile, matching: find.byType(NbIcon)));
+  final boxed = find.descendant(of: tile, matching: find.byType(Container)).evaluate().isNotEmpty;
+  return (icon.color, boxed);
 }
 
 void main() {
@@ -24,22 +26,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Theme style'), findsOneWidget);
     expect(find.text('Classic'), findsOneWidget);
-    expect(w.ices.last, isFalse); // Mica
+    final looks = w.looks.length;
     var c = NbColors.of(tester.element(find.text('Theme style')));
     expect(c.ice, isFalse);
-    expect(glyphColour(tester, NbGlyph.palette), c.tint(GlyphTile.tints[NbGlyph.palette]!)); // its own colour
+    // Classic: the meaning's own hue, on a tile
+    expect(glyphLook(tester, NbGlyph.palette), (c.tint(GlyphTile.tints[NbGlyph.palette]!), true));
 
     await scope.settings.set('theme_style', 'ice');
     await tester.pumpAndSettle();
     expect(engine.settingsSet.last, {'theme_style': 'ice'});
-    expect(w.ices.last, isTrue); // Acrylic, asked for again at once
     c = NbColors.of(tester.element(find.text('Theme style')));
     expect(c.ice, isTrue);
-    expect(glyphColour(tester, NbGlyph.palette), c.iceGlyph); // the quiet tiles
+    // Minimal ice: the cool white glyph on its monochrome tile
+    expect(glyphLook(tester, NbGlyph.palette), (c.iceGlyph, true));
+    expect(w.looks.length, looks); // the same Acrylic for both styles
 
     await scope.settings.set('theme_style', 'classic');
     await tester.pumpAndSettle();
-    expect(w.ices.last, isFalse);
     expect(NbColors.of(tester.element(find.text('Theme style'))).ice, isFalse);
   });
 }

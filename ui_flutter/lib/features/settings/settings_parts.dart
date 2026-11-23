@@ -24,13 +24,17 @@ class SettingsGroup extends StatelessWidget {
   final NbGlyph icon;
   final List<Widget> rows;
 
+  /// Each group's card (the alignment test finds them by it).
+  static const cardKey = ValueKey('settings-group-card');
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    // every group's card spans the page column, so the cards of a page share their edges
     return Padding(
       padding: const EdgeInsets.only(bottom: NbSpace.x5),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 2, bottom: 8),
@@ -48,7 +52,8 @@ class SettingsGroup extends StatelessWidget {
             ),
           ),
           Glass(
-            radius: 18,
+            key: SettingsGroup.cardKey,
+            radius: NbRadius.card,
             child: Column(
               children: [
                 for (var i = 0; i < rows.length; i++) ...[if (i > 0) Container(height: 1, color: c.line), rows[i]],

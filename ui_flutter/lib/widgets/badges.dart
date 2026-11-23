@@ -1,4 +1,4 @@
-/// The Models page look, shared (0.9.3): a coloured tile for what something is, and small fact chips, so a
+/// The Models page look, shared (0.9.3): an icon tile for what something is, and small fact chips, so a
 /// card reads at a glance instead of in sentences. Used by the Index page.
 library;
 
@@ -10,46 +10,46 @@ import '../app/theme/typography.dart';
 import 'controls.dart';
 import 'icons.dart';
 
-/// Two colours for a tile's gradient, one pair per kind of work.
+/// The kind of work a tile stands for; its colour comes from the theme's one tint table ([NbTint]).
 enum NbHue { folder, text, page, meaning, photo, library, use }
 
-(Color, Color) hueColors(NbColors c, NbHue h) => switch (h) {
-  NbHue.folder => (const Color(0xFFE0A030), c.orange),
-  NbHue.text => (c.orange, const Color(0xFFD0347A)),
-  NbHue.page => (const Color(0xFF2B8A6E), const Color(0xFF4F5DFF)),
-  NbHue.meaning => (const Color(0xFFD0347A), const Color(0xFF7B3FE4)),
-  NbHue.photo => (const Color(0xFF4F5DFF), const Color(0xFFD0347A)),
-  NbHue.library => (const Color(0xFF7B3FE4), const Color(0xFF4F5DFF)),
-  NbHue.use => (const Color(0xFF3A7BD5), const Color(0xFF2B8A6E)),
+/// Each kind of work's hue (Classic), from the same table as every other icon tile.
+NbTint hueTint(NbHue h) => switch (h) {
+  NbHue.folder => NbTint.amber,
+  NbHue.text => NbTint.orange,
+  NbHue.page => NbTint.green,
+  NbHue.meaning => NbTint.violet,
+  NbHue.photo => NbTint.pink,
+  NbHue.library => NbTint.blue,
+  NbHue.use => NbTint.cyan,
 };
 
-/// A rounded gradient tile with a glyph (or short text such as "Aa").
+/// An icon tile with a glyph (or short text such as "Aa"): the same tile as [GlyphTile], one size everywhere.
 class NbAvatar extends StatelessWidget {
-  const NbAvatar({super.key, required this.hue, this.glyph, this.text, this.size = 40, this.dim = false});
+  const NbAvatar({super.key, required this.hue, this.glyph, this.text, this.dim = false});
   final NbHue hue;
   final NbGlyph? glyph;
   final String? text;
-  final double size;
   final bool dim;
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    final (a, b) = hueColors(c, hue);
-    const white = Color(0xFFFFFFFF);
+    final (top, bottom, rim, ink) = GlyphTile.look(c, glyph ?? NbGlyph.info, hue: hueTint(hue));
     return Opacity(
       opacity: dim ? .45 : 1,
       child: Container(
-        width: size,
-        height: size,
+        width: GlyphTile.size,
+        height: GlyphTile.size,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(size * .28),
-          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]),
+          borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
+          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
+          border: Border.all(color: rim),
         ),
         child: text != null
-            ? Text(text!, style: NbType.text(size * .36, white, weight: FontWeight.w700, height: 1))
-            : NbIcon(glyph ?? NbGlyph.info, size: size * .45, color: white),
+            ? Text(text!, style: NbType.text(13, ink, weight: FontWeight.w600, height: 1))
+            : NbIcon(glyph ?? NbGlyph.info, color: ink),
       ),
     );
   }
@@ -206,7 +206,7 @@ class NbStat extends StatelessWidget {
       ),
       child: Row(
         children: [
-          NbAvatar(hue: hue, glyph: glyph, size: 34),
+          NbAvatar(hue: hue, glyph: glyph),
           const SizedBox(width: 10),
           Expanded(
             child: Column(

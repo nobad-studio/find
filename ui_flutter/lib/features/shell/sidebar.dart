@@ -58,7 +58,7 @@ class Sidebar extends StatelessWidget {
         width: width,
         child: Glass(
           level: GlassLevel.panel,
-          radius: 18,
+          radius: NbRadius.card,
           padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
           child: ListenableBuilder(
             listenable: Listenable.merge([s.nav, s.find]),
@@ -173,7 +173,7 @@ class _Item extends StatelessWidget {
       selected: on,
       semanticLabel: label,
       tooltip: keys == null ? null : '$label ($keys)',
-      ringRadius: const BorderRadius.all(Radius.circular(12)),
+      ringRadius: NbRadius.rowAll,
       builder: (context, p) => AnimatedContainer(
         duration: d,
         height: 32,
@@ -181,7 +181,7 @@ class _Item extends StatelessWidget {
         padding: EdgeInsets.only(left: indent ? 16 : 2, right: 8),
         decoration: BoxDecoration(
           color: on ? c.selected : (p.lit ? c.cardHover : const Color(0x00000000)),
-          borderRadius: const BorderRadius.all(Radius.circular(10)),
+          borderRadius: NbRadius.controlAll,
         ),
         child: Row(
           children: [
@@ -241,12 +241,12 @@ class _Updating extends StatelessWidget {
               key: const ValueKey('sidebar-update'),
               onTap: () => s.nav.openSettings(SettingsPage.about),
               semanticLabel: '$label. Open About',
-              ringRadius: const BorderRadius.all(Radius.circular(12)),
+              ringRadius: NbRadius.rowAll,
               builder: (context, p) => Container(
                 padding: const EdgeInsets.fromLTRB(8, 7, 8, 8),
                 decoration: BoxDecoration(
                   color: p.lit ? c.cardHover : null,
-                  borderRadius: const BorderRadius.all(Radius.circular(12)),
+                  borderRadius: NbRadius.rowAll,
                   border: Border.all(color: c.orange.withValues(alpha: .45)),
                 ),
                 child: Column(
@@ -296,12 +296,12 @@ class _Status extends StatelessWidget {
         return Pressable(
           onTap: () => s.nav.go(AppTab.indexing),
           semanticLabel: 'Indexing details',
-          ringRadius: const BorderRadius.all(Radius.circular(12)),
+          ringRadius: NbRadius.rowAll,
           builder: (context, p) => Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
             decoration: BoxDecoration(
               color: p.lit ? c.cardHover : null,
-              borderRadius: const BorderRadius.all(Radius.circular(12)),
+              borderRadius: NbRadius.rowAll,
               border: Border.all(color: c.line),
             ),
             child: Row(

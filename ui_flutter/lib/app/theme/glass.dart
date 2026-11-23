@@ -1,5 +1,5 @@
-/// The window's look on Windows 11: dark or light title bar, and Windows' glass behind the window: Mica for the
-/// Classic style, Acrylic for Minimal ice and the quick find bar (Mica if Windows refuses Acrylic) (DWM, dart:ffi).
+/// The window's look on Windows 11: dark or light title bar, and Windows' Acrylic glass behind the window in both
+/// theme styles (Mica if Windows refuses Acrylic) (DWM, dart:ffi).
 ///
 /// Glass is drawn by Windows itself (the system backdrop), so it costs this process next to nothing; with the
 /// setting off, or on Windows 10, the window is solid and the title bar takes the canvas colour.
@@ -52,17 +52,10 @@ abstract final class WindowLook {
   }
 
   /// Applies the theme to [hwnd]. Returns true when Windows took the glass (so the UI may draw see-through).
-  /// Glass is Mica (Classic), or with [ice] (the Minimal ice style) Acrylic, a frosted view of what is behind the
-  /// window drawn by Windows, and Mica when Windows refuses Acrylic. [acrylic]: the quick find bar, a transient
-  /// window: Acrylic and round corners whatever the style.
-  static bool apply(
-    int hwnd, {
-    required bool dark,
-    required bool glass,
-    required int canvasRgb,
-    bool acrylic = false,
-    bool ice = false,
-  }) {
+  /// Glass is Acrylic in both styles, a frosted view of the desktop behind the window drawn by Windows (macOS-like
+  /// vibrancy), and Mica when Windows refuses Acrylic. [acrylic]: the quick find bar, a transient window: round
+  /// corners as well.
+  static bool apply(int hwnd, {required bool dark, required bool glass, required int canvasRgb, bool acrylic = false}) {
     if (hwnd == 0 || !_load()) return false;
     return using((a) {
       final v = a<Uint32>();
@@ -74,10 +67,9 @@ abstract final class WindowLook {
       }
       var tookGlass = false;
       if (glass) {
-        final frosted = acrylic || ice;
-        v.value = frosted ? _backdropAcrylic : _backdropMica;
+        v.value = _backdropAcrylic;
         tookGlass = _set!(hwnd, _backdrop, v.cast(), 4) == 0; // fails before Windows 11 22H2
-        if (!tookGlass && frosted) {
+        if (!tookGlass) {
           v.value = _backdropMica;
           tookGlass = _set!(hwnd, _backdrop, v.cast(), 4) == 0;
         }

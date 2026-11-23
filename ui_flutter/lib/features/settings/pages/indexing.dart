@@ -327,7 +327,7 @@ class _CategoryCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ExcludeSemantics(child: NbAvatar(hue: hue, glyph: glyph, size: 40, dim: !k.included)),
+              ExcludeSemantics(child: NbAvatar(hue: hue, glyph: glyph, dim: !k.included)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -432,7 +432,7 @@ class _TurboCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ExcludeSemantics(child: NbAvatar(hue: NbHue.use, glyph: NbGlyph.gauge, size: 40, dim: !on)),
+              ExcludeSemantics(child: NbAvatar(hue: NbHue.use, glyph: NbGlyph.gauge, dim: !on)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(

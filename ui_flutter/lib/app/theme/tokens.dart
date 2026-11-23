@@ -42,6 +42,12 @@ abstract final class NbRadius {
   static const panel = Radius.circular(18);
   static const pill = Radius.circular(999);
 
+  /// Every card, panel and dialog ([Glass]'s corners).
+  static const card = 18.0;
+
+  /// Icon tiles (Settings groups, model rows, this PC's tiles).
+  static const tile = 8.0;
+
   static const keyAll = BorderRadius.all(key);
   static const controlAll = BorderRadius.all(control);
   static const rowAll = BorderRadius.all(row);

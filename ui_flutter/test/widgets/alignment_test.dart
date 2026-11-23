@@ -1,0 +1,88 @@
+// Equal sizes and alignment where they keep the original look (task D3): at the main window's size (1180 x 760)
+// the search box, Home's category row, its Recent card and the status line share their left and right edges, and
+// the category tiles are one width in one row; on every Settings page every card spans the same width and every
+// row's control ends on one column.
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:nobad_find/app/scope.dart';
+import 'package:nobad_find/app/theme/tokens.dart';
+import 'package:nobad_find/features/search/home_view.dart';
+import 'package:nobad_find/features/search/search_screen.dart';
+import 'package:nobad_find/features/settings/settings_parts.dart';
+import 'package:nobad_find/widgets/glass.dart';
+import 'package:nobad_find/widgets/pressable.dart';
+
+import '../support/fake_engine.dart';
+
+const seen = {'welcome_seen': true, 'bg_notice_seen': true};
+
+void edges(Rect a, Rect b, String what) {
+  expect(a.left, moreOrLessEquals(b.left, epsilon: .5), reason: '$what: left $a vs $b');
+  expect(a.right, moreOrLessEquals(b.right, epsilon: .5), reason: '$what: right $a vs $b');
+}
+
+void main() {
+  testWidgets('Home: the search box, the category row, the Recent card and the status line share their edges', (
+    tester,
+  ) async {
+    await pumpApp(tester, FakeEngine(settings: seen), size: const Size(1180, 760));
+    await tester.pumpAndSettle();
+    final box = tester.getRect(find.byKey(SearchScreen.boxKey));
+    edges(tester.getRect(find.byKey(HomeView.tilesKey)), box, 'category row');
+    edges(tester.getRect(find.byKey(HomeView.listKey)), box, 'Recent card');
+    // the status line's rule runs inside its own gutter margin
+    final status = tester.getRect(find.byKey(SearchScreen.statusKey));
+    edges(
+      Rect.fromLTRB(status.left + NbSpace.gutter, status.top, status.right - NbSpace.gutter, status.bottom),
+      box,
+      'status line',
+    );
+    // the category tiles: one width, one height, one row from edge to edge
+    final tiles = [
+      for (final e in find.descendant(of: find.byKey(HomeView.tilesKey), matching: find.byType(Pressable)).evaluate())
+        tester.getRect(find.byWidget(e.widget)),
+    ];
+    expect(tiles, hasLength(6));
+    for (final t in tiles) {
+      expect(t.width, moreOrLessEquals(tiles.first.width, epsilon: .5));
+      expect(t.height, tiles.first.height);
+      expect(t.top, tiles.first.top);
+    }
+    expect(tiles.first.left, moreOrLessEquals(box.left, epsilon: .5));
+    expect(tiles.last.right, moreOrLessEquals(box.right, epsilon: .5));
+  });
+
+  for (final page in SettingsPage.values) {
+    testWidgets('Settings > ${page.label}: one width for every card, one column for every control', (tester) async {
+      await pumpApp(tester, FakeEngine(settings: seen), size: const Size(1180, 760));
+      await tester.pumpAndSettle();
+      AppScope.of(tester.element(find.byType(Text).first)).nav.openSettings(page);
+      await tester.pumpAndSettle();
+
+      final cards = [for (final e in find.byKey(SettingsGroup.cardKey).evaluate()) tester.getRect(find.byWidget(e.widget))];
+      expect(cards, isNotEmpty);
+      for (final r in cards.skip(1)) {
+        edges(r, cards.first, '${page.label} card');
+      }
+      // and any other card on the page (one not inside another card) spans the same width
+      final pageArea = find.byKey(PageStorageKey(page));
+      var top = 0;
+      for (final e in find.descendant(of: pageArea, matching: find.byType(Glass)).evaluate()) {
+        final g = find.byWidget(e.widget);
+        if (find.ancestor(of: g, matching: find.byType(Glass)).evaluate().isNotEmpty) continue;
+        top++;
+        edges(tester.getRect(g), cards.first, '${page.label} other card');
+      }
+      expect(top, greaterThanOrEqualTo(cards.length), reason: '${page.label}: the page area was found');
+
+      // every row's control ends on the card's inner right edge (the row's 12 px right padding)
+      final rights = <double>{
+        for (final e in find.byType(SettingRow).evaluate())
+          if ((e.widget as SettingRow).control case final ctl?) tester.getRect(find.byWidget(ctl)).right.roundToDouble(),
+      };
+      if (rights.isNotEmpty) {
+        expect(rights, {(cards.first.right - 12).roundToDouble()}, reason: '${page.label}: controls end on one column');
+      }
+    });
+  }
+}

@@ -15,6 +15,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import '../app/theme/colors.dart';
+import '../app/theme/tokens.dart';
 
 enum GlassLevel {
   /// Results and tiles on the backdrop: fill and rim, no blur, a small shadow.
@@ -88,7 +89,7 @@ class Glass extends StatelessWidget {
     super.key,
     required this.child,
     this.level = GlassLevel.card,
-    this.radius = 18,
+    this.radius = NbRadius.card,
     this.padding,
     this.fill,
     this.rim,

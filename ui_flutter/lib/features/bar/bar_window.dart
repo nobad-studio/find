@@ -426,7 +426,7 @@ class _BarWindowState extends State<BarWindow> {
     // a frosted pill: Windows' Acrylic behind the window does the blur; the glass adds the tint and the rim
     return Glass(
       level: GlassLevel.panel,
-      radius: 18,
+      radius: NbRadius.card,
       fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
       child: MenuAnchor(
         controller: _menu,
@@ -768,7 +768,7 @@ class _RowState extends State<_Row> {
                       margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: ShapeDecoration(
                         color: c.orangeA(c.isDark ? .16 : .12),
-                        shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(18)),
+                        shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(NbRadius.card)),
                       ),
                     ),
                   ),

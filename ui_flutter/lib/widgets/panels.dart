@@ -33,10 +33,9 @@ class NbPanel extends StatelessWidget {
     final c = NbColors.of(context);
     // a card of frosted glass on the backdrop (no blur: fill and rim)
     return Glass(
-      radius: 18,
       padding: padding,
       rim: live ? c.orangeA(.55) : null,
-      child: clip ? ClipRSuperellipse(borderRadius: BorderRadius.circular(18), child: child) : child,
+      child: clip ? ClipRSuperellipse(borderRadius: BorderRadius.circular(NbRadius.card), child: child) : child,
     );
   }
 }

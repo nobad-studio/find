@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/widgets.dart';
 
 import '../app/theme/colors.dart';
+import '../app/theme/tokens.dart';
 
 enum NbGlyph {
   search,
@@ -151,14 +152,13 @@ class NbIcon extends StatelessWidget {
   );
 }
 
-/// An icon in a small frosted tile (32 px, the glyph at 16): Settings group headers, model rows, this PC's tiles.
-/// Classic: each meaning its own colour ([tints]), the glyph in it on a tint of it. Minimal ice: a cool tint and a
-/// cool white glyph. [accent] (the selected or suggested one) takes the orange in both.
+/// An icon in its tile: one size (32 px), one radius and the glyph at 16 everywhere: Settings group headers, model
+/// rows, this PC's tiles, Home's categories, the Index cards. Classic: a tile of the meaning's own hue ([tints]).
+/// Minimal ice: a cool monochrome tile. [accent] (the selected or suggested one) takes the orange in both.
 class GlyphTile extends StatelessWidget {
-  const GlyphTile(this.glyph, {super.key, this.accent = false, this.size = 32});
+  const GlyphTile(this.glyph, {super.key, this.accent = false});
   final NbGlyph glyph;
   final bool accent;
-  final double size;
 
   /// One colour per meaning, the same everywhere (Classic). Glyphs not listed are neutral.
   static const tints = {
@@ -200,56 +200,51 @@ class GlyphTile extends StatelessWidget {
     // photos and pictures
     NbGlyph.image: NbTint.pink,
     NbGlyph.scan: NbTint.pink,
+    // Home's categories: documents, videos and music, code
+    NbGlyph.doc: NbTint.orange,
+    NbGlyph.media: NbTint.magenta,
+    NbGlyph.code: NbTint.violet,
     // about, updates, quitting
     NbGlyph.info: NbTint.neutral,
     NbGlyph.sync: NbTint.neutral,
     NbGlyph.power: NbTint.neutral,
   };
 
+  /// Every icon tile's size, everywhere (the glyph is 16, centred).
+  static const size = 32.0;
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    if (!c.ice) return _classic(c);
-    final r = BorderRadius.circular(size * .3125);
-    final tint = accent ? c.iceAccentTile : c.iceTile;
+    final (top, bottom, rim, ink) = look(c, glyph, accent: accent);
     return Container(
       width: size,
       height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        borderRadius: r,
-        // frost lit from the top: a little brighter at the top edge, fading down
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [tint.withValues(alpha: (tint.a * 1.5).clamp(0, 1)), tint.withValues(alpha: tint.a * .7)],
-        ),
-        border: Border.all(color: tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)), width: .8),
+        borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
+        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
+        border: Border.all(color: rim),
       ),
-      // the accent glyph: the orange step that reads on its orange tile (the raw orange doesn't)
-      child: NbIcon(glyph, size: size / 2, color: accent ? c.tint(NbTint.orange) : c.iceGlyph),
+      child: NbIcon(glyph, color: ink),
     );
   }
 
-  Widget _classic(NbColors c) {
-    final t = accent ? NbTint.orange : tints[glyph] ?? NbTint.neutral;
-    final tile = c.tintTile(t);
-    return Container(
-      width: size,
-      height: size,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * .3125),
-        // its own colour, lit from the top
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [tile, tile.withValues(alpha: tile.a * .6)],
-        ),
-        border: Border.all(color: tile.withValues(alpha: tile.a * 1.5), width: .8),
-      ),
-      child: NbIcon(glyph, size: size / 2, color: c.tint(t)),
-    );
+  /// A tile's colours (top, bottom, rim, glyph). Classic: a soft gradient of the meaning's hue, a 1 px rim of it,
+  /// the glyph in it. Minimal ice: a cool tint, a cool white glyph. [accent]: the orange.
+  static (Color, Color, Color, Color) look(NbColors c, NbGlyph glyph, {bool accent = false, NbTint? hue}) {
+    if (c.ice) {
+      final tint = accent ? c.iceAccentTile : c.iceTile;
+      return (
+        tint.withValues(alpha: (tint.a * 1.5).clamp(0, 1)),
+        tint.withValues(alpha: tint.a * .7),
+        tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)),
+        // the accent glyph: the orange step that reads on its orange tile (the raw orange doesn't)
+        accent ? c.tint(NbTint.orange) : c.iceGlyph,
+      );
+    }
+    final t = accent ? NbTint.orange : hue ?? tints[glyph] ?? NbTint.neutral;
+    return (c.tileTop(t), c.tileBottom(t), c.tileRim(t), c.tint(t));
   }
 }
 

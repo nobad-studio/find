@@ -23,14 +23,10 @@ class FakeWindow implements WindowControl {
   @override
   void front() => calls.add('front');
   @override
-  bool look({required bool dark, required bool glass, required int canvasRgb, bool ice = false}) {
+  bool look({required bool dark, required bool glass, required int canvasRgb}) {
     looks.add((dark, glass));
-    ices.add(ice);
     return false;
   }
-
-  /// The style each look() asked for (true: Minimal ice).
-  final ices = <bool>[];
 
   @override
   void close() => calls.add('close');

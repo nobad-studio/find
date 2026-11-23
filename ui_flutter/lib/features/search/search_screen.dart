@@ -47,6 +47,11 @@ import 'status_line.dart';
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
+  /// The search box, Home's category row and list, and the status line share the same left and right edges
+  /// (test/widgets/alignment_test.dart).
+  static const boxKey = ValueKey('search-box');
+  static const statusKey = ValueKey('search-status');
+
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
@@ -436,12 +441,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 },
               ),
               // the toolbar: the box and its filters, on the page gutter
-              Padding(
-                padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x2),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+              // the same box as the list under it (max width, then the inset), so their edges line up
+              Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x2),
                     // Space, Home and End go to the results while the selection is being moved with the keys
                     child: Focus(
                       canRequestFocus: false,
@@ -616,9 +622,17 @@ class _SearchScreenState extends State<SearchScreen> {
                   ],
                 ),
               ),
-              ListenableBuilder(
-                listenable: s.find,
-                builder: (context, _) => StatusLine(keys: s.find.results.isNotEmpty),
+              // on the same edges as the search box and Home's tiles and list
+              Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                  child: ListenableBuilder(
+                    listenable: s.find,
+                    builder: (context, _) =>
+                        StatusLine(key: SearchScreen.statusKey, keys: s.find.results.isNotEmpty),
+                  ),
+                ),
               ),
             ],
           );
@@ -694,8 +708,9 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
       child: SlideTransition(
         position: _rise,
         child: Glass(
+          key: SearchScreen.boxKey,
           level: GlassLevel.panel,
-          radius: 18,
+          radius: NbRadius.card,
           rim: on ? c.orangeA(.6) : null,
           padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
           child: Column(
@@ -982,7 +997,7 @@ class _Results extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.x2, NbSpace.x3),
       child: Glass(
         level: GlassLevel.panel,
-        radius: 18,
+        radius: NbRadius.card,
         padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
         child: Scrollbar(
           controller: scroll,
@@ -1186,7 +1201,7 @@ class _NoResults extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 620),
           child: Glass(
-            radius: 18,
+            radius: NbRadius.card,
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

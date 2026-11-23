@@ -27,7 +27,7 @@ class GeneralPage extends StatelessWidget {
           SwitchSetting(
             'glass',
             'See-through window',
-            "Windows 11 glass behind the window (Mica, or frosted Acrylic in Minimal ice), while Windows' own "
+            "Windows 11 frosted glass (Acrylic) behind the window, so the desktop shows through, while Windows' own "
                 'Transparency effects switch is on (Settings > Personalization > Colors). With that off the window '
                 'stays solid.',
           ),

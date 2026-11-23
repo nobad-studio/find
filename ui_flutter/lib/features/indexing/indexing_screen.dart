@@ -362,7 +362,7 @@ class _PhaseCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: off),
+              NbAvatar(hue: hue, glyph: glyph, text: text, dim: off),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -545,7 +545,7 @@ class _ModelCardView extends StatelessWidget {
         children: [
           Row(
             children: [
-              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: !m.onDisk && m.id != 'ocr'),
+              NbAvatar(hue: hue, glyph: glyph, text: text, dim: !m.onDisk && m.id != 'ocr'),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
