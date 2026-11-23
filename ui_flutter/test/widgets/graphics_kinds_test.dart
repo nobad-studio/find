@@ -4,6 +4,7 @@
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' show Tooltip;
 import 'package:nobad_find/app/scope.dart';
 import 'package:nobad_find/engine/models/graphics.dart';
 import 'package:nobad_find/engine/models/models_info.dart';
@@ -17,6 +18,23 @@ const seen = {'welcome_seen': true, 'bg_notice_seen': true};
 const rtx = 'NVIDIA GeForce RTX 3060 Laptop GPU';
 const iris = 'Intel(R) Iris(R) Xe Graphics';
 const notHere = 'Not on this PC now: NOBAD Find uses the processor.';
+const builtInRuntime = 'llama.cpp runtime (built-in graphics, Vulkan)';
+
+/// The fake's performance_state with some rows changed: [drop] left out (not sent yet), [rows] replaced.
+class _PerfEngine extends FakeEngine {
+  _PerfEngine({super.gpu, super.settings, this.drop = const [], this.rows = const {}});
+  final List<String> drop;
+  final Map<String, PerformanceRow> rows;
+
+  @override
+  Future<PerformanceState> performanceState() async {
+    final p = await super.performanceState();
+    return PerformanceState(p.goal, {
+      for (final e in p.rows.entries)
+        if (!drop.contains(e.key)) e.key: rows[e.key] ?? e.value,
+    });
+  }
+}
 
 Future<void> openPage(WidgetTester tester, FakeEngine engine, SettingsPage page) async {
   await pumpApp(tester, engine, size: const Size(1180, 2600));
@@ -73,9 +91,12 @@ void main() {
         expect(find.text(title), findsOneWidget);
         expect(find.text(detail), findsOneWidget);
         expect(find.textContaining('video memory'), kind == GraphicsKind.discrete ? findsOneWidget : findsNothing);
-        for (final t in [title, detail]) {
-          expect((tester.renderObject(find.text(t)) as RenderParagraph).didExceedMaxLines, isFalse, reason: t);
-        }
+        // the name in at most 2 lines (a long card name ellipsized, all of it in the tooltip); the detail in full
+        final name = tester.renderObject(find.text(title)) as RenderParagraph;
+        expect(tester.widget<Text>(find.text(title)).maxLines, 2);
+        expect(name.didExceedMaxLines, kind == GraphicsKind.discrete, reason: title);
+        expect(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').startsWith(title)), findsOneWidget);
+        expect((tester.renderObject(find.text(detail)) as RenderParagraph).didExceedMaxLines, isFalse);
         expect(tester.getBottomLeft(find.text('Software with a point of view.')).dy, lessThanOrEqualTo(760 - 16));
       });
     }
@@ -170,6 +191,80 @@ void main() {
     });
   });
 
+  group('Settings > Performance: what the page says instead of the engine', () {
+    testWidgets("no adapter but DirectML and Vulkan on disk: auto is never named DirectML or Vulkan", (tester) async {
+      final engine = FakeEngine(gpu: GraphicsKind.none, settings: const {...seen, 'backend_text': 'directml'});
+      // the engine lists DirectML whenever its ONNX Runtime has it, adapter or not, and picks it as auto
+      engine.pc = withBackends(GraphicsKind.none, onnx: ['cpu', 'directml'], llama: ['vulkan', 'cpu']);
+      await openPage(tester, engine, SettingsPage.performance);
+      final perf = await engine.performanceState();
+      expect(perf.rows['backend_text']!.auto, 'directml');
+      expect(perf.rows['backend_talk']!.auto, 'vulkan');
+      expect(find.textContaining('Auto now: DirectML'), findsNothing);
+      expect(find.textContaining('Auto now: Vulkan'), findsNothing);
+      expect(find.text('Auto now: Processor. This PC has no graphics adapter.'), findsNWidgets(2));
+      expect(find.text(notHere), findsOneWidget); // the saved DirectML, said as the processor
+      expect(find.textContaining('uses DirectML'), findsNothing);
+    });
+
+    testWidgets('while a row has not come yet, no "Not on this PC now"', (tester) async {
+      final engine = _PerfEngine(
+        gpu: GraphicsKind.none,
+        settings: const {...seen, 'backend_text': 'directml'},
+        drop: const ['backend_text'],
+      );
+      await openPage(tester, engine, SettingsPage.performance);
+      expect(find.text('Meaning for documents runs on'), findsOneWidget);
+      expect(find.textContaining('Not on this PC now'), findsNothing);
+    });
+
+    testWidgets('a choice that is not about hardware keeps the engine note', (tester) async {
+      const note = 'Not used yet: this version downloads only the lighter build.';
+      final engine = _PerfEngine(
+        gpu: GraphicsKind.none,
+        settings: const {...seen, 'variant_siglip2-base': 'fp32-vision', 'profile_override_cpu': 'efficiency'},
+        rows: const {
+          // a saved value the engine doesn't offer now
+          'variant_siglip2-base': PerformanceRow(
+            value: 'fp32-vision',
+            auto: 'fp16-vision',
+            why: 'w.',
+            options: ['auto', 'fp16-vision'],
+            note: note,
+          ),
+        },
+      );
+      await openPage(tester, engine, SettingsPage.performance);
+      expect(find.text(note), findsOneWidget);
+      expect(find.textContaining('Not on this PC now'), findsNothing);
+    });
+
+    for (final (kind, text) in [
+      (GraphicsKind.integrated, OverridesGroup.reserveBuiltIn),
+      (GraphicsKind.none, OverridesGroup.reserveNone),
+    ]) {
+      testWidgets('${kind.name}: the reserve kept with its own number says what it means here', (tester) async {
+        await openPage(
+          tester,
+          FakeEngine(gpu: kind, settings: const {...seen, 'gpu_reserve_min_mb': 1024}),
+          SettingsPage.performance,
+        );
+        expect(find.text(OverridesGroup.reserveLabel), findsOneWidget);
+        expect(find.text(text), findsOneWidget);
+      });
+    }
+
+    testWidgets('a graphics card: the reserve has no such note', (tester) async {
+      await openPage(
+        tester,
+        FakeEngine(gpu: GraphicsKind.discrete, settings: const {...seen, 'gpu_reserve_min_mb': 1024}),
+        SettingsPage.performance,
+      );
+      expect(find.text(OverridesGroup.reserveBuiltIn), findsNothing);
+      expect(find.text(OverridesGroup.reserveNone), findsNothing);
+    });
+  });
+
   group('Settings > Models', () {
     testWidgets('a graphics card: its name and video memory; talk models cost video memory', (tester) async {
       await openPage(tester, FakeEngine(gpu: GraphicsKind.discrete, settings: seen), SettingsPage.models);
@@ -190,7 +285,12 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('video memory'), findsNothing);
-      expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget); // Vulkan works on built-in graphics
+      // Vulkan works on built-in graphics: offered, and said so, not as a graphics card
+      expect(find.text(builtInRuntime), findsOneWidget);
+      expect(find.text('Runs the talk models on the built-in graphics (Vulkan)'), findsOneWidget);
+      expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('Runs on $builtInRuntime')), findsOneWidget);
+      expect(find.textContaining('graphics card)'), findsNothing);
+      expect(find.textContaining('on the graphics card (Vulkan)'), findsNothing);
     });
 
     testWidgets('no graphics adapter: processor only, no graphics runtime or graphics memory offered', (tester) async {

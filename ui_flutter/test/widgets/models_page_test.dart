@@ -82,7 +82,8 @@ void main() {
     expect(find.text('Talk about photos'), findsOneWidget);
     expect(find.text('SmolVLM2 500M'), findsOneWidget);
     expect(find.text('Qwen3-VL 2B'), findsOneWidget);
-    expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget);
+    // the reference PC's built-in graphics run the Vulkan runtime: said so, not as a graphics card
+    expect(find.text('llama.cpp runtime (built-in graphics, Vulkan)'), findsOneWidget);
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('520 MB download')), findsOneWidget);
     expect(
       find.descendant(of: card('SmolVLM2 500M'), matching: find.text('665 MB shared memory (counts as memory)')),

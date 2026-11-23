@@ -205,15 +205,22 @@ String _uses(Object? auto) => switch (auto) {
   _ => _name(auto),
 };
 
+/// The note on a graphics row kept only because the user's choice is set (task D2).
+String notOnThisPc(String uses) => 'Not on this PC now: NOBAD Find uses $uses.';
+
 /// The row's help, then "Auto now: X. Why." and its note (spec 8b rule 5): what the user is overriding.
 class _AutoNow extends StatelessWidget {
-  const _AutoNow(this.help, this.row, {this.unit = '', this.gone = ''});
+  const _AutoNow(this.help, this.row, {this.unit = '', this.gone = '', this.auto});
   final String help;
   final PerformanceRow? row;
   final String unit;
 
   /// "Not on this PC now: ..." for a choice this PC no longer has (it replaces the engine's note on it).
   final String gone;
+
+  /// What auto picks and why, said by the page instead of the engine: the engine's pick is a graphics backend
+  /// this PC can't use (task D2: the engine lists DirectML even with no adapter).
+  final (String, String)? auto;
 
   @override
   Widget build(BuildContext context) {
@@ -226,7 +233,10 @@ class _AutoNow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (help.isNotEmpty) Text(help, style: style),
-          if (r != null && r.auto != null) Text('Auto now: ${_name(r.auto)}$unit. ${r.why}', style: style),
+          if (auto case (final pick, final why))
+            Text('Auto now: $pick. $why', style: style)
+          else if (r != null && r.auto != null)
+            Text('Auto now: ${_name(r.auto)}$unit. ${r.why}', style: style),
           if (gone.isNotEmpty)
             Text(gone, style: NbType.text(NbSize.small, c.orange, height: 1.4))
           else if (r != null && r.note.isNotEmpty)
@@ -275,12 +285,13 @@ class WorkersSetting extends StatelessWidget {
 class _OverrideChoice extends StatelessWidget {
   const _OverrideChoice(
     this.k,
-    this.label, [
+    this.label, {
     this.help = '',
     this.graphics,
     this.installed = const [],
+    this.backend = false,
     this.notHere = false,
-  ]);
+  });
   final String k;
   final String label;
   final String help;
@@ -290,7 +301,12 @@ class _OverrideChoice extends StatelessWidget {
   final Graphics? graphics;
   final List<String> installed;
 
-  /// The row is about hardware this PC doesn't have (shown only because the user's choice is set).
+  /// A backend choice (photos, meaning, talk): the one kind of row where a saved value can be a graphics
+  /// backend this PC doesn't have.
+  final bool backend;
+
+  /// The graphics card for background work on a PC with no adapter (shown only because the user's choice is set):
+  /// "On" can't be used there.
   final bool notHere;
 
   @override
@@ -307,15 +323,30 @@ class _OverrideChoice extends StatelessWidget {
         if (g == null || g.offers(o, installed)) o,
     ];
     if (options.isEmpty) options.add('auto');
-    // a choice the user made is never hidden: one this PC doesn't have now says what is used instead
-    final here = options.contains(value);
-    if (!here) options.add(value);
-    final gone = (!here || notHere) && value != 'auto'
-        ? 'Not on this PC now: NOBAD Find uses ${_uses(row?.auto)}.'
+    // a choice the user made is never hidden (kept in the list even when this PC can't use it)
+    if (!options.contains(value)) options.add(value);
+    // the engine's auto pick when this PC can't use it (a graphics backend with no adapter, or "On" for background
+    // work there): the processor, said by the page
+    final pick = row?.auto;
+    final pickGone =
+        g != null && pick is String && ((backend && !g.offers(pick, installed)) || (notHere && pick == 'on'));
+    final (String, String)? auto = !pickGone
+        ? null
+        : (
+            notHere ? 'Off' : 'Processor',
+            g.kind == GraphicsKind.none
+                ? 'This PC has no graphics adapter.'
+                : "That graphics backend isn't installed on this PC.",
+          );
+    // only a saved graphics backend this PC doesn't have (or "On" with no adapter) gets "Not on this PC now", and
+    // only once the engine has said what auto picks (never while performance_state is loading)
+    final missing = backend && g != null && graphicsBackends.contains(value) && !g.offers(value, installed);
+    final gone = row != null && g != null && value != 'auto' && (missing || (notHere && value == 'on'))
+        ? notOnThisPc(pickGone ? 'the processor' : _uses(pick))
         : '';
     return SettingRow(
       label: label,
-      helpWidget: _AutoNow(help, row, gone: gone),
+      helpWidget: _AutoNow(help, row, gone: gone, auto: auto),
       control: NbSelect(
         label: label,
         value: value,
@@ -338,6 +369,12 @@ class OverridesGroup extends StatelessWidget {
   static String integratedLine(String name) =>
       "Built-in graphics ($name): it shares your PC's memory, so NOBAD Find counts its use as memory.";
   static const noneLine = 'No graphics card: everything runs on the processor.';
+
+  /// The reserve row kept with the user's own number on a PC without a graphics card.
+  static const reserveBuiltIn =
+      "No graphics card memory on this PC: built-in graphics share your PC's memory, and NOBAD Find leaves this "
+      'much of it free before talk about a photo uses them.';
+  static const reserveNone = 'Not on this PC now: there is no graphics adapter, so this number is not used.';
 
   @override
   Widget build(BuildContext context) =>
@@ -374,15 +411,15 @@ class OverridesGroup extends StatelessWidget {
           _OverrideChoice(
             'gpu_background',
             builtIn ? 'Built-in graphics for background work' : 'Graphics card for background work',
-            'On beats the goal. Off also beats a graphics backend chosen below. Battery saver, a creative app in front '
-                'and the graphics memory left free still decide.',
-            g,
-            const [],
-            kind == GraphicsKind.none && s.settings.text('gpu_background') == 'on',
+            help:
+                'On beats the goal. Off also beats a graphics backend chosen below. Battery saver, a creative app in '
+                'front and the graphics memory left free still decide.',
+            graphics: g,
+            notHere: kind == GraphicsKind.none,
           ),
-        _OverrideChoice('backend_photos', 'Photos run on', '', g, onnx),
-        _OverrideChoice('backend_text', 'Meaning for documents runs on', '', g, onnx),
-        _OverrideChoice('backend_talk', 'Talk about a photo runs on', '', g, llama),
+        _OverrideChoice('backend_photos', 'Photos run on', graphics: g, installed: onnx, backend: true),
+        _OverrideChoice('backend_text', 'Meaning for documents runs on', graphics: g, installed: onnx, backend: true),
+        _OverrideChoice('backend_talk', 'Talk about a photo runs on', graphics: g, installed: llama, backend: true),
         const _OverrideChoice('variant_siglip2-base', 'SigLIP 2 build'),
         if (shows('profile_override_gpu', here: kind != GraphicsKind.none))
           _OverrideChoice(
@@ -397,7 +434,17 @@ class OverridesGroup extends StatelessWidget {
             s.settings.number('gpu_reserve_min_mb') != Settings.defaults['gpu_reserve_min_mb'])
           SettingRow(
             label: reserveLabel,
-            helpWidget: _AutoNow('512 to 4096.', s.performance?.rows['gpu_reserve_min_mb'], unit: ' MB'),
+            helpWidget: _AutoNow(
+              '512 to 4096.',
+              s.performance?.rows['gpu_reserve_min_mb'],
+              unit: ' MB',
+              gone: switch (kind) {
+                GraphicsKind.discrete => '',
+                // the governor still leaves this much of the shared memory free for a vision stream
+                GraphicsKind.integrated => reserveBuiltIn,
+                GraphicsKind.none => reserveNone,
+              },
+            ),
             control: NbField(
               label: reserveLabel,
               number: true,

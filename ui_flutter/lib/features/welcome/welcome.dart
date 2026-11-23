@@ -254,8 +254,8 @@ class _YourPcState extends State<_YourPc> {
     if (info == null || info.pc == null) return const SizedBox(height: NbSpace.x3);
     final s = AppScope.of(context);
     final c = NbColors.of(context);
-    // a graphics card's name takes up to 3 lines and its memory one more (task D2): 4 px less above and below the
-    // tiles keep the whole column, the main action included, in the main window's 760 px
+    // built-in graphics take 2 lines for the name and 2 for "Built-in graphics, shares memory": 4 px less above
+    // and below the tiles keep the whole column, the main action included, in the main window's 760 px
     return Padding(
       padding: const EdgeInsets.only(top: NbSpace.x3),
       child: Column(
@@ -264,7 +264,8 @@ class _YourPcState extends State<_YourPc> {
             padding: const EdgeInsets.only(bottom: 8),
             child: Semantics(header: true, child: Text('Your PC', style: sectionStyle(c))),
           ),
-          HardwareTiles(info.pc),
+          // a graphics card's name in at most 2 lines, so the column fits the main window's 760 px
+          HardwareTiles(info.pc, compact: true),
           if (info.tierRecommended.isNotEmpty) ...[
             const SizedBox(height: NbSpace.x2),
             // the recommendation and its action on one centred line

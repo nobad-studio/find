@@ -161,11 +161,21 @@ class PageHeader extends StatelessWidget {
 /// most 2 lines (3 for a long name) and the label 3, then an ellipsis, with the whole text in a tooltip: a long
 /// text never makes one tile bigger than the others (the grid gives a row one height).
 class StatTile extends StatelessWidget {
-  const StatTile({super.key, required this.value, required this.label, this.live = false, this.icon});
+  const StatTile({
+    super.key,
+    required this.value,
+    required this.label,
+    this.live = false,
+    this.icon,
+    this.valueMaxLines,
+  });
   final String value;
   final String label;
   final bool live;
   final NbGlyph? icon;
+
+  /// At most this many lines for the value (null: 2, 3 for a long name); the tooltip has it all.
+  final int? valueMaxLines;
 
   static const valueLines = 2, labelLines = 3;
 
@@ -187,7 +197,7 @@ class StatTile extends StatelessWidget {
             Text(
               value,
               // a long name (a graphics card) may take one more line than a number
-              maxLines: value.length > 12 ? valueLines + 1 : valueLines,
+              maxLines: valueMaxLines ?? (value.length > 12 ? valueLines + 1 : valueLines),
               overflow: TextOverflow.ellipsis,
               // a number reads as data; a long name (a graphics card) reads better as text
               style: value.length > 12

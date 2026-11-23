@@ -314,6 +314,24 @@ String graphicsCost(double vramMb, Hardware? pc) {
   };
 }
 
+/// The Vulkan runtime on built-in graphics: it runs there, but not on a graphics card (display only; the engine's
+/// catalogue keeps its name).
+bool _builtInVulkan(ModelInfo x, Hardware? pc) =>
+    pc != null && x.feature == 'runtime' && x.id.endsWith('-vulkan') && graphicsOf(pc).kind == GraphicsKind.integrated;
+
+/// [x]'s name as this PC has it.
+String modelName(ModelInfo x, Hardware? pc) =>
+    _builtInVulkan(x, pc) ? 'llama.cpp runtime (built-in graphics, Vulkan)' : x.name;
+
+/// What [x] does, as this PC has it.
+String modelImproves(ModelInfo x, Hardware? pc) =>
+    _builtInVulkan(x, pc) ? 'Runs the talk models on the built-in graphics (Vulkan)' : x.improves;
+
+String _runtimeName(String id, ModelsInfo info) {
+  final rt = info.byId(id);
+  return rt == null ? id : modelName(rt, info.pc);
+}
+
 /// One model as a card: an avatar for what it does, its name and tags, one line on what it improves, the facts as
 /// chips (download, memory, licence, languages, measured quality), and Details: speed, the measurement, where it
 /// comes from and the folder it's downloaded to (with Open folder), so nothing about it is hidden.
@@ -348,7 +366,10 @@ class _ModelRow extends StatelessWidget {
                         runSpacing: 4,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Text(x.name, style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3)),
+                          Text(
+                            modelName(x, m.info.pc),
+                            style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3),
+                          ),
                           if (x.tier.isNotEmpty) _Tag(tierLabel(x.tier)),
                           if (x.recommended) const _Tag('Recommended', strong: true),
                         ],
@@ -356,7 +377,7 @@ class _ModelRow extends StatelessWidget {
                       if (x.improves.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
-                          child: Text(x.improves, style: NbType.text(12.5, c.muted, height: 1.4)),
+                          child: Text(modelImproves(x, m.info.pc), style: NbType.text(12.5, c.muted, height: 1.4)),
                         ),
                     ],
                   ),
@@ -377,7 +398,8 @@ class _ModelRow extends StatelessWidget {
                 if (x.ramMb > 0) NbFact(NbGlyph.chip, '${x.ramMb.round()} MB memory'),
                 if (x.vramMb > 0 && graphicsCost(x.vramMb, m.info.pc).isNotEmpty)
                   NbFact(NbGlyph.chip, graphicsCost(x.vramMb, m.info.pc)),
-                if (x.runtime.isNotEmpty) NbFact(NbGlyph.gauge, 'Runs on ${m.info.byId(x.runtime)?.name ?? x.runtime}'),
+                if (x.runtime.isNotEmpty)
+                  NbFact(NbGlyph.gauge, 'Runs on ${_runtimeName(x.runtime, m.info)}'),
                 if (x.licence.isNotEmpty) NbFact(NbGlyph.shield, x.licence),
                 if (x.languages.isNotEmpty) NbFact(NbGlyph.info, x.languageText),
                 if (q != null) NbFact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
@@ -792,8 +814,11 @@ class LiveTiles extends StatelessWidget {
 
 /// "Your PC": memory, cores, graphics, processor speed-ups, drive (0.7.0 hardwareBlock).
 class HardwareTiles extends StatelessWidget {
-  const HardwareTiles(this.h, {super.key});
+  const HardwareTiles(this.h, {super.key, this.compact = false});
   final Hardware? h;
+
+  /// The welcome's column: a graphics card's name takes at most 2 lines (ellipsis, the whole name in the tooltip).
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -816,7 +841,12 @@ class HardwareTiles extends StatelessWidget {
           label: '${groupDigits(h.threads)} threads',
           icon: NbGlyph.processor,
         ),
-        StatTile(icon: NbGlyph.graphics, value: g.title, label: g.detail[0].toUpperCase() + g.detail.substring(1)),
+        StatTile(
+          icon: NbGlyph.graphics,
+          value: g.title,
+          label: g.detail[0].toUpperCase() + g.detail.substring(1),
+          valueMaxLines: compact ? 2 : null,
+        ),
         StatTile(value: fast.isEmpty ? 'Standard' : fast, label: 'Processor speed-ups', icon: NbGlyph.bolt),
         StatTile(
           value: drive,
