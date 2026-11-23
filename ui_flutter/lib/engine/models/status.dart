@@ -92,6 +92,32 @@ class EngineStatus {
   int get hashCode => Object.hash(level, reason, phase, files, paused, details);
 }
 
+/// The quiet line under a count: how fresh it is. Null when an older engine sends no state (or nothing is worth
+/// saying). [now] is for tests.
+String? freshnessLine({required String state, double? at, String error = '', DateTime? now}) {
+  final when = at == null ? null : DateTime.fromMillisecondsSinceEpoch((at * 1000).round());
+  switch (state) {
+    case 'counting':
+      return 'Counting…';
+    case 'refreshing':
+      return 'Counting again…';
+    case 'ready':
+      if (when == null) return null;
+      final s = (now ?? DateTime.now()).difference(when).inSeconds;
+      if (s < 60) return 'Counted just now';
+      if (s < 3600) return 'Counted ${s ~/ 60} min ago';
+      if (s < 86400) return 'Counted ${s ~/ 3600} h ago';
+      return 'Counted ${s ~/ 86400} d ago';
+    case 'failed':
+      final why = error.replaceAll(RegExp(r'[.\s]+$'), '');
+      final head = why.isEmpty ? "Couldn't count just now" : "Couldn't count just now: $why";
+      if (when == null) return '$head.';
+      final hm = '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}';
+      return '$head. Showing the last count from $hm.';
+  }
+  return null;
+}
+
 class IndexDetails {
   const IndexDetails({
     this.version = '',
@@ -104,6 +130,12 @@ class IndexDetails {
     this.rate = 0,
     this.dbBytes = 0,
     this.countingTotals = false,
+    this.totalsAt,
+    this.totalsState = '',
+    this.totalsError = '',
+    this.countsAt,
+    this.countsState = '',
+    this.countsError = '',
     this.plan,
     this.speed = '',
     this.ocrOn = false,
@@ -134,6 +166,16 @@ class IndexDetails {
   /// 1.1.1: the engine is still counting the index totals for the first time ([withText], [vectors],
   /// [nameVectors], [photoVectors] aren't known yet). [dbBytes] is always current.
   final bool countingTotals;
+
+  /// 1.2.0: how fresh the totals and the phase counts are. `*At` is the epoch seconds of the last successful
+  /// count (null: none yet); `*State` is counting | ready | refreshing | failed, or '' from an older engine;
+  /// `*Error` is a short plain reason when failed.
+  final double? totalsAt;
+  final String totalsState;
+  final String totalsError;
+  final double? countsAt;
+  final String countsState;
+  final String countsError;
   final WorkPlan? plan;
   final String speed;
   final bool ocrOn;
@@ -166,6 +208,12 @@ class IndexDetails {
       rate: jNum(m['rate']),
       dbBytes: jInt(m['db_bytes']),
       countingTotals: jBool(m['counting_totals']),
+      totalsAt: jNumOrNull(m['totals_at']),
+      totalsState: jStr(m['totals_state']),
+      totalsError: visibleControls(jStr(m['totals_error'])),
+      countsAt: jNumOrNull(m['counts_at']),
+      countsState: jStr(m['counts_state']),
+      countsError: visibleControls(jStr(m['counts_error'])),
       plan: plan is Map && plan.isNotEmpty ? WorkPlan.fromJson(jMap(plan)) : null,
       speed: jStr(m['speed']),
       ocrOn: ocr == true,

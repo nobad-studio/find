@@ -515,3 +515,168 @@ def test_stats_refresh_after_ttl(tmp_path):
     stats_counted(a)
     assert a.status()["with_text"] == 200 and slow.calls == 2
     s.close()
+
+
+# ---------- 1.2.0 S1: the snapshots say when they were counted and whether the last count worked ----------
+def snapshot(a, prefix, key):
+    st = a.status()
+    return st[prefix + "_state"], st[prefix + "_at"], st[prefix + "_error"], st
+
+
+def test_totals_state_goes_counting_ready_refreshing_ready(tmp_path):
+    a, s = make(tmp_path)
+    now, wall = [100.0], [5000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    go = threading.Event()
+    s.stats = slow = SlowStats(go)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at, err) == ("counting", None, "") and st["counting_totals"] is True
+    go.set()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at, err) == ("ready", 5000.0, "") and st["counting_totals"] is False
+    now[0] += api_mod.STATS_TTL + 1
+    wall[0] = 5100.0
+    go.clear()
+    slow.go = go
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at) == ("refreshing", 5000.0) and st["with_text"] == 100 and st["counting_totals"] is False
+    go.set()
+    stats_counted(a)
+    state, at, _e, st = snapshot(a, "totals", None)
+    assert (state, at, st["with_text"]) == ("ready", 5100.0, 200)
+    s.close()
+
+
+def test_a_failed_totals_count_keeps_the_values_and_the_time(tmp_path):
+    a, s = make(tmp_path)
+    now, wall = [100.0], [5000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    s.stats = SlowStats()
+    a.status()
+    stats_counted(a)
+    assert a.status()["totals_state"] == "ready"
+
+    def boom():
+        raise RuntimeError("secret text from inside")
+    s.stats = boom
+    now[0] += api_mod.STATS_TTL + 1
+    wall[0] = 5100.0
+    a.status()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert state == "failed" and at == 5000.0 and st["with_text"] == 100
+    assert err and "secret" not in err and "RuntimeError" not in err
+    assert st["counting_totals"] is False
+    s.close()
+
+
+def test_a_first_totals_count_that_fails_says_so(tmp_path):
+    a, s = make(tmp_path)
+
+    def boom():
+        raise RuntimeError("x")
+    s.stats = boom
+    a.status()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert state == "failed" and at is None and err and st["counting_totals"] is False
+    s.close()
+
+
+def test_counts_state_goes_counting_ready_refreshing_ready(tmp_path):
+    a, s = make(tmp_path, "watching")
+    now, wall = [100.0], [7000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    gate = threading.Event()
+    real = a._refresh
+
+    def slow(n, key):
+        gate.wait(5)
+        return real(n, key)
+    a._refresh = slow
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert (state, at, err) == ("counting", None, "")
+    gate.set()
+    a._refresher.join(5)
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert (state, at, err) == ("ready", 7000.0, "")
+    now[0] += api_mod.TOTALS_TTL + 1
+    wall[0] = 7100.0
+    gate.clear()
+    state, at, _e, _st = snapshot(a, "counts", None)
+    assert (state, at) == ("refreshing", 7000.0)
+    gate.set()
+    a._refresher.join(5)
+    state, at, _e, _st = snapshot(a, "counts", None)
+    assert (state, at) == ("ready", 7100.0)
+    s.close()
+
+
+def test_a_failed_counts_refresh_keeps_the_old_snapshot(tmp_path):
+    a, s = make(tmp_path, "watching")
+    now, wall = [100.0], [7000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    counted(a)
+    before = a._totals[2]
+    assert before and a.status()["counts_state"] == "ready"
+
+    def boom(*_a, **_k):
+        raise RuntimeError("secret")
+    s.count_readable = boom
+    now[0] += api_mod.TOTALS_TTL + 1
+    wall[0] = 7100.0
+    counted(a)
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert state == "failed" and at == 7000.0 and err and "secret" not in err
+    assert a._totals[2] == before
+    s.close()
+
+
+def test_a_phase_ending_marks_both_stale_but_the_ttl_floor_holds(tmp_path):
+    a, s = make(tmp_path, "text")
+    now = [100.0]
+    a._clock = lambda: now[0]
+    s.stats = slow = SlowStats()
+    a.status()
+    stats_counted(a)
+    counted(a)
+    calls = slow.calls
+    a._indexer.status["phase"] = "meaning"                      # a phase ended
+    now[0] += 1
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls                                  # inside the floor: no new count
+    now[0] += api_mod.STATS_TTL                                 # past the floor, though not past a long TTL
+    a._stats_cache = (a._stats_cache[0], 1000.0, a._stats_cache[2])
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls + 1
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls + 1                              # one count for one event
+
+
+def test_rescan_and_wipe_mark_the_snapshots_stale(tmp_path):
+    a, s = make(tmp_path)
+    a._indexer.rescan = lambda: None
+    assert not a._stats_stale
+    a.rescan()
+    assert a._stats_stale and a._counts_stale
+    s.close()
+
+
+def test_the_status_fields_validate_against_the_schema(tmp_path):
+    import json
+    import jsonschema
+    a, s = make(tmp_path)
+    s.stats = SlowStats()
+    a.status()
+    stats_counted(a)
+    st = a.status()
+    root = json.load(open(os.path.join(os.path.dirname(__file__), "..", "contract", "methods.schema.json"), encoding="utf-8"))
+    props = root["$defs"]["status_full"]["properties"]
+    for k in ("totals_at", "totals_state", "totals_error", "counts_at", "counts_state", "counts_error"):
+        assert k in props, k
+        jsonschema.validate(st[k], {**props[k], "$defs": root["$defs"]})
+    s.close()

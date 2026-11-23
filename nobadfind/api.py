@@ -36,6 +36,16 @@ PHASES = (("names", "Finding file names"), ("text", "Reading documents"), ("ocr"
           ("photos", "Looking at photos"), ("watching", "Watching for changes"))
 
 
+def count_reason(e):
+    """A short plain reason a count failed (status totals_error / counts_error); never the exception's own text."""
+    kind = type(e).__name__
+    if kind == "OperationalError" and ("lock" in str(e).lower() or "busy" in str(e).lower()):
+        return "the index was busy"
+    if kind.endswith("Error") and type(e).__module__.split(".")[0] in ("sqlite3", "sqlcipher3"):
+        return "the index couldn't be read"
+    return "something went wrong"
+
+
 class Api:
     def __init__(self, store, settings, indexer, vindex):
         self._store = store
@@ -54,6 +64,11 @@ class Api:
         self._stats_cache = (None, 0.0, None)   # (counted at, reused for seconds, Store.stats) for status()
         self._stats_thread = None         # the one Store.stats count running (_stats)
         self._stats_lock = threading.Lock()
+        self._wall = time.time            # epoch seconds for totals_at / counts_at (tests replace it)
+        self._stats_info = (None, "")     # (epoch seconds of the last successful count, why the last one failed)
+        self._counts_info = (None, "")
+        self._stats_stale = self._counts_stale = False       # mark_counts_stale
+        self._seen_phase = None           # the indexer's phase at the last status(): a change marks the counts stale
         self._clock = time.monotonic      # tests replace it
         self._prev = None                 # (time, cpu_seconds, read_bytes) of the last status() call
         self._sampler = procs.Sampler()   # Find's own processes, what each is and what it uses
@@ -372,16 +387,21 @@ class Api:
     # ---------- status and settings ----------
     def status(self):
         st = dict(self._indexer.status)
+        phase = st.get("phase")
+        if self._seen_phase is not None and phase != self._seen_phase:
+            self.mark_counts_stale()                        # a phase ended (or began): the counts moved
+        self._seen_phase = phase
         counted = self._stats()
         if counted is None:
-            # the first count is still running: the indexer's own numbers (its live files count, and its own last
-            # count of the index if it made one), 0 for the rest, and the UI says "Counting..." for those
-            st["counting_totals"] = "with_text" not in st
+            # no count is in yet: the indexer's own numbers (its live files count, and its own last count of the
+            # index if it made one), 0 for the rest, and the UI says "Counting..." for those
             for k in STATS_KEYS:
                 st.setdefault(k, 0)
         else:
             st.update(counted)
-            st["counting_totals"] = False
+        t = self._stats_thread
+        totals = self._snapshot_fields(st, "totals", bool(t and t.is_alive()), self._stats_info, counted is not None)
+        st["counting_totals"] = totals == "counting"
         st["encrypted"] = bool(getattr(self._store, "encrypted", False))
         st["db_bytes"] = self._db_bytes()                   # two getsize calls: always current
         st["version"] = APP_VER
@@ -395,6 +415,8 @@ class Api:
         st["drives"] = self._indexer.drive_list
         with self._slock:
             self._transparency(st)
+        r = self._refresher
+        self._snapshot_fields(st, "counts", bool(r and r.is_alive()), self._counts_info, self._counts_info[0] is not None)
         self._retry_forgotten()
         return st
 
@@ -422,9 +444,12 @@ class Api:
         so searches timed out. One count runs at a time, in its own thread; a poll returns what is known at once."""
         at, ttl, cached = self._stats_cache
         now = self._clock()
-        if at is None or now - at >= ttl:
+        # stale (a phase ended, a rescan or wipe): counted again once the TTL floor has passed, not only after the
+        # longer share-of-a-core wait
+        if at is None or now - at >= ttl or (self._stats_stale and now - at >= STATS_TTL):
             with self._stats_lock:
                 if not (self._stats_thread and self._stats_thread.is_alive()):
+                    self._stats_stale = False
                     self._stats_thread = threading.Thread(target=self._count_stats, daemon=True, name="stats")
                     self._stats_thread.start()
         return cached
@@ -434,10 +459,32 @@ class Api:
         t0 = self._clock()
         try:
             cached = self._store.stats()
+            self._stats_info = (self._wall(), "")
         except Exception as e:
             log(f"index totals count failed: {type(e).__name__}", "warn")       # the old totals stay; again later
+            self._stats_info = (self._stats_info[0], count_reason(e))
         took = self._clock() - t0
         self._stats_cache = (t0, max(STATS_TTL, COUNT_SHARE * took), cached)
+
+    def mark_counts_stale(self):
+        """A phase ended, or a rescan or wipe happened: both snapshots are counted again at the next poll, once the
+        TTL floor (STATS_TTL / TOTALS_TTL) since the last count has passed."""
+        self._stats_stale = self._counts_stale = True
+
+    def _snapshot_fields(self, st, prefix, running, info, have):
+        """{prefix}_at / _state / _error for a snapshot: the last successful count (epoch seconds or None), whether
+        a count is running and whether the last one failed (counting_totals reads the totals' state)."""
+        at, error = info
+        if running:
+            state = "refreshing" if have else "counting"
+        elif error:
+            state = "failed"
+        elif at is None:
+            state = "counting"                     # not counted yet; the next poll starts it
+        else:
+            state = "ready"
+        st[prefix + "_at"], st[prefix + "_state"], st[prefix + "_error"] = at, state, error
+        return state
 
     def _db_bytes(self):
         path = getattr(self._store, "db_path", None)
@@ -527,7 +574,9 @@ class Api:
         # Never inline, not even the first time (0.9.0): on a million-entry index the counts take seconds, and every
         # status poll that waited for them held one of the pipe's few request threads, so the Index page and then
         # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
-        if (not counts or k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
+        due = not counts or k != key or now - at >= ttl or (self._counts_stale and now - at >= TOTALS_TTL)
+        if due and not (self._refresher and self._refresher.is_alive()):
+            self._counts_stale = False
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")
             self._refresher.start()                         # the COUNT queries never hold up a status poll
         return counts
@@ -552,9 +601,11 @@ class Api:
                 counts["rebuild"] = ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                      st.count_chunks_without_vectors(next=True)
                                      + st.count_names_without_vectors(NAME_KINDS, next=True))
+            self._counts_info = (self._wall(), "")
         except Exception as e:
             log(f"status counts failed: {type(e).__name__}", "warn")
-            counts = counts or {p: (0, 0) for p in ("text", "ocr", "meaning", "photos")}
+            counts = self._totals[2] or {p: (0, 0) for p in ("text", "ocr", "meaning", "photos")}   # a failure keeps the old
+            self._counts_info = (self._counts_info[0], count_reason(e))
         self._totals_took = time.monotonic() - t0
         self._totals = (now, key, counts)
         return counts
@@ -973,6 +1024,7 @@ class Api:
 
     def rescan(self):
         self._indexer.rescan()
+        self.mark_counts_stale()
         return {"ok": True}
 
     def wipe(self, confirm):
@@ -988,6 +1040,7 @@ class Api:
         exclude = list(self._settings.get("exclude") or [])
         keep = [e for e in exclude if e not in forgot and (e.startswith("\\\\") or not os.path.isfile(e))]
         self._store.wipe()                      # the index first: a crash after it can't leave forgotten files out
+        self.mark_counts_stale()
         if keep != exclude:                     # of exclude with the old index still there (review N7)
             self._settings.update({"exclude": keep})
         self._store.remove_aside_copies()

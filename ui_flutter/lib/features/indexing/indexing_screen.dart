@@ -165,6 +165,8 @@ class _IndexingScreenState extends State<IndexingScreen> {
     final phaseLabel = s.status.status?.phaseLabel ?? '';
     // 1.1.1: the engine counts the index totals in the background; until the first count is in, it says so
     String total(int n) => d.countingTotals ? 'Counting…' : groupDigits(n);
+    final c = NbColors.of(context);
+    final freshness = freshnessLine(state: d.totalsState, at: d.totalsAt, error: d.totalsError);
     return [
       const SectionTitle('What it is doing', top: NbSpace.x4),
       TileGrid(min: 270, children: [for (final p in d.phases) _PhaseCard(p)]),
@@ -239,6 +241,11 @@ class _IndexingScreenState extends State<IndexingScreen> {
               value: d.plan?.ssd == null ? '–' : (d.plan!.ssd! ? 'SSD' : 'Hard disk'), label: 'Drive type'),
         ],
       ),
+      if (freshness != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(freshness, style: NbType.text(NbSize.small, c.dim)),
+        ),
       if (d.limits != null) ...[
         const SectionTitle('Running at once now'),
         TileGrid(

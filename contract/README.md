@@ -159,7 +159,7 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   vectors name_vectors photo_vectors`) are counted in the background, one count at a time; until the first count
   is in, `counting_totals` is `true` and they are the indexer's own running numbers or `0` (the Index page says
   "Counting…" for them); `files` is the indexer's live count, and `db_bytes` is always current.
-  An engine before 1.1.1 sends no `counting_totals`.
+  An engine before 1.1.1 sends no `counting_totals`. 1.2.0: each count says how fresh it is, for the totals (`totals_*`) and the phase counts (`counts_*`): `*_at` (epoch seconds of the last successful count, or `null`), `*_state` (`counting` first count running, `ready`, `refreshing` a newer count is running and the old numbers are shown, `failed` the last attempt failed and the previous numbers, if any, are still shown) and `*_error` (a short plain reason when failed, else `""`); `counting_totals` is `totals_state == "counting"`. A phase ending, a rescan or a wipe makes the next poll count again, never more often than every 10 s. An engine before 1.2.0 sends none of these.
 - **`pause_for`** `{seconds: int ≥ 1}` → `Ok`: pause indexing (at most 24 hours; less than 1 is `-32602`).
 - **`resume`** `{}` → `Ok`: end a pause now.
 - **`learned_apps`** `{}` → `{apps: [{exe, seen: int, lag_events: int, worst_cpu: number|null, worst_gpu:

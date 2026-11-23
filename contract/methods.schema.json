@@ -2293,6 +2293,30 @@
           "description": "1.1.1: true while the index totals (with_text, chunks, vectors, name_vectors, photo_vectors) are still being counted for the first time; until then they are the indexer's own running numbers or 0. db_bytes is always current.",
           "type": "boolean"
         },
+        "totals_at": {
+          "description": "1.2.0: epoch seconds of the last successful count of the index totals, or null if none has succeeded yet. Optional (older engines send none).",
+          "type": ["number", "null"]
+        },
+        "totals_state": {
+          "description": "1.2.0: counting (the first count is running, nothing yet), ready, refreshing (a newer count is running; the old snapshot is shown) or failed (the last attempt failed; the previous snapshot, if any, is still shown).",
+          "enum": ["counting", "ready", "refreshing", "failed"]
+        },
+        "totals_error": {
+          "description": "1.2.0: a short plain reason when totals_state is failed, else an empty string.",
+          "type": "string"
+        },
+        "counts_at": {
+          "description": "1.2.0: epoch seconds of the last successful count of the phase counts (phases[].total / done), or null if none has succeeded yet. Optional (older engines send none).",
+          "type": ["number", "null"]
+        },
+        "counts_state": {
+          "description": "1.2.0: counting (the first count is running, nothing yet), ready, refreshing (a newer count is running; the old snapshot is shown) or failed (the last attempt failed; the previous snapshot, if any, is still shown).",
+          "enum": ["counting", "ready", "refreshing", "failed"]
+        },
+        "counts_error": {
+          "description": "1.2.0: a short plain reason when counts_state is failed, else an empty string.",
+          "type": "string"
+        },
         "version": {
           "type": "string"
         },

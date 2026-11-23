@@ -508,6 +508,8 @@ STATUS_FULL = {
     "last_scan": 1763400000.0,
     "with_text": 310, "chunks": 900, "name_vectors": 0, "photo_vectors": 0, "encrypted": True, "db_bytes": 5242880,
     "counting_totals": False,
+    "totals_at": 1763400000.0, "totals_state": "ready", "totals_error": "",
+    "counts_at": 1763400000.0, "counts_state": "ready", "counts_error": "",
     "version": "0.7.0",
     "model": {"state": "missing", "got": 0, "size": 0, "error": ""},
     "photo_model": {"state": "missing", "got": 0, "size": 0, "error": ""},
