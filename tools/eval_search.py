@@ -36,8 +36,13 @@ FOLDERS = {"downloads": "Downloads", "desktop": "Desktop", "documents": "Documen
 
 
 def _march_age(now):
-    """Days back to the middle of March this year (query.parse reads "in march" as the most recent March)."""
-    return max(1, (now - dt.datetime(now.year, 3, 15)).days)
+    """Days back to a moment in the most recent March that query.parse knows (it reads "in march" as this year's March
+    from March on, last year's before that). Mid-March, or the start of March when mid-March is still ahead."""
+    year = now.year if now.month >= 3 else now.year - 1
+    when = dt.datetime(year, 3, 15, 12)
+    if when >= now:
+        when = dt.datetime(year, 3, 1, 0, 1)
+    return (now - when) / dt.timedelta(days=1)
 
 
 def _last_week_age(now):
@@ -431,8 +436,9 @@ def score(ranked, rel):
     return top1, top5, rr
 
 
-def run(models_dir=None, verbose=True, pictures=True):
-    """Build the corpus and index in a temp folder, ask every question, return the report (a dict)."""
+def run(models_dir=None, verbose=True, pictures=True, now=None):
+    """Build the corpus and index in a temp folder, ask every question, return the report (a dict).
+    now: a datetime to act as the current moment (corpus ages and the questions' dates); default the real now."""
     from nobadfind import search, winapi
     root = tempfile.mkdtemp(prefix="nobadfind-evalsearch-")
     data_dir = os.path.join(root, "data")
@@ -445,7 +451,7 @@ def run(models_dir=None, verbose=True, pictures=True):
                 shutil.copytree(src, os.path.join(data_dir, sub))
                 copied.append(sub)
     home = os.path.join(root, "home")
-    now = dt.datetime.now()
+    now = now or dt.datetime.now()
     kf = known_folders(home)
     old_known = winapi.known_folder
     winapi.known_folder = lambda name: kf.get(name, "")
@@ -464,7 +470,8 @@ def run(models_dir=None, verbose=True, pictures=True):
                 continue
             t = time.perf_counter()
             r = search.search(store, item["q"], embedder=ctx["embedder"], vindex=ctx["vindex"], limit=20,
-                              roots=[home], photo_text=ctx["photo_text"], pindex=ctx["pindex"])
+                              roots=[home], photo_text=ctx["photo_text"], pindex=ctx["pindex"],
+                              now=now.timestamp())
             lat.append((time.perf_counter() - t) * 1000)
             ranked = [by_path.get(os.path.normcase(x["path"])) for x in r["results"]]
             ranked = [x for x in ranked if x]

@@ -359,3 +359,26 @@ def test_eval_search_last_week_doc_is_in_last_week_every_weekday():
             ts = (now - dt.timedelta(days=age)).timestamp()
             q = parse("pdf from last week in downloads", now=now)
             assert q.when == "last week" and q.t0 <= ts < q.t1, (now, age)
+
+
+AWKWARD_INSTANTS = [
+    dt.datetime(2026, 11, 23, 0, 5),        # a Monday just after midnight
+    dt.datetime(2026, 11, 22, 23, 55),      # a Sunday just before midnight
+    dt.datetime(2027, 1, 1, 0, 5),          # New Year, "last year" and "in March" are the year before
+    dt.datetime(2026, 3, 1, 12, 0),         # first of March: the most recent March is last year's
+    dt.datetime(2026, 3, 31, 12, 0),        # the end of March
+    dt.datetime(2026, 12, 31, 23, 55),      # New Year's Eve
+    dt.datetime(2028, 2, 29, 12, 0),        # a leap day
+    dt.datetime(2026, 7, 4, 12, 0),         # an ordinary summer Saturday
+]
+
+
+@pytest.mark.parametrize("now", AWKWARD_INSTANTS, ids=lambda n: n.strftime("%Y-%m-%d %H:%M"))
+def test_eval_search_corpus_meets_its_thresholds_at_awkward_instants(now):
+    """The keyword eval gives the same answers whatever the date: weekday edges, midnight, year and month ends."""
+    spec = importlib.util.spec_from_file_location("eval_search", os.path.join(APP, "tools", "eval_search.py"))
+    ev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ev)
+    rep = ev.run(None, verbose=False, pictures=False, now=now)
+    assert ev.failures(rep) == [], (now, rep["keywords"])
+    assert not [x["q"] for x in rep["rows"] if not x["parts_ok"]]

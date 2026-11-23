@@ -3,6 +3,7 @@
 Each result says why it matched, in plain words, and only claims what was actually measured.
 Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and only then turns those into <mark>.
 """
+import datetime as dt
 import os
 import time
 
@@ -684,8 +685,8 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
     is_dir = is_dir or folder_checker(store, drives, roots)
     # "in projects": folders of the index by name, near the top of your folders, the roots or a drive
     finder = folder_finder(store, place_bases(roots, drives))
-    q = parse(text, labels=[d.get("label") or "" for d in drives], is_dir=is_dir, times=times, romanized=romanized,
-              find_folder=finder, soft_kinds=soft)
+    q = parse(text, now=dt.datetime.fromtimestamp(now), labels=[d.get("label") or "" for d in drives], is_dir=is_dir,
+              times=times, romanized=romanized, find_folder=finder, soft_kinds=soft)
     _keep_named(store, q)
     time_from_text = q.when if q.t0 is not None else ""
     q.drives = drives
