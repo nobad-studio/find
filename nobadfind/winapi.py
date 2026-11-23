@@ -201,7 +201,7 @@ def open_outside_job(path):
     return subprocess.Popen([explorer, path], creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
 
 
-def start_outside_job(argv):
+def start_outside_job(argv, cwd=None):
     """Start a program of Find's own (the UI, the Open with helper) outside Find's job, as the normal user:
     an argument list, never a shell string. Raises OSError when Windows refuses the breakaway.
     0.9.5: the window asked for it (AllowSetForegroundWindow to the engine), so what starts may take the front;
@@ -216,7 +216,7 @@ def start_outside_job(argv):
             user32.AllowSetForegroundWindow(wintypes.DWORD(0xFFFFFFFF))   # ASFW_ANY
         except (AttributeError, OSError):
             pass
-    return subprocess.Popen(list(argv), creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True)
+    return subprocess.Popen(list(argv), creationflags=CREATE_BREAKAWAY_FROM_JOB, close_fds=True, cwd=cwd)
 
 
 OAIF_EXEC = 0x4                 # run the program the user picks (never changes the default: no OAIF_REGISTER_EXT)

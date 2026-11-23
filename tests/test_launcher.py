@@ -8,7 +8,7 @@ EXPLORER = winapi.system_exe("explorer.exe")   # by full path (review L3)
 
 def make(tmp_path):
     ran = []
-    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L = launcher.Launcher(str(tmp_path), run=lambda argv, **k: ran.append(argv))
     L.apps = [{"id": "app:0:google-chrome", "name": "Google Chrome", "app_id": "Chrome", "version": "131.0",
                "publisher": "Google LLC", "folder": r"C:\Program Files\Google\Chrome\Application"},
               {"id": "app:1:spotify", "name": "Spotify", "app_id": "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify",
@@ -62,7 +62,7 @@ def test_only_known_ids_run(tmp_path):
 def test_the_app_list_is_saved_and_read_back(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "_start_apps", lambda: [("Brave", "Brave"), ("Calculator", "Microsoft.Calc!App")])
     monkeypatch.setattr(launcher, "_registry_apps", lambda: ([], {}))
-    monkeypatch.setattr(launcher, "_installed_info", lambda: {"brave": {"version": "1.2", "publisher": "Brave",
+    monkeypatch.setattr(launcher, "_installed_info", lambda *a: {"brave": {"version": "1.2", "publisher": "Brave",
                                                                           "folder": "C:\\Brave"}})
     L = launcher.Launcher(str(tmp_path), run=lambda a: None)
     L.refresh()
@@ -231,13 +231,13 @@ def reg_entry(name, location="", icon=""):
 
 
 def fake_files(*present):
-    have = {p.lower() for p in present}
-    return lambda p: p.lower() in have
+    have = set(present)                              # exact: case differences must matter
+    return lambda p: p in have
 
 
 def registry_only(monkeypatch, entries, app_paths, is_file, start=()):
     monkeypatch.setattr(launcher, "_start_apps", lambda: list(start))
-    monkeypatch.setattr(launcher, "_installed_info", lambda: {})
+    monkeypatch.setattr(launcher, "_installed_info", lambda *a: {})
     monkeypatch.setattr(launcher, "_registry_apps", lambda: (entries, app_paths))
     monkeypatch.setattr(launcher, "_is_file", is_file)
     monkeypatch.setattr(launcher, "_program_roots", lambda: [PF])
@@ -247,7 +247,7 @@ def test_registry_app_opens_by_install_location_and_icon(tmp_path, monkeypatch):
     exe = PF + r"\Acme\acme.exe"
     registry_only(monkeypatch, [reg_entry("Acme Tool", PF + r"\Acme", exe + ",0")], {}, fake_files(exe))
     ran = []
-    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L = launcher.Launcher(str(tmp_path), run=lambda argv, **k: ran.append(argv))
     L.refresh()
     assert [a["name"] for a in L.apps] == ["Acme Tool"]
     assert L.run(L.apps[0]["id"])["ok"] is True
@@ -258,7 +258,7 @@ def test_registry_app_opens_by_app_paths(tmp_path, monkeypatch):
     exe = r"D:\Zed\zed.exe"
     registry_only(monkeypatch, [reg_entry("Zed", r"D:\Zed")], {"zed.exe": exe}, fake_files(exe))
     ran = []
-    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L = launcher.Launcher(str(tmp_path), run=lambda argv, **k: ran.append(argv))
     L.refresh()
     assert L.run(L.apps[0]["id"])["ok"] and ran == [[exe]]
 
@@ -294,7 +294,7 @@ def test_registry_app_with_bad_path_is_not_offered(tmp_path, monkeypatch):
 
 def test_a_stored_registry_app_is_checked_again_when_run(tmp_path, monkeypatch):
     ran = []
-    L = launcher.Launcher(str(tmp_path), run=lambda argv: ran.append(argv))
+    L = launcher.Launcher(str(tmp_path), run=lambda argv, **k: ran.append(argv))
     L.apps = [{"id": "app:0:acme", "name": "Acme", "exe": r"D:\Acme\acme.exe", "folder": r"D:\Acme",
                "version": "", "publisher": ""}]
     monkeypatch.setattr(launcher, "_is_file", lambda p: True)
@@ -302,3 +302,116 @@ def test_a_stored_registry_app_is_checked_again_when_run(tmp_path, monkeypatch):
     assert L.run("app:0:acme")["ok"] is True
     L.apps[0]["exe"] = r"D:\Acme\unins000.exe"
     assert L.run("app:0:acme")["ok"] is False and len(ran) == 1
+
+
+# ---------- fix round 1 ----------
+def one(tmp_path, monkeypatch, entries, app_paths, is_file):
+    registry_only(monkeypatch, entries, app_paths, is_file)
+    L = launcher.Launcher(str(tmp_path), run=lambda a, **k: None)
+    L.refresh()
+    return L.apps
+
+
+def test_registry_values_with_variables_are_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("NF_TEST_PF", PF)
+    assert launcher._expand_value("%NF_TEST_PF%\\Foo\\foo.exe,0", 2) == PF + r"\Foo\foo.exe,0"
+    assert launcher._expand_value("%NF_TEST_PF%\\x", 1) == "%NF_TEST_PF%\\x"      # REG_SZ stays as it is
+    exe = PF + r"\Foo\foo.exe"
+    apps = one(tmp_path, monkeypatch, [reg_entry("Foo", "", launcher._expand_value("%NF_TEST_PF%\\Foo\\foo.exe,0", 2))],
+               {}, fake_files(exe))
+    assert [a["exe"] for a in apps] == [exe]
+
+
+def test_icon_path_forms():
+    assert launcher._icon_path(r'"C:\A B\a.exe",0') == r"C:\A B\a.exe"
+    assert launcher._icon_path(r'"C:\A B\a.exe"') == r"C:\A B\a.exe"
+    assert launcher._icon_path(r"C:\A\a.exe,-12") == r"C:\A\a.exe"
+    assert launcher._icon_path(r"C:\A\a.exe") == r"C:\A\a.exe"
+    assert launcher._icon_path("") == ""
+
+
+def test_quoted_icon_with_index_opens(tmp_path, monkeypatch):
+    exe = PF + r"\Q R\q.exe"
+    apps = one(tmp_path, monkeypatch, [reg_entry("Q R", "", '"' + exe + '",0')], {}, fake_files(exe))
+    assert [a["exe"] for a in apps] == [exe]
+
+
+def test_install_location_and_app_paths_in_the_same_folder(tmp_path, monkeypatch):
+    exe = r"D:\Zed\bin\zed.exe"
+    apps = one(tmp_path, monkeypatch, [reg_entry("Totally Different Name", r"D:\Zed\bin")],
+               {"zed.exe": exe}, fake_files(exe))
+    assert [a["exe"] for a in apps] == [exe]
+
+
+def test_app_paths_shared_folder_is_not_guessed(tmp_path, monkeypatch):
+    paths = {"a.exe": r"D:\Suite\a.exe", "b.exe": r"D:\Suite\b.exe"}
+    ok = fake_files(*paths.values())
+    assert one(tmp_path, monkeypatch, [reg_entry("Suite Tool", r"D:\Suite")], paths, ok) == []
+    # the exe's own name matching the app's name is unambiguous
+    (tmp_path / "n").mkdir()
+    apps = one(tmp_path / "n", monkeypatch, [reg_entry("A", r"D:\Suite")], paths, ok)
+    assert [a["exe"] for a in apps] == [r"D:\Suite\a.exe"]
+
+
+def test_app_paths_pointing_at_a_non_exe_is_not_offered(tmp_path, monkeypatch):
+    bat = r"D:\Zed\zed.bat"
+    assert one(tmp_path, monkeypatch, [reg_entry("Zed", r"D:\Zed")], {"zed.exe": bat}, fake_files(bat)) == []
+
+
+def test_program_files_prefix_trick_is_refused(tmp_path, monkeypatch):
+    exe = r"C:\Program FilesX\evil\evil.exe"
+    assert one(tmp_path, monkeypatch, [reg_entry("Evil", "", exe)], {}, fake_files(exe)) == []
+
+
+def test_case_differences_are_the_same_folder(tmp_path, monkeypatch):
+    exe = r"d:\apps\ACME\Acme.EXE"
+    apps = one(tmp_path, monkeypatch, [reg_entry("Acme", r"D:\APPS\acme", exe)], {}, fake_files(r"d:\apps\ACME\Acme.EXE"))
+    assert [a["exe"] for a in apps] == [exe]
+    (tmp_path / "m").mkdir()
+    assert one(tmp_path / "m", monkeypatch, [reg_entry("Acme", r"D:\apps\acme", exe)], {}, fake_files(exe.lower())) == []
+
+
+def test_uninstall_exe_is_refused(tmp_path, monkeypatch):
+    exe = PF + r"\Acme\uninstall.exe"
+    assert one(tmp_path, monkeypatch, [reg_entry("Acme", PF + r"\Acme", exe)], {}, fake_files(exe)) == []
+
+
+def test_network_paths_are_never_looked_up(tmp_path, monkeypatch):
+    asked = []
+    for i, (folder, exe) in enumerate([(r"\\srv\share\Acme", r"\\srv\share\Acme\a.exe"),
+                                       (r"D:\Acme", r"\\srv\share\a.exe"), ("", r"\\?\C:\Program Files\a.exe")]):
+        (tmp_path / str(i)).mkdir()
+        apps = one(tmp_path / str(i), monkeypatch, [reg_entry("Acme", folder, exe)], {},
+                   lambda p: asked.append(p) or True)
+        assert apps == []
+    assert asked == []
+
+
+def test_system_components_and_updates_are_not_apps(tmp_path, monkeypatch):
+    exe = PF + r"\Acme\acme.exe"
+    for i, extra in enumerate([{"system": True}, {"parent": "Acme Suite"}, {"release": "Update"},
+                               {"release": "Hotfix"}, {"release": "Security Update"}]):
+        (tmp_path / str(i)).mkdir()
+        e = dict(reg_entry("Acme", PF + r"\Acme", exe), **extra)
+        assert one(tmp_path / str(i), monkeypatch, [e], {}, fake_files(exe)) == [], extra
+    (tmp_path / "ok").mkdir()
+    e = dict(reg_entry("Acme", PF + r"\Acme", exe), system=False, parent="", release="Application")
+    assert len(one(tmp_path / "ok", monkeypatch, [e], {}, fake_files(exe))) == 1
+
+
+def test_a_registry_app_starts_in_its_own_folder(tmp_path, monkeypatch):
+    calls = []
+    L = launcher.Launcher(str(tmp_path), run=lambda argv, **k: calls.append((argv, k)))
+    L.apps = [{"id": "app:0:acme", "name": "Acme", "exe": r"D:\Acme\acme.exe", "folder": r"D:\Acme",
+               "version": "", "publisher": ""}]
+    monkeypatch.setattr(launcher, "_is_file", lambda p: True)
+    assert L.run("app:0:acme")["ok"]
+    assert calls == [([r"D:\Acme\acme.exe"], {"cwd": r"D:\Acme"})]
+
+
+def test_the_registry_is_read_once_per_refresh(tmp_path, monkeypatch):
+    n = []
+    monkeypatch.setattr(launcher, "_start_apps", lambda: [])
+    monkeypatch.setattr(launcher, "_registry_apps", lambda: n.append(1) or ([], {}))
+    launcher.Launcher(str(tmp_path), run=lambda a: None).refresh()
+    assert len(n) == 1
