@@ -4,6 +4,17 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-23 (1.1.1): the index totals on a big index (`Store.stats`)
+
+A user's index, read-only on the maintainer's PC: SQLCipher, 10.8 GB plus a 417 MB WAL; 950,903 files, 6.3 M
+chunks, 763 k meaning vectors. One `Store.stats` (six COUNTs) took 10.1 s; four at once (the Index page asked
+`status_full` again every 3 s, plus the `status_full` event) took 63.6-73.9 s each and held all four of the
+pipe's request threads, so searches timed out. Since 1.1.1 the count runs in the background, one at a time.
+
+| date | files | chunks | meaning vectors | one count | vecs | files with text | nvecs | chunks | pvecs | files | four at once |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-23 | 950,903 | 6.3 M | 763 k | 10.1 s | 6.2 s | 1.8 s | 0.9 s | 0.8 s | 0.3 s | 0.1 s | 63.6-73.9 s each |
+
 ## 2026-11-22 (1.1.0): talk about a photo, release fix: progress, Stop, priority
 
 The hang deadline now counts only real progress, phase by phase (`vlm.worker.PHASES`), Stop reaches a load and

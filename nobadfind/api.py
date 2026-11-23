@@ -25,6 +25,7 @@ MAX_QUERY = 500
 TOTALS_TTL = 10                  # seconds: the phase counts are COUNT queries, too heavy for every 2 s poll
 STATS_TTL = 10                   # seconds the index counts (Store.stats) are reused by status()
 COUNT_SHARE = 20                 # and at least 20x as long as they took to count: <= 5% of a core on a big index
+STATS_KEYS = ("files", "with_text", "chunks", "vectors", "name_vectors", "photo_vectors")     # Store.stats' counts
 RATE_WINDOW = 15                 # status polls a progress rate is measured over (about 30 s)
 MAX_PAUSE_S = 24 * 3600
 QUIT_TIMEOUT = 15                # seconds a quit may take before the process ends anyway
@@ -49,6 +50,9 @@ class Api:
         self._slock = threading.Lock()
         self._totals = (0.0, None, {})    # (computed at, settings key, counts)
         self._refresher = None
+        self._stats_cache = (None, 0.0, None)   # (counted at, reused for seconds, Store.stats) for status()
+        self._stats_thread = None         # the one Store.stats count running (_stats)
+        self._stats_lock = threading.Lock()
         self._clock = time.monotonic      # tests replace it
         self._prev = None                 # (time, cpu_seconds, read_bytes) of the last status() call
         self._sampler = procs.Sampler()   # Find's own processes, what each is and what it uses
@@ -348,7 +352,18 @@ class Api:
     # ---------- status and settings ----------
     def status(self):
         st = dict(self._indexer.status)
-        st.update(self._stats())
+        counted = self._stats()
+        if counted is None:
+            # the first count is still running: the indexer's own numbers (its live files count, and its own last
+            # count of the index if it made one), 0 for the rest, and the UI says "Counting..." for those
+            st["counting_totals"] = "with_text" not in st
+            for k in STATS_KEYS:
+                st.setdefault(k, 0)
+        else:
+            st.update(counted)
+            st["counting_totals"] = False
+        st["encrypted"] = bool(getattr(self._store, "encrypted", False))
+        st["db_bytes"] = self._db_bytes()                   # two getsize calls: always current
         st["version"] = APP_VER
         st["model"] = self._feature_dl("text")
         st["photo_model"] = self._feature_dl("photo")
@@ -380,15 +395,38 @@ class Api:
 
     def _stats(self):
         """Store.stats (six COUNTs over the whole index: seconds on a whole PC), reused for STATS_TTL seconds or
-        COUNT_SHARE times as long as the last count took, whichever is longer."""
-        at, ttl, cached = getattr(self, "_stats_cache", (None, 0.0, None))
+        COUNT_SHARE times as long as the last count took, whichever is longer. None until the first count is in.
+
+        Never inline, not even the first time (1.1.1, as _counts since 0.9.0): on a 10 GB index one count took 10 s,
+        every status_full waited for its own, four ran at once (70 s each) and held all the pipe's request threads,
+        so searches timed out. One count runs at a time, in its own thread; a poll returns what is known at once."""
+        at, ttl, cached = self._stats_cache
         now = self._clock()
-        if cached is not None and now - at < ttl:
-            return cached
-        cached = self._store.stats()
-        took = self._clock() - now
-        self._stats_cache = (now, max(STATS_TTL, COUNT_SHARE * took), cached)
+        if at is None or now - at >= ttl:
+            with self._stats_lock:
+                if not (self._stats_thread and self._stats_thread.is_alive()):
+                    self._stats_thread = threading.Thread(target=self._count_stats, daemon=True, name="stats")
+                    self._stats_thread.start()
         return cached
+
+    def _count_stats(self):
+        cached = self._stats_cache[2]
+        t0 = self._clock()
+        try:
+            cached = self._store.stats()
+        except Exception as e:
+            log(f"index totals count failed: {type(e).__name__}", "warn")       # the old totals stay; again later
+        took = self._clock() - t0
+        self._stats_cache = (t0, max(STATS_TTL, COUNT_SHARE * took), cached)
+
+    def _db_bytes(self):
+        path = getattr(self._store, "db_path", None)
+        if not path:
+            return 0
+        try:
+            return sum(os.path.getsize(p) for p in (path, path + "-wal") if os.path.exists(p))
+        except OSError:
+            return 0
 
     def status_brief(self):
         """The few status fields a status line needs, cheap enough for every 2 s (the pipe's status event)."""

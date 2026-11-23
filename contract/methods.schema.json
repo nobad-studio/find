@@ -2177,6 +2177,10 @@
         "db_bytes": {
           "type": "integer"
         },
+        "counting_totals": {
+          "description": "1.1.1: true while the index totals (with_text, chunks, vectors, name_vectors, photo_vectors) are still being counted for the first time; until then they are the indexer's own running numbers or 0. db_bytes is always current.",
+          "type": "boolean"
+        },
         "version": {
           "type": "string"
         },

@@ -103,6 +103,7 @@ class IndexDetails {
     this.modelsLoaded = const [],
     this.rate = 0,
     this.dbBytes = 0,
+    this.countingTotals = false,
     this.plan,
     this.speed = '',
     this.ocrOn = false,
@@ -128,6 +129,10 @@ class IndexDetails {
   final List<String> modelsLoaded;
   final double rate;
   final int dbBytes;
+
+  /// 1.1.1: the engine is still counting the index totals for the first time ([withText], [vectors],
+  /// [nameVectors], [photoVectors] aren't known yet). [dbBytes] is always current.
+  final bool countingTotals;
   final WorkPlan? plan;
   final String speed;
   final bool ocrOn;
@@ -156,6 +161,7 @@ class IndexDetails {
       modelsLoaded: jStrs(m['models_loaded']),
       rate: jNum(m['rate']),
       dbBytes: jInt(m['db_bytes']),
+      countingTotals: jBool(m['counting_totals']),
       plan: plan is Map && plan.isNotEmpty ? WorkPlan.fromJson(jMap(plan)) : null,
       speed: jStr(m['speed']),
       ocrOn: ocr == true,
