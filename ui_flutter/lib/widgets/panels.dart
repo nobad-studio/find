@@ -3,6 +3,7 @@
 library;
 
 import 'package:flutter/widgets.dart';
+import 'package:material_ui/material_ui.dart' show Tooltip;
 
 import '../app/scope.dart';
 import '../app/theme/colors.dart';
@@ -156,7 +157,9 @@ class PageHeader extends StatelessWidget {
   }
 }
 
-/// A number with what it is: "186 MB" over "Memory", after an [icon] in a small frosted tile when given.
+/// A number with what it is: "186 MB" over "Memory", under an [icon] in its tile when given. The value takes at
+/// most 2 lines (3 for a long name) and the label 3, then an ellipsis, with the whole text in a tooltip: a long
+/// text never makes one tile bigger than the others (the grid gives a row one height).
 class StatTile extends StatelessWidget {
   const StatTile({super.key, required this.value, required this.label, this.live = false, this.icon});
   final String value;
@@ -164,43 +167,50 @@ class StatTile extends StatelessWidget {
   final bool live;
   final NbGlyph? icon;
 
+  static const valueLines = 2, labelLines = 3;
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     final glyph = icon;
-    final text = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // shown in full (they wrap): the icon tile beside them takes some of the width
-        Text(
-          value,
-          // a number reads as data; a long name (a graphics card) reads better as text
-          style: value.length > 12
-              ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
-              : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
-        ),
-        const SizedBox(height: 2),
-        Text(label, style: NbType.text(NbSize.small, c.dim, height: 1.35)),
-      ],
-    );
-    // with an icon: 12 px from every edge of the tile, the tile centred against its text, 12 px between them
     return NbPanel(
       padding: glyph == null ? const EdgeInsets.fromLTRB(12, 9, 12, 9) : const EdgeInsets.all(NbSpace.x3),
-      child: glyph == null
-          ? text
-          : Row(
-              children: [
-                GlyphTile(glyph, accent: live),
-                const SizedBox(width: NbSpace.x3),
-                Expanded(child: text),
-              ],
+      child: Tooltip(
+        message: '$value\n$label',
+        waitDuration: const Duration(milliseconds: 600),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // the icon above the text, so the text has the tile's whole width (12 px between them)
+            if (glyph != null) ...[GlyphTile(glyph, accent: live), const SizedBox(height: NbSpace.x3)],
+            Text(
+              value,
+              // a long name (a graphics card) may take one more line than a number
+              maxLines: value.length > 12 ? valueLines + 1 : valueLines,
+              overflow: TextOverflow.ellipsis,
+              // a number reads as data; a long name (a graphics card) reads better as text
+              style: value.length > 12
+                  ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
+                  : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
             ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: labelLines,
+              overflow: TextOverflow.ellipsis,
+              style: NbType.text(NbSize.small, c.dim, height: 1.35),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
 
-/// A grid of tiles that fills the width with as many columns of at least [min] as fit.
+/// A grid of tiles that fills the width with as many columns of at least [min] as fit. Every tile has the same
+/// width, and the tiles of a row the same height (the tallest one's), so no tile is bigger or smaller because of
+/// its text.
 class TileGrid extends StatelessWidget {
   const TileGrid({super.key, required this.children, this.min = 170, this.gap = 10});
   final List<Widget> children;
@@ -212,13 +222,37 @@ class TileGrid extends StatelessWidget {
     builder: (context, box) {
       final cols = ((box.maxWidth + gap) / (min + gap)).floor().clamp(1, 8);
       final w = (box.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [for (final ch in children) SizedBox(width: w, child: ch)],
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < children.length; i += cols) ...[
+            if (i > 0) SizedBox(height: gap),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var j = i; j < children.length && j < i + cols; j++) ...[
+                    if (j > i) SizedBox(width: gap),
+                    TileCell(width: w, child: children[j]),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
       );
     },
   );
+}
+
+/// One cell of a [TileGrid] (the alignment test measures them).
+class TileCell extends StatelessWidget {
+  const TileCell({super.key, required this.width, required this.child});
+  final double width;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(width: width, child: child);
 }
 
 /// A progress bar. [busy]: working with no known end (watching for changes, counting): a still, softly tinted

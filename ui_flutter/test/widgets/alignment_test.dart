@@ -5,6 +5,7 @@
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' show MaterialApp, Tooltip;
 import 'package:nobad_find/app/scope.dart';
 import 'package:nobad_find/app/theme/tokens.dart';
 import 'package:nobad_find/features/search/home_view.dart';
@@ -13,6 +14,7 @@ import 'package:nobad_find/features/settings/settings_parts.dart';
 import 'package:nobad_find/widgets/badges.dart';
 import 'package:nobad_find/widgets/glass.dart';
 import 'package:nobad_find/widgets/icons.dart';
+import 'package:nobad_find/widgets/panels.dart';
 import 'package:nobad_find/widgets/pressable.dart';
 
 import '../support/fake_engine.dart';
@@ -47,12 +49,74 @@ void tilesHaveRoom(WidgetTester tester, String where) {
       ('top', r.top - b.top),
       ('bottom', b.bottom - r.bottom),
     ]) {
-      expect(gap, greaterThanOrEqualTo(8 - .5), reason: '$where: a tile is ${gap.toStringAsFixed(1)} px from its box ($side)');
+      expect(
+        gap,
+        greaterThanOrEqualTo(8 - .5),
+        reason: '$where: a tile is ${gap.toStringAsFixed(1)} px from its box ($side)',
+      );
+    }
+  }
+}
+
+/// Every grid of tiles on screen: one width for all its tiles, and in each row one height.
+void gridsAreEven(WidgetTester tester, String where) {
+  for (final g in find.byType(TileGrid).evaluate()) {
+    final cells = [
+      for (final e in find.descendant(of: find.byWidget(g.widget), matching: find.byType(TileCell)).evaluate())
+        tester.getRect(find.byWidget(e.widget)),
+    ];
+    for (final r in cells) {
+      expect(r.width, moreOrLessEquals(cells.first.width, epsilon: .5), reason: '$where: tile width');
+      for (final o in cells.where((o) => (o.top - r.top).abs() < .5)) {
+        expect(o.height, moreOrLessEquals(r.height, epsilon: .5), reason: '$where: tile height in a row');
+      }
     }
   }
 }
 
 void main() {
+  // the real Windows fonts: whether a text fits depends on them (the test font's boxes are much wider)
+  setUpAll(loadWindowsFonts);
+
+  testWidgets('a long text ellipsizes in its tile (full text in a tooltip) and never makes the tile bigger', (
+    tester,
+  ) async {
+    final long = 'An extraordinarily long graphics card name that goes on and on ' * 3;
+    Widget grid(String value) => MaterialApp(
+      home: Center(
+        child: SizedBox(
+          width: 600,
+          child: TileGrid(
+            min: 130,
+            children: [
+              StatTile(value: value, label: 'Graphics card $long', icon: NbGlyph.graphics),
+              const StatTile(value: '15.7 GB', label: 'Memory', icon: NbGlyph.memory),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(grid('Intel(R) Iris(R) Xe'));
+    final normal = tester.getSize(find.byType(TileCell).first);
+    await tester.pumpWidget(grid(long));
+    final cells = [for (final e in find.byType(TileCell).evaluate()) tester.getSize(find.byWidget(e.widget))];
+    expect(cells[0], cells[1], reason: 'the row keeps one size');
+    expect(cells[0].height, lessThanOrEqualTo(normal.height + 4 * 18), reason: 'capped at 2 + 3 lines');
+    final p = tester.renderObject<RenderParagraph>(find.textContaining('An extraordinarily').first);
+    expect(p.didExceedMaxLines, isTrue);
+    expect(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').contains(long)), findsOneWidget);
+  });
+
+  testWidgets('Home, Index and What to index: every grid of tiles is even', (tester) async {
+    await pumpApp(tester, FakeEngine(settings: seen), size: const Size(1180, 760));
+    await tester.pumpAndSettle();
+    final nav = AppScope.of(tester.element(find.byType(Text).first)).nav;
+    gridsAreEven(tester, 'Home');
+    nav.go(AppTab.indexing);
+    await tester.pumpAndSettle();
+    gridsAreEven(tester, 'Index');
+  });
+
   testWidgets('Home: the search box, the category row, the Recent card and the status line share their edges', (
     tester,
   ) async {
@@ -118,7 +182,6 @@ void main() {
       for (final e in f.evaluate()) {
         final p = e.renderObject! as RenderParagraph;
         expect(p.didExceedMaxLines, isFalse, reason: '$words is cut short');
-        expect((e.widget as Text).overflow, isNot(TextOverflow.ellipsis), reason: words);
       }
     }
   });
@@ -130,7 +193,9 @@ void main() {
       AppScope.of(tester.element(find.byType(Text).first)).nav.openSettings(page);
       await tester.pumpAndSettle();
 
-      final cards = [for (final e in find.byKey(SettingsGroup.cardKey).evaluate()) tester.getRect(find.byWidget(e.widget))];
+      final cards = [
+        for (final e in find.byKey(SettingsGroup.cardKey).evaluate()) tester.getRect(find.byWidget(e.widget)),
+      ];
       expect(cards, isNotEmpty);
       for (final r in cards.skip(1)) {
         edges(r, cards.first, '${page.label} card');
@@ -149,12 +214,14 @@ void main() {
       // every row's control ends on the card's inner right edge (the row's 12 px right padding)
       final rights = <double>{
         for (final e in find.byType(SettingRow).evaluate())
-          if ((e.widget as SettingRow).control case final ctl?) tester.getRect(find.byWidget(ctl)).right.roundToDouble(),
+          if ((e.widget as SettingRow).control case final ctl?)
+            tester.getRect(find.byWidget(ctl)).right.roundToDouble(),
       };
       if (rights.isNotEmpty) {
         expect(rights, {(cards.first.right - 12).roundToDouble()}, reason: '${page.label}: controls end on one column');
       }
       tilesHaveRoom(tester, page.label);
+      gridsAreEven(tester, page.label);
     });
   }
 }
