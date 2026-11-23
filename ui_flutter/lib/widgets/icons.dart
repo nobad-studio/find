@@ -221,14 +221,19 @@ class GlyphTile extends StatelessWidget {
       width: size,
       height: size,
       alignment: Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
-        gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
-        border: Border.all(color: rim),
-      ),
+      decoration: shape(top, bottom, rim),
       child: NbIcon(glyph, color: ink),
     );
   }
+
+  /// Every icon tile's shape: a squircle (continuous corners) with a soft top-to-bottom gradient and a 1 px rim.
+  static ShapeDecoration shape(Color top, Color bottom, Color rim) => ShapeDecoration(
+    gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
+    shape: RoundedSuperellipseBorder(
+      borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
+      side: BorderSide(color: rim),
+    ),
+  );
 
   /// A tile's colours (top, bottom, rim, glyph). Classic: a soft gradient of the meaning's hue, a 1 px rim of it,
   /// the glyph in it. Minimal ice: a cool tint, a cool white glyph. [accent]: the orange.

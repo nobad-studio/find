@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../app/scope.dart';
 import '../../app/theme/colors.dart';
+import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../engine/models/settings.dart';
 import '../../widgets/controls.dart';
@@ -245,7 +246,7 @@ class _HotkeySettingState extends State<HotkeySetting> {
                 height: 44,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: NbRadius.controlAll,
                   border: Border.all(color: c.orange.withValues(alpha: .7)),
                   color: c.orange.withValues(alpha: .06),
                 ),

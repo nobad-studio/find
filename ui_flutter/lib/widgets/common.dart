@@ -72,7 +72,7 @@ class KindBadge extends StatelessWidget {
                 colors: [c.orangeA(c.isDark ? .12 : .08), c.card],
               ),
         border: Border.all(color: c.line),
-        borderRadius: BorderRadius.circular(small ? 6 : 8),
+        borderRadius: BorderRadius.circular(small ? NbRadius.key.x : NbRadius.tile),
       ),
       child: small
           ? ExcludeSemantics(

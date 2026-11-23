@@ -162,7 +162,7 @@ class NotificationsPanel extends StatelessWidget {
     final c = NbColors.of(context);
     return Glass(
       level: GlassLevel.blur,
-      radius: 16,
+      radius: NbRadius.card,
       padding: const EdgeInsets.fromLTRB(4, 10, 4, 6),
       child: ListenableBuilder(
         listenable: controller,

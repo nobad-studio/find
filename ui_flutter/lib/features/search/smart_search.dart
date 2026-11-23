@@ -103,7 +103,7 @@ class SuggestionList extends StatelessWidget {
         final c = NbColors.of(context);
         return Glass(
           level: GlassLevel.blur,
-          radius: 12,
+          radius: NbRadius.card,
           fill: c.surface.withValues(alpha: c.isDark ? .9 : .94),
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: list,

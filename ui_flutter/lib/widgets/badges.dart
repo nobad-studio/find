@@ -42,11 +42,7 @@ class NbAvatar extends StatelessWidget {
         width: GlyphTile.size,
         height: GlyphTile.size,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
-          gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
-          border: Border.all(color: rim),
-        ),
+        decoration: GlyphTile.shape(top, bottom, rim),
         child: text != null
             ? Text(text!, style: NbType.text(13, ink, weight: FontWeight.w600, height: 1))
             : NbIcon(glyph ?? NbGlyph.info, color: ink),
@@ -106,7 +102,7 @@ class NbCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
         decoration: BoxDecoration(
           color: active ? c.orange.withValues(alpha: .06) : c.card,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(NbRadius.card),
           border: Border.all(color: active ? c.orange.withValues(alpha: .45) : c.line),
         ),
         child: child,
@@ -201,7 +197,7 @@ class NbStat extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
       decoration: BoxDecoration(
         color: c.card,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(NbRadius.card),
         border: Border.all(color: live ? c.orange.withValues(alpha: .45) : c.line),
       ),
       child: Row(

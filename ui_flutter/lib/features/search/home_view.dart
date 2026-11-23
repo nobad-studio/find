@@ -248,8 +248,9 @@ class _Tile extends StatelessWidget {
       builder: (context, p) => AnimatedContainer(
         duration: NbMotion.of(context, NbMotion.fast),
         curve: NbMotion.curve,
-        height: 40,
-        padding: const EdgeInsets.fromLTRB(6, 0, 8, 0),
+        // room around the icon tile: 8 px above, below and on its left
+        height: GlyphTile.size + 2 * NbSpace.x2,
+        padding: const EdgeInsets.fromLTRB(NbSpace.x2, 0, NbSpace.x1, 0),
         decoration: BoxDecoration(
           color: on ? c.orangeA(c.isDark ? .12 : .09) : (p.lit ? c.cardLift : c.card),
           border: Border.all(color: on || p.lit ? c.orangeA(.55) : c.line),
@@ -259,12 +260,12 @@ class _Tile extends StatelessWidget {
         child: Row(
           children: [
             GlyphTile(tileGlyph(filters), accent: on),
-            const SizedBox(width: NbSpace.x2),
+            const SizedBox(width: NbSpace.x3),
             Expanded(
               child: Text(
                 label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                // a long label wraps to a second line inside the pill rather than being cut
+                maxLines: 2,
                 style: NbType.text(12, c.text, weight: FontWeight.w600, height: 1.2),
               ),
             ),

@@ -121,21 +121,22 @@ class Glass extends StatelessWidget {
           GlassLevel.panel => c.panel,
           GlassLevel.blur => c.dialog,
         };
+    // macOS-like: a soft, large, low-opacity shadow under the glass; a hovered card lifts a little
     final shadow = switch (level) {
       GlassLevel.card => [
         BoxShadow(
-          color: c.float.withValues(alpha: c.float.a * (.22 + .5 * lift)),
-          blurRadius: 8 + 10 * lift,
-          offset: Offset(0, 2 + 4 * lift),
-          spreadRadius: -4,
+          color: c.float.withValues(alpha: c.float.a * (.30 + .30 * lift)),
+          blurRadius: 24 + 12 * lift,
+          offset: Offset(0, 8 + 4 * lift),
+          spreadRadius: -10,
         ),
       ],
       _ => [
         BoxShadow(
-          color: c.float.withValues(alpha: c.float.a * .45),
-          blurRadius: 24,
-          offset: const Offset(0, 6),
-          spreadRadius: -10,
+          color: c.float.withValues(alpha: c.float.a * .55),
+          blurRadius: 44,
+          offset: const Offset(0, 16),
+          spreadRadius: -14,
         ),
       ],
     };

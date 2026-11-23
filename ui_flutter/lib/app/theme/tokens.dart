@@ -35,23 +35,27 @@ abstract final class NbSpace {
   static const wide = 880.0;
 }
 
+/// The curves, macOS-inspired: one radius per kind, and every box of a kind uses it. Key caps 8, rows (list rows,
+/// Home's category tiles, notices) 14, icon tiles 12 (drawn as a squircle), cards, panels and dialogs 22 (the
+/// search box too), and every control (buttons, dropdowns, chips, fields, toggles) a stadium.
 abstract final class NbRadius {
-  static const key = Radius.circular(6);
-  static const control = Radius.circular(10);
-  static const row = Radius.circular(12);
-  static const panel = Radius.circular(18);
+  static const key = Radius.circular(8);
+  static const row = Radius.circular(14);
   static const pill = Radius.circular(999);
 
-  /// Every card, panel and dialog ([Glass]'s corners).
-  static const card = 18.0;
+  /// Controls are stadiums: fully rounded ends.
+  static const control = pill;
 
-  /// Icon tiles (Settings groups, model rows, this PC's tiles).
-  static const tile = 8.0;
+  /// Every card, panel and dialog ([Glass]'s corners), the search box included.
+  static const card = 22.0;
+
+  /// Icon tiles (Settings groups, model rows, this PC's tiles, Home's categories, the Index cards).
+  static const tile = 12.0;
 
   static const keyAll = BorderRadius.all(key);
   static const controlAll = BorderRadius.all(control);
   static const rowAll = BorderRadius.all(row);
-  static const panelAll = BorderRadius.all(panel);
+  static const cardAll = BorderRadius.all(Radius.circular(card));
   static const pillAll = BorderRadius.all(pill);
 }
 

@@ -184,18 +184,15 @@ class StatTile extends StatelessWidget {
         Text(label, style: NbType.text(NbSize.small, c.dim, height: 1.35)),
       ],
     );
+    // with an icon: 12 px from every edge of the tile, the tile centred against its text, 12 px between them
     return NbPanel(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      padding: glyph == null ? const EdgeInsets.fromLTRB(12, 9, 12, 9) : const EdgeInsets.all(NbSpace.x3),
       child: glyph == null
           ? text
           : Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: GlyphTile(glyph, accent: live),
-                ),
-                const SizedBox(width: 10),
+                GlyphTile(glyph, accent: live),
+                const SizedBox(width: NbSpace.x3),
                 Expanded(child: text),
               ],
             ),

@@ -38,21 +38,13 @@ class SettingsGroup extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 6),
-            // the original header line; the icon tile sits beside the title without adding height (it overhangs
-            // the space above, lifted 2 px so it clears the card's rim)
+            // the original header text; its icon tile centred beside it, 12 px from the title and 8 px above the
+            // card, so it never touches the card
+            padding: const EdgeInsets.only(left: 2, bottom: NbSpace.x2),
             child: Row(
               children: [
-                SizedBox(
-                  width: GlyphTile.size,
-                  height: 0,
-                  child: OverflowBox(
-                    minHeight: GlyphTile.size,
-                    maxHeight: GlyphTile.size,
-                    child: Transform.translate(offset: const Offset(0, -2), child: GlyphTile(icon)),
-                  ),
-                ),
-                const SizedBox(width: 10),
+                GlyphTile(icon),
+                const SizedBox(width: NbSpace.x3),
                 Expanded(
                   child: Semantics(header: true, child: Text(title, style: sectionStyle(c))),
                 ),

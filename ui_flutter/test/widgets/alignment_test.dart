@@ -10,7 +10,9 @@ import 'package:nobad_find/app/theme/tokens.dart';
 import 'package:nobad_find/features/search/home_view.dart';
 import 'package:nobad_find/features/search/search_screen.dart';
 import 'package:nobad_find/features/settings/settings_parts.dart';
+import 'package:nobad_find/widgets/badges.dart';
 import 'package:nobad_find/widgets/glass.dart';
+import 'package:nobad_find/widgets/icons.dart';
 import 'package:nobad_find/widgets/pressable.dart';
 
 import '../support/fake_engine.dart';
@@ -20,6 +22,34 @@ const seen = {'welcome_seen': true, 'bg_notice_seen': true};
 void edges(Rect a, Rect b, String what) {
   expect(a.left, moreOrLessEquals(b.left, epsilon: .5), reason: '$what: left $a vs $b');
   expect(a.right, moreOrLessEquals(b.right, epsilon: .5), reason: '$what: right $a vs $b');
+}
+
+/// Every icon tile on screen has room: at least 8 px from each edge of the card or box it sits in, and a
+/// Settings header's tile at least 8 px above its group's card.
+void tilesHaveRoom(WidgetTester tester, String where) {
+  final tiles = [...find.byType(GlyphTile).evaluate(), ...find.byType(NbAvatar).evaluate()];
+  expect(tiles, isNotEmpty, reason: where);
+  for (final e in tiles) {
+    final f = find.byWidget(e.widget);
+    final r = tester.getRect(f);
+    final box = find.ancestor(of: f, matching: find.byWidgetPredicate((w) => w is Glass || w is Pressable));
+    final group = find.ancestor(of: f, matching: find.byType(SettingsGroup));
+    if (group.evaluate().isNotEmpty && box.evaluate().isEmpty) {
+      final card = tester.getRect(find.descendant(of: group.first, matching: find.byKey(SettingsGroup.cardKey)));
+      expect(card.top - r.bottom, greaterThanOrEqualTo(8), reason: '$where: a header tile touches its card');
+      continue;
+    }
+    if (box.evaluate().isEmpty) continue; // not in a box
+    final b = tester.getRect(box.first);
+    for (final (side, gap) in [
+      ('left', r.left - b.left),
+      ('right', b.right - r.right),
+      ('top', r.top - b.top),
+      ('bottom', b.bottom - r.bottom),
+    ]) {
+      expect(gap, greaterThanOrEqualTo(8 - .5), reason: '$where: a tile is ${gap.toStringAsFixed(1)} px from its box ($side)');
+    }
+  }
 }
 
 void main() {
@@ -51,6 +81,7 @@ void main() {
     }
     expect(tiles.first.left, moreOrLessEquals(box.left, epsilon: .5));
     expect(tiles.last.right, moreOrLessEquals(box.right, epsilon: .5));
+    tilesHaveRoom(tester, 'Home');
   });
 
   testWidgets('a narrow window (860 px): every row of category tiles spans the search box', (tester) async {
@@ -123,6 +154,7 @@ void main() {
       if (rights.isNotEmpty) {
         expect(rights, {(cards.first.right - 12).roundToDouble()}, reason: '${page.label}: controls end on one column');
       }
+      tilesHaveRoom(tester, page.label);
     });
   }
 }

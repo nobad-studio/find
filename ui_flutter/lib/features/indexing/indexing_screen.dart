@@ -353,7 +353,7 @@ class _PhaseCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
       decoration: BoxDecoration(
         color: run ? c.orange.withValues(alpha: .06) : c.card,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(NbRadius.card),
         border: Border.all(color: run ? c.orange.withValues(alpha: .45) : c.line),
       ),
       child: Column(
@@ -537,7 +537,7 @@ class _ModelCardView extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: m.loaded ? c.orange.withValues(alpha: .06) : c.card,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(NbRadius.card),
         border: Border.all(color: m.loaded ? c.orange.withValues(alpha: .45) : c.line),
       ),
       child: Column(
@@ -691,11 +691,11 @@ class _Loading extends StatelessWidget {
         children: [
           Skeleton(width: 160, height: 14),
           SizedBox(height: NbSpace.x3),
-          Skeleton(height: 230, radius: NbRadius.panel),
+          Skeleton(height: 230, radius: Radius.circular(NbRadius.card)),
           SizedBox(height: NbSpace.x8),
           Skeleton(width: 190, height: 14),
           SizedBox(height: NbSpace.x3),
-          Skeleton(height: 150, radius: NbRadius.panel),
+          Skeleton(height: 150, radius: Radius.circular(NbRadius.card)),
         ],
       ),
     ),
