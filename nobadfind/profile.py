@@ -20,10 +20,12 @@ def _gpu_one(g, gpu_backends):
         return PERFORMANCE, f"{name}: {mb // 1024} GB dedicated, via {via}"
     if mb >= 4096:
         return BALANCED, f"{name}: {mb // 1024} GB dedicated, via {via}"
+    # gap in spec 4.1: a discrete card under 4 GB with a GPU backend matches no rule; Efficiency
     return EFFICIENCY, f"{name}: only {mb} MB dedicated, via {via}"      # small discrete card: spec silent, see report
 
 
 def _gpu(facts, family):
+    # gap in spec 4.1: for llama.cpp, Vulkan counts as a GPU backend (the spec names only CUDA / DirectML)
     backs = [b for b in ((facts.get("backends") or {}).get(family) or []) if b != "cpu"]
     best = (COMPATIBILITY, f"{family}: no graphics card with a usable backend")
     for g in facts.get("gpus") or []:
@@ -38,7 +40,7 @@ def _cpu(facts):
     avx2 = bool(facts.get("avx2"))
     if cores >= 8 and avx2:
         c = PERFORMANCE
-    elif cores >= 6:
+    elif cores >= 6:                    # gap in spec 4.1: 8+ cores without AVX2 land here (Balanced)
         c = BALANCED
     elif cores >= 4:
         c = EFFICIENCY
@@ -54,7 +56,7 @@ def _memory(facts):
 
 
 def _storage(facts):
-    ssd = facts.get("ssd")
+    ssd = facts.get("ssd")              # gap in spec 4.1: unknown (None) is treated as a hard disk (Efficiency)
     return (PERFORMANCE, "solid-state drive") if ssd is True else \
         (EFFICIENCY, "hard disk" if ssd is False else "drive type unknown, treated as a hard disk")
 

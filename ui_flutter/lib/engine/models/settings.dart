@@ -172,6 +172,34 @@ class LearnedApp {
   }
 }
 
+/// One graphics adapter. [sharedMb] is system memory it may borrow, never video memory.
+class GpuInfo {
+  const GpuInfo({
+    this.vendor = '',
+    this.name = '',
+    this.dedicatedMb = 0,
+    this.sharedMb = 0,
+    this.integrated = false,
+  });
+  final String vendor;
+  final String name;
+  final int dedicatedMb;
+  final int sharedMb;
+  final bool integrated;
+
+  static GpuInfo? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final m = jMap(v);
+    return GpuInfo(
+      vendor: jStr(m['vendor']),
+      name: jStr(m['name']),
+      dedicatedMb: jInt(m['dedicated_mb']),
+      sharedMb: jInt(m['shared_mb']),
+      integrated: jBool(m['integrated']),
+    );
+  }
+}
+
 class Hardware {
   const Hardware({
     this.ramGb = 0,
@@ -184,6 +212,9 @@ class Hardware {
     this.directml = false,
     this.diskFreeGb = 0,
     this.ssd,
+    this.gpus = const [],
+    this.onnxBackends = const [],
+    this.llamacppBackends = const [],
   });
   final double ramGb;
   final int cores;
@@ -195,6 +226,13 @@ class Hardware {
   final bool directml;
   final double diskFreeGb;
   final bool? ssd;
+
+  /// Every graphics adapter (empty from an older engine).
+  final List<GpuInfo> gpus;
+
+  /// Backends installed per family, e.g. ['cpu', 'directml'] and ['vulkan', 'cpu'] (empty from an older engine).
+  final List<String> onnxBackends;
+  final List<String> llamacppBackends;
 
   static Hardware? fromJson(Object? v) {
     if (v is! Map) return null;
@@ -210,6 +248,9 @@ class Hardware {
       directml: jBool(m['directml']),
       diskFreeGb: jNum(m['disk_free_gb']),
       ssd: m['ssd'] is bool ? m['ssd'] as bool : null,
+      gpus: jList(m['gpus'], GpuInfo.fromJson),
+      onnxBackends: jList(jMap(m['backends'])['onnx'], (x) => x is String ? x : null),
+      llamacppBackends: jList(jMap(m['backends'])['llamacpp'], (x) => x is String ? x : null),
     );
   }
 }

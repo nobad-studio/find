@@ -451,6 +451,9 @@ class FakeEngine implements EngineApi {
       vramGb: 0.1,
       diskFreeGb: 211.4,
       ssd: true,
+      gpus: [GpuInfo(vendor: 'intel', name: 'Intel(R) Iris(R) Xe Graphics', dedicatedMb: 128, sharedMb: 8038, integrated: true)],
+      onnxBackends: ['cpu'],
+      llamacppBackends: ['vulkan', 'cpu'],
     ),
   );
 
@@ -1629,6 +1632,9 @@ ModelsInfo demoModels({LanguageFocus focus = LanguageFocus.multilingual, ModelsI
       vramGb: 0.1,
       diskFreeGb: 211.4,
       ssd: true,
+      gpus: [GpuInfo(vendor: 'intel', name: 'Intel(R) Iris(R) Xe Graphics', dedicatedMb: 128, sharedMb: 8038, integrated: true)],
+      onnxBackends: ['cpu'],
+      llamacppBackends: ['vulkan', 'cpu'],
     ),
     tierRecommended: 'balanced',
     tierCurrent: from?.tierCurrent ?? 'light',

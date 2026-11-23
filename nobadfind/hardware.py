@@ -133,8 +133,19 @@ def gpu_list():
              "integrated": a["dedicated_mb"] < INTEGRATED_MB} for a in real]
 
 
+_dml_cache = None
+
+
 def _dml():
-    """True when the ONNX Runtime build in this process has the DirectML provider; False if unknown."""
+    """True when the ONNX Runtime build in this process has the DirectML provider; False if unknown. Asked once:
+    the ONNX Runtime build cannot change in a running process."""
+    global _dml_cache
+    if _dml_cache is None:
+        _dml_cache = _dml_probe()
+    return _dml_cache
+
+
+def _dml_probe():
     try:
         import onnxruntime
         return "DmlExecutionProvider" in onnxruntime.get_available_providers()
@@ -234,7 +245,8 @@ def _scan():
 
 
 def scan():
-    """The hardware facts, cached for the life of the process."""
+    """The hardware facts, cached for the life of the process, except "backends": a runtime can be downloaded while
+    the engine runs, so it is re-read (file checks only) on every call. The cached dict itself is returned."""
     global _cache
     with _lock:
         if _cache is None:
@@ -246,4 +258,5 @@ def scan():
                           "avx512_vnni": False, "gpu": "", "vram_gb": 0.0, "directml": False,
                           "disk_free_gb": 0.0, "ssd": None, "gpus": [],
                           "backends": {"onnx": ["cpu"], "llamacpp": []}}
+        _cache["backends"] = backends()
         return _cache

@@ -165,7 +165,8 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`hardware`** `{}` → `{ram_gb, cores, threads, avx2, avx512_vnni, gpu, vram_gb, directml, disk_free_gb, ssd:
   bool|null, gpus: [{vendor, name, dedicated_mb, shared_mb, integrated}], backends: {onnx: [...], llamacpp: [...]}}`:
   the "Your PC" facts (measured once per engine run; every adapter listed, shared memory is never video memory;
-  a backend is listed only when installed and loadable).
+  a backend is listed only when installed and loadable; `backends` is re-read on every call, so a runtime downloaded while
+  the engine runs shows up without a restart).
 
 ### Settings and the index
 

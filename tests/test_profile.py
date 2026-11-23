@@ -91,3 +91,16 @@ def test_backends_fail_safe(monkeypatch):
         raise OSError
     monkeypatch.setattr(hardware, "_llama_ready", boom)
     assert hardware.backends()["llamacpp"] == []
+
+
+def test_backends_refresh_after_a_runtime_download(monkeypatch):
+    state = {"llama-cpu": True, "llama-vulkan": False}
+    monkeypatch.setattr(hardware, "_cache", None)
+    monkeypatch.setattr(hardware, "_scan", lambda: {"ram_gb": 16.0, "gpus": [], "backends": {}})
+    monkeypatch.setattr(hardware, "_dml", lambda: False)
+    monkeypatch.setattr(hardware, "_llama_ready", lambda rid: state[rid])
+    first = hardware.scan()
+    assert first["backends"]["llamacpp"] == ["cpu"]
+    state["llama-vulkan"] = True                            # model_download finished while the engine runs
+    again = hardware.scan()
+    assert again is first and again["backends"]["llamacpp"] == ["vulkan", "cpu"]
