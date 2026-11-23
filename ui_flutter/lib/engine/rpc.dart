@@ -465,7 +465,7 @@ class EngineClient {
   Future<SetupOffer> setupOffer() async => SetupOffer.fromJson(await call('setup_offer'));
   Future<SetupAccept> setupAccept(List<String> models) async =>
       SetupAccept.fromJson(await call('setup_accept', {'models': models, 'consent': 'DOWNLOAD'}));
-  Future<ActionResult> setupLater() => _ok('setup_later');
+  Future<ActionResult> setupLater({bool remind = true}) => _ok('setup_later', {if (!remind) 'remind': false});
   Future<ActionResult> modelLanguage(String focus) => _ok('model_language', {'focus': focus});
   Future<ActionResult> openWith(int id) => _ok('open_with', {'id': id}, false);
   Future<ScopeInfo> scopeInfo() async => ScopeInfo.fromJson(await call('scope_info'));

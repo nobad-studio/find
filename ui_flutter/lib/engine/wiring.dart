@@ -199,7 +199,7 @@ class PipeEngine implements EngineApi {
   @override
   Future<SetupAccept> setupAccept(List<String> models) => _pipe.setupAccept(models);
   @override
-  Future<ActionResult> setupLater() => _pipe.setupLater();
+  Future<ActionResult> setupLater({bool remind = true}) => _pipe.setupLater(remind: remind);
   @override
   Future<ActionResult> modelLanguage(String focus) => _pipe.modelLanguage(focus);
   @override

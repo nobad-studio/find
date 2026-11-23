@@ -620,8 +620,8 @@ class _Actions extends StatelessWidget {
     final talk = x.feature == 'talk' || x.feature == 'runtime';
     void fetch() => unawaited(
       x.feature == 'talk'
-          ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt))
-          : m.download(x, consent: (y) => askRuntimeConsent(context, y)),
+          ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt, pc: m.info.pc))
+          : m.download(x, consent: (y) => askRuntimeConsent(context, y, pc: m.info.pc)),
     );
     final List<Widget> buttons;
     if (busy) {

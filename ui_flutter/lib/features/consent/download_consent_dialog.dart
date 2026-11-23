@@ -7,7 +7,10 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/theme/colors.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
+import '../../app/scope.dart';
 import '../../engine/models/models_info.dart';
+import '../../engine/models/settings.dart' show Hardware;
+import '../settings/pages/models.dart' show runtimeName;
 import '../../widgets/controls.dart';
 import '../../widgets/dialogs.dart';
 
@@ -96,21 +99,23 @@ class ModelOffer {
 
 /// 1.1: one consent for a talk model and the llama.cpp runtime it runs on ([runtime] null: already on this PC):
 /// both names, both sizes and the total, and both sources. Its one Download fetches both.
-ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime) {
+/// [pc]: this PC, so the runtime is named as it has it (built-in graphics never read "graphics card").
+ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime, {Hardware? pc}) {
   final rt = runtime;
+  final rtName = rt == null ? '' : runtimeName(rt.id, rt.name, pc);
   final model = !m.onDisk; // the model may be here already and only its runtime missing
   final total = (model ? m.sizeMb : 0) + (rt?.sizeMb ?? 0);
   return ModelOffer(
     id: m.id,
-    title: model || rt == null ? 'Download ${m.name}?' : 'Download the ${rt.name}?',
+    title: model || rt == null ? 'Download ${m.name}?' : 'Download the $rtName?',
     what: [
       m.improves.isNotEmpty ? m.improves : featureLabel(m.feature),
       'Runs on this PC only.',
-      if (rt != null) model ? 'It needs the ${rt.name}, downloaded with it.' : '${m.name} needs the ${rt.name}.',
+      if (rt != null) model ? 'It needs the $rtName, downloaded with it.' : '${m.name} needs the $rtName.',
     ].join(' '),
     facts: [
       if (model) ('Model', '${m.name}: ${m.sizeMb.round()} MB from huggingface.co'),
-      if (rt != null) ('Runtime', _runtimeSource(rt)),
+      if (rt != null) ('Runtime', _runtimeSource(rt, pc)),
       ('Total', '${total.round()} MB, once'),
       ('Licence', rt == null ? m.licence : '${m.licence} (model), ${rt.licence} (runtime)'),
       if (m.ramMb > 0) ('Memory', 'About ${m.ramMb.round()} MB while answering'),
@@ -126,16 +131,17 @@ ModelOffer talkOffer(ModelInfo m, ModelInfo? runtime) {
   );
 }
 
-String _runtimeSource(ModelInfo rt) =>
-    '${rt.name}: ${rt.sizeMb.round()} MB from github.com (llama.cpp releases, delivered by *.githubusercontent.com)';
+String _runtimeSource(ModelInfo rt, Hardware? pc) =>
+    '${runtimeName(rt.id, rt.name, pc)}: ${rt.sizeMb.round()} MB from github.com (llama.cpp releases, delivered by '
+    '*.githubusercontent.com)';
 
 /// 1.1: a llama.cpp runtime downloaded on its own (Settings → Models): the same wording as in [talkOffer].
-ModelOffer runtimeOffer(ModelInfo rt) => ModelOffer(
+ModelOffer runtimeOffer(ModelInfo rt, {Hardware? pc}) => ModelOffer(
   id: rt.id,
-  title: 'Download the ${rt.name}?',
+  title: 'Download the ${runtimeName(rt.id, rt.name, pc)}?',
   what: '${rt.improves.isNotEmpty ? rt.improves : featureLabel(rt.feature)}. Runs on this PC only.',
   facts: [
-    ('Runtime', _runtimeSource(rt)),
+    ('Runtime', _runtimeSource(rt, pc)),
     ('Total', '${rt.sizeMb.round()} MB, once'),
     ('Licence', rt.licence),
     ('Checked', 'Pinned release, exact size and SHA-256; only the runtime\'s pinned files are kept'),
@@ -143,20 +149,33 @@ ModelOffer runtimeOffer(ModelInfo rt) => ModelOffer(
   source: '',
 );
 
-Future<bool> askRuntimeConsent(BuildContext context, ModelInfo rt) async {
+Future<bool> askRuntimeConsent(BuildContext context, ModelInfo rt, {Hardware? pc}) async {
+  final hw = pc ?? await _hardware(context);
+  if (!context.mounted) return false;
   final r = await showDialog<bool>(
     context: context,
-    builder: (context) => ConsentDialog(offer: runtimeOffer(rt)),
+    builder: (context) => ConsentDialog(offer: runtimeOffer(rt, pc: hw)),
   );
   return r ?? false;
 }
 
-Future<bool> askTalkConsent(BuildContext context, ModelInfo m, ModelInfo? runtime) async {
+Future<bool> askTalkConsent(BuildContext context, ModelInfo m, ModelInfo? runtime, {Hardware? pc}) async {
+  final hw = runtime == null ? pc : pc ?? await _hardware(context);
+  if (!context.mounted) return false;
   final r = await showDialog<bool>(
     context: context,
-    builder: (context) => ConsentDialog(offer: talkOffer(m, runtime)),
+    builder: (context) => ConsentDialog(offer: talkOffer(m, runtime, pc: hw)),
   );
   return r ?? false;
+}
+
+/// This PC's hardware, for naming a runtime (null if the engine doesn't answer: the catalogue's name stays).
+Future<Hardware?> _hardware(BuildContext context) async {
+  try {
+    return await AppScope.of(context).engine.hardware();
+  } on Object {
+    return null;
+  }
 }
 
 Future<bool> askModelConsent(BuildContext context, ModelInfo m) async {

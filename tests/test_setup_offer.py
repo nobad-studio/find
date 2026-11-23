@@ -185,13 +185,32 @@ def test_later_leaves_a_reminder(a):
     assert len(a._notify.list()["items"]) == 1                              # one reminder, not one per Later
 
 
+def test_later_after_a_failed_download_is_later_with_a_reminder(a, monkeypatch):
+    def fail(*_a, **_k):
+        raise OSError("No internet connection")
+    monkeypatch.setattr(api_mod.embed, "_fetch_verified", fail)
+    a.setup_accept(["siglip2-base"], "DOWNLOAD")
+    _join()
+    assert a.setup_offer()["show"] is True                                  # the retry window
+    assert a.setup_later()["ok"] is True
+    r = a.setup_offer()
+    assert r["state"] == "later" and r["show"] is False
+    note = a._notify.list()["items"][0]
+    assert note["action"]["id"] == "open_models" and "tried again" in note["body"]
+
+
+def test_details_is_later_without_a_reminder(a):
+    assert a.setup_later(remind=False)["ok"] is True
+    assert a.setup_offer()["show"] is False and a._settings.get("setup_offer") == "later"
+    assert a._notify.list()["items"] == []
+
+
 def test_later_after_download_changes_nothing(a, monkeypatch):
     _no_network(monkeypatch, [])
     a.setup_accept(["siglip2-base"], "DOWNLOAD")
     _join()
     assert a.setup_later()["ok"] is True
-    assert a._settings.get("setup_offer") == "accepted" and a._notify.list()["items"] == []
-    assert a.setup_offer()["state"] == "done"
+    assert a._settings.get("setup_offer") == "done" and a._notify.list()["items"] == []
 
 
 def test_est_download_after_a_download_measured_this_pc(a, monkeypatch):

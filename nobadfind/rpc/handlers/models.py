@@ -34,6 +34,13 @@ def _model_ids(params):
     return v
 
 
+def _remind(params):
+    v = params.get("remind", True)
+    if not isinstance(v, bool):
+        raise RpcError(INVALID_PARAMS, "'remind' must be true or false")
+    return v
+
+
 def _accept(api, params):
     r = api.setup_accept(_model_ids(params), _consent(params))
     return {"ok": bool(r.get("ok")), "error": str(r.get("error") or ""),
@@ -57,6 +64,6 @@ def methods(api, events=None):
             "auto_configure": lambda params, conn=None: api.auto_configure(),
             "setup_offer": lambda params, conn=None: api.setup_offer(),
             "setup_accept": lambda params, conn=None: _accept(api, params),
-            "setup_later": lambda params, conn=None: ok(api.setup_later()),
+            "setup_later": lambda params, conn=None: ok(api.setup_later(_remind(params))),
             "model_language": lambda params, conn=None: ok(api.model_language(
                 choice_param(params, "focus", FOCUSES, None)))}

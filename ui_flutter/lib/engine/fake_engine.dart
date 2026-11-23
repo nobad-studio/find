@@ -974,6 +974,9 @@ class FakeEngine implements EngineApi {
   late SetupOffer setup = demoSetupOffer(pc);
   bool setupShow = false;
 
+  /// Each setup_later's remind (Details sends false).
+  final laterReminds = <bool>[];
+
   /// What setup_accept was asked for, each call.
   final setupAccepted = <List<String>>[];
 
@@ -1012,8 +1015,9 @@ class FakeEngine implements EngineApi {
   });
 
   @override
-  Future<ActionResult> setupLater() => _new('setup_later', () {
+  Future<ActionResult> setupLater({bool remind = true}) => _new('setup_later', () {
     setupShow = false;
+    laterReminds.add(remind);
     return _ok;
   });
 

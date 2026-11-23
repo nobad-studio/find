@@ -114,7 +114,7 @@ void main() {
     await tester.tap(find.text('Later'));
     await tester.pumpAndSettle();
     expect(find.byType(SetupDialog), findsNothing);
-    expect(engine.calls, contains('setup_later'));
+    expect(engine.laterReminds, [true]);
     expect(engine.setupAccepted, isEmpty);
     expect(engine.calls, isNot(contains('model_download')));
   });
@@ -126,7 +126,8 @@ void main() {
     expect(find.byType(SetupDialog), findsNothing);
     final nav = AppScope.of(tester.element(find.byType(Text).first)).nav;
     expect((nav.tab, nav.page), (AppTab.settings, SettingsPage.models));
-    expect(engine.calls, isNot(contains('setup_later')));
+    // Details answers the offer (as Later, with no reminder), so it doesn't come up again next time
+    expect(engine.laterReminds, [false]);
     final show = find.text('Show');
     await tester.ensureVisible(show);
     await tester.tap(show);

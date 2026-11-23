@@ -205,8 +205,9 @@ abstract class EngineApi {
   /// The window's Download, which is the consent: the consent word goes with exactly [models] (`setup_accept`).
   Future<SetupAccept> setupAccept(List<String> models);
 
-  /// The window's Later: one reminder, then it is on Settings > Models (`setup_later`).
-  Future<ActionResult> setupLater();
+  /// The window's Later: one reminder ([remind]; Details sends false), then it is on Settings > Models
+  /// (`setup_later`).
+  Future<ActionResult> setupLater({bool remind = true});
 
   /// "English first", "Many languages" or "Hindi + English": changes the recommendation only.
   Future<ActionResult> modelLanguage(String focus);

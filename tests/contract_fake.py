@@ -420,11 +420,14 @@ class FakeApi:
         self.settings["setup_offer"] = "accepted" if started else "done"
         return {"ok": True, "error": "", "started": started}
 
-    def setup_later(self):
+    def setup_later(self, remind=True):
+        if self.settings["setup_offer"] == "done":
+            return {"ok": True, "error": ""}
         self.settings["setup_offer"] = "later"
-        self.notify.post("suggestion", "Suggested models for this PC",
-                         "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
-                         action="open_models", key="setup_later", once=True)
+        if remind:
+            self.notify.post("suggestion", "Suggested models for this PC",
+                             "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
+                             action="open_models", key="setup_later", once=True)
         return {"ok": True, "error": ""}
 
     def model_language(self, focus):

@@ -27,7 +27,8 @@ import '../../widgets/panels.dart';
 import '../consent/download_consent_dialog.dart';
 import '../settings/pages/models.dart' show ModelTag, runtimeName;
 
-/// Show the window for [offer]. Closing it before answering (Escape, outside it) counts as Later.
+/// Show the window for [offer]. Closing it before answering (Escape, outside it) counts as Later; Details too,
+/// without the reminder.
 Future<void> showSetupDialog(BuildContext context, SetupOffer offer) async {
   final s = AppScope.of(context);
   final run = SetupRun();
@@ -35,15 +36,15 @@ Future<void> showSetupDialog(BuildContext context, SetupOffer offer) async {
     context: context,
     builder: (context) => SetupDialog(offer: offer, engine: s.engine, run: run),
   );
-  if (r == SetupAnswer.details) {
-    s.nav.openSettings(SettingsPage.models);
-  } else if (!run.started) {
+  // Details answers it too (as Later, with no reminder: the user is on the way to Settings > Models)
+  if (!run.started) {
     try {
-      await s.engine.setupLater();
+      await s.engine.setupLater(remind: r != SetupAnswer.details);
     } on Object {
       // the engine is gone: it asks again next time
     }
   }
+  if (r == SetupAnswer.details) s.nav.openSettings(SettingsPage.models);
 }
 
 /// The window for [offer] with nothing sent when it closes (the screenshot tour).

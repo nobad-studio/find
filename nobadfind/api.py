@@ -1765,15 +1765,22 @@ class Api:
         self._settings.update({"setup_offer": "accepted" if started else "done"})
         return {"ok": not error, "error": error, "started": started}
 
-    def setup_later(self):
-        """Later in the first-run window: not shown again by itself; one reminder says where the suggestions are.
-        Once it was answered with Download (opened again from Settings > Models), Later changes nothing."""
-        if self._settings.get("setup_offer") not in ("pending", "later"):
+    def setup_later(self, remind=True):
+        """Later in the first-run window (and Details, with remind False: the user is going to Settings > Models):
+        not shown again by itself; with remind, one reminder says where the suggestions are. After a Download whose
+        models are all on disk it changes nothing; after one that didn't finish (the retry window), it is Later too."""
+        state = self._settings.get("setup_offer")
+        if state == "accepted":
+            state = self.setup_offer()["state"]         # "done" once every model asked for is on disk
+        if state == "done":
             return {"ok": True, "error": ""}
         self._settings.update({"setup_offer": "later"})
-        if self._notify is not None:
-            self._notify.post("suggestion", "Suggested models for this PC",
-                              "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
+        if remind and self._notify is not None:
+            body = ("They are in Settings > Models, under Suggested for this PC. Nothing was downloaded."
+                    if state != "accepted" else
+                    "They are in Settings > Models, under Suggested for this PC. What didn't download can be tried "
+                    "again there.")
+            self._notify.post("suggestion", "Suggested models for this PC", body,
                               action="open_models", key="setup_later", once=True)
         return {"ok": True, "error": ""}
 

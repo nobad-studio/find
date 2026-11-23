@@ -108,7 +108,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Download SmolVLM2 500M?'), findsOneWidget);
     expect(find.text('SmolVLM2 500M: 520 MB from huggingface.co'), findsOneWidget);
-    expect(find.textContaining('llama.cpp runtime (graphics card): 37 MB from github.com'), findsOneWidget);
+    // built-in graphics (the fake's Iris Xe): named for them, never "graphics card" (D2)
+    expect(find.textContaining('llama.cpp runtime (built-in graphics, Vulkan): 37 MB from github.com'), findsOneWidget);
+    expect(find.textContaining('(graphics card)'), findsNothing);
     expect(find.textContaining('githubusercontent.com'), findsOneWidget);
     expect(find.text('557 MB, once'), findsOneWidget);
     await tester.tap(find.text('Not now'));

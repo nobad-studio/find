@@ -972,9 +972,22 @@
       }
     },
     "setup_later": {
-      "description": "The first-run window's Later: not shown again by itself; one reminder notification points to Settings > Models.",
+      "description": "The first-run window's Later (and Details, with remind false): not shown again by itself; with remind (the default) one reminder notification points to Settings > Models. After a Download whose models are all on disk it changes nothing; after one that didn't finish it is Later too.",
       "params": {
-        "$ref": "#/$defs/no_params"
+        "type": "object",
+        "properties": {
+          "remind": {
+            "type": "boolean",
+            "description": "post the reminder notification (default true); Details sends false"
+          }
+        },
+        "additionalProperties": false,
+        "examples": [
+          {},
+          {
+            "remind": false
+          }
+        ]
       },
       "result": {
         "$ref": "#/$defs/ok"

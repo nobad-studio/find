@@ -292,8 +292,10 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   given (at most 8; one the offer doesn't list: ok false, nothing changes). It sets what `auto_configure` sets for
   them (meaning search and the text model, photo meaning and the photo model, OCR on) and starts `model_download` for
   each not on disk (a talk model with its runtime); `started` lists them. Progress comes as `download` events.
-- **`setup_later`** `{}` → `Ok`: the window's Later. Not shown again by itself; one `suggestion` notification
-  ("Open Models") says where the suggestions are.
+- **`setup_later`** `{remind?: bool}` → `Ok`: the window's Later. Not shown again by itself; with `remind` (the
+  default) one `suggestion` notification ("Open Models") says where the suggestions are. Details sends `remind:
+  false` (the user is on its way to Settings > Models). After a Download whose models are all on disk it changes
+  nothing; after one that didn't finish (the retry window) it is Later too.
 - **`model_language`** `{focus: english|multilingual|hindi}` → `Ok`: "English first", "Many languages" or "Hindi" in
   Settings → Models. It changes the recommendation only; nothing is downloaded or switched by itself. Until it is
   set, the focus comes from Windows' display and keyboard languages (read from Windows, no network).
@@ -475,5 +477,5 @@ lines, rewrites the `recv` lines), then review the diff.
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
 | `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |
-| `11-first-run-setup.jsonl` | setup_offer after the first scan, setup_accept with a wrong consent word, a bad list and a model the offer doesn't list, then a photo and a talk model (with its runtime) and their download events (one failing), the offer after it, setup_later and its reminder notification |
+| `11-first-run-setup.jsonl` | setup_offer after the first scan, setup_accept with a wrong consent word, a bad list and a model the offer doesn't list, then a photo and a talk model (with its runtime) and their download events (one failing), the offer after it, setup_later with remind false (Details) and a bad remind, then setup_later and its reminder notification |
 | `09-notifications.jsonl` | notifications_list (empty, three), notification events, a duplicate key not posted, a path kept out of the text, notifications_read (some ids, all, and bad ones), notifications_clear |
