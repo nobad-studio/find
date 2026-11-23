@@ -212,6 +212,43 @@ void main() {
       expect(engine.consents.last, isNull);
     });
 
+    testWidgets('browser data: off by default, reading more asks once, narrowing needs no question', (tester) async {
+      final engine = FakeEngine();
+      await pumpApp(tester, engine, size: const Size(1080, 1600));
+      await ctrl(tester, LogicalKeyboardKey.digit3);
+      await tester.tap(find.text('Privacy & data'));
+      await tester.pumpAndSettle();
+      for (final words in ['Never passwords', 'page contents, cookies', 'your browser keeps running', 'Firefox']) {
+        expect(find.textContaining(words), findsOneWidget, reason: words);
+      }
+      Future<void> pick(String option) async {
+        final box = find.byWidgetPredicate((w) => w is NbSelect && w.label == 'Search my browsers');
+        await tester.ensureVisible(box);
+        await tester.pumpAndSettle();
+        await tester.tap(box);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(option).last);
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.text('Off'), findsWidgets);
+      await pick('History, bookmarks and downloads');
+      expect(find.text('Read your browsers?'), findsOneWidget);
+      expect(find.textContaining('Passwords are never read'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(engine.settingsSet.where((c) => c.containsKey('browser_data')), isEmpty);
+      await pick('Also saved logins (no passwords)');
+      await tester.tap(find.text('Read them'));
+      await tester.pumpAndSettle();
+      expect(engine.settingsSet.last, {'browser_data': 'history_logins'});
+      expect(engine.consents.last, 'READ_BROWSER_DATA');
+      await pick('History, bookmarks and downloads'); // narrowing: no question, no word
+      expect(find.text('Read your browsers?'), findsNothing);
+      expect(engine.settingsSet.last, {'browser_data': 'history'});
+      expect(engine.consents.last, isNull);
+    });
+
     testWidgets('Windows Search: one click, and the words say what happens', (tester) async {
       final engine = FakeEngine();
       await pumpApp(tester, engine, size: const Size(1080, 1000));

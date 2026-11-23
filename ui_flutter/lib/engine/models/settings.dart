@@ -7,6 +7,12 @@ import 'json.dart';
 /// set_settings' consent word for turning `secret_app_files` on (const.APP_FILES_CONSENT in the engine).
 const appFilesConsent = 'READ_APP_SECRETS';
 
+/// set_settings' consent word for making `browser_data` read more (const.BROWSER_CONSENT in the engine).
+const browserConsent = 'READ_BROWSER_DATA';
+
+/// `browser_data`'s values, from reading nothing to reading the most (const.BROWSER_DATA).
+const browserDataLevels = ['off', 'history', 'history_logins'];
+
 /// The engine's settings as it sent them. Unknown keys are kept (a newer engine), missing ones read as the
 /// engine's defaults. The UI never decides what a value means: set_settings sends changes and the engine checks.
 class Settings {
@@ -50,6 +56,8 @@ class Settings {
     'search_history': true,
     // 1.1.0: read command histories, saved logins and tool tokens (Settings > Privacy, after a confirm dialog)
     'secret_app_files': false,
+    // 1.2.0: browser history, bookmarks, downloads (and saved logins' site + user name); Settings > Privacy
+    'browser_data': 'off',
     'models_stay_loaded': false,
     'update_check': true,
     'notify_toasts': true,

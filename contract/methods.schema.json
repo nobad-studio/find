@@ -421,7 +421,7 @@
       }
     },
     "set_settings": {
-      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. secret_app_files: true is ignored unless consent is \"READ_APP_SECRETS\" (sent only after the user's yes in the confirm dialog). A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
+      "description": "Change settings. Each value is checked by the engine (settings.coerce): a value that doesn't fit becomes the default. Unknown names, wsearch_prev and turbo are ignored. secret_app_files: true is ignored unless consent is \"READ_APP_SECRETS\" (sent only after the user's yes in the confirm dialog). browser_data is ignored when it would read more than now (off -> history -> history_logins) unless consent is \"READ_BROWSER_DATA\" (sent only after the dialog that shows what is read). A change to hotkey, bar_hotkey or bar takes effect at once: the old combinations are let go, the new ones registered, and hotkeys says whether each one works.",
       "params": {
         "type": "object",
         "properties": {
@@ -431,7 +431,7 @@
           "consent": {
             "type": "string",
             "maxLength": 40,
-            "description": "\"READ_APP_SECRETS\": the user said yes to reading command histories, saved logins and tool tokens (needed to turn secret_app_files on)."
+            "description": "\"READ_APP_SECRETS\": the user said yes to reading command histories, saved logins and tool tokens (needed to turn secret_app_files on). \"READ_BROWSER_DATA\": the user said yes to reading browser data (needed to make browser_data read more)."
           }
         },
         "required": [
@@ -453,6 +453,12 @@
               "secret_app_files": true
             },
             "consent": "READ_APP_SECRETS"
+          },
+          {
+            "changes": {
+              "browser_data": "history"
+            },
+            "consent": "READ_BROWSER_DATA"
           }
         ]
       },
@@ -3001,6 +3007,14 @@
           "type": "boolean",
           "description": "1.1.0, off by default: read what other programs record and developer tools' plain-text sign-ins (command histories, FileZilla/WinSCP saved sites and logins, GitHub CLI/npm/PyPI/git/Maven/Cargo/Terraform/Vault/PostgreSQL/S3 tokens, .env files) into the encrypted index; their content can appear in results. Off: they are secrets (out, or names only with include_secrets on) and .env files are names only. Turning it off removes what was read (and their rows while include_secrets is off). Keys, browser passwords, vaults, wallets and Recent items are never read."
         },
+        "browser_data": {
+          "enum": [
+            "off",
+            "history",
+            "history_logins"
+          ],
+          "description": "1.2.0, off by default: read the browsers' data (Chrome, Edge, Brave, Vivaldi, Opera, Firefox; every profile of this Windows user) into the encrypted index. history: history (title, address, site, last visit, visit count), bookmarks (title, address, folder) and downloads (file path, source site, date); history_logins: also saved logins' site and user name. Never password values (not decrypted, stored or shown), page contents, cookies or session data. The databases are copied with full sharing and the copy read, so a browser is never closed or blocked. Reading more than now (off -> history -> history_logins) needs set_settings consent \"READ_BROWSER_DATA\". Off deletes everything it read; history deletes the logins."
+        },
         "turbo": {
           "type": "boolean",
           "description": "Read-only: the turbo index is turned on and off with turbo_set (it needs the permission prompt); set_settings ignores it."
@@ -3199,6 +3213,7 @@
         "include_caches",
         "include_secrets",
         "secret_app_files",
+        "browser_data",
         "turbo",
         "tray",
         "text_model",
@@ -3354,6 +3369,13 @@
         },
         "secret_app_files": {
           "type": "boolean"
+        },
+        "browser_data": {
+          "enum": [
+            "off",
+            "history",
+            "history_logins"
+          ]
         },
         "tray": {
           "type": "boolean",

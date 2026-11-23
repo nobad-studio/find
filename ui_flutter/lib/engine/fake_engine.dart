@@ -583,6 +583,11 @@ class FakeEngine implements EngineApi {
       if (e.key == 'wsearch_prev' || !known.containsKey(e.key)) continue;
       // like the engine: on only with the confirm dialog's word
       if (e.key == 'secret_app_files' && e.value == true && consent != appFilesConsent) continue;
+      if (e.key == 'browser_data' &&
+          consent != browserConsent &&
+          browserDataLevels.indexOf('${e.value}') > browserDataLevels.indexOf('${_settings['browser_data'] ?? 'off'}')) {
+        continue;
+      }
       final want = known[e.key];
       final fits = switch (want) {
         bool _ => e.value is bool,

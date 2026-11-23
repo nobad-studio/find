@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-from . import embed, extract, models, notify, ocr, photo, scope, winapi
+from . import browserdata, embed, extract, models, notify, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
 from .const import APP_SECRET_FILES, COUNT_SHARE, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
@@ -152,6 +152,8 @@ class Indexer:
         self._up_target = self._up_since = None     # a higher configuration waiting out UP_HOLD
         self._mpool_starts, self._mpool_why, self._storm_warned = [], "first start", None
         self._text_pool, self._photo_pool = None, None   # for worker_names (the watchdog's messages)
+        self._browser_pool = None        # the text reader that reads browser data (browserdata.py), while it runs
+        self._browser_sched = browserdata.Schedule()
         self.stop_ev = threading.Event()
         self.wake = threading.Event()
         self.status = {"phase": "starting", "files": 0, "texts": 0, "vectors": 0, "paused": "", "rate": 0,
@@ -481,7 +483,7 @@ class Indexer:
                 # only after every text, scan and meaning vector of a million files is done (0.9.0).
                 self._more = False
                 for step in (self._photo_vectors, self._read_texts, lambda: self._read_texts(images=True),
-                             self._make_vectors):
+                             self._make_vectors, self._read_browsers):
                     if self._recycled:
                         break
                     self._round_end = self._clock() + ROUND_S
@@ -781,6 +783,62 @@ class Indexer:
                 _kill_pool(pool)                    # stopping: the files in flight are read again next time
             pool.shutdown(wait=True, cancel_futures=True)
             self._text_pool = None
+
+    def _read_browsers(self):
+        """Browser data (setting browser_data, off by default; browserdata.py): each profile that's due
+        (browserdata.Schedule) is read by a text reader process (WORKERS job, low priority), never here. The rows
+        go in only if the setting still allows their kind, checked under the write lock."""
+        if browserdata.MODE_KINDS.get(self.settings.get("browser_data")) in (None, ()):
+            return
+        profs = browserdata.profiles()
+        keep = {(p["browser"], p["profile"]) for p in profs}
+        self.store.browser_keep_profiles(keep)        # a profile (or browser) that's gone takes its rows
+        self._browser_sched.forget(keep)
+        todo = self._browser_sched.due(profs, time.time())
+        if not todo:
+            return
+        data_dir = os.path.dirname(os.path.abspath(self.store.db_path))
+        pool = self._browser_pool = cf.ProcessPoolExecutor(max_workers=1, initializer=extract.init_worker)
+        try:
+            for p in todo:
+                if self._wait_while_paused(max_wait=RECYCLE_AFTER) is not True:
+                    return
+                mode = self.settings.get("browser_data")
+                if not browserdata.MODE_KINDS.get(mode):
+                    return
+                job = dict(p, data_dir=data_dir, logins=browserdata.allowed(mode, "login"))
+                try:
+                    r = self._await(pool.submit(browserdata.read_profile, job), JOB_TIMEOUT)
+                except cf.BrokenExecutor:
+                    log(f"browser data: the reader stopped on {p['browser']}", "warn")
+                    self._browser_sched.done(p, time.time(), error="the reader stopped")
+                    return
+                except Exception as e:
+                    log(f"browser data: {p['browser']} not read ({type(e).__name__})", "warn")
+                    self._browser_sched.done(p, time.time(), error="couldn't be read")
+                    if isinstance(e, cf.TimeoutError):
+                        _kill_pool(pool)            # our own worker, stuck: never the browser
+                        return
+                    continue
+                if r is None or r is RECYCLE:
+                    return
+                counts = {}
+                for kind, rows in r["kinds"].items():
+                    if self.store.put_browser_items(p["browser"], p["profile"], kind, rows,
+                                                    allow=lambda k=kind: browserdata.allowed(
+                                                        self.settings.get("browser_data"), k)):
+                        counts[kind] = len(rows)
+                for n in r["notes"]:
+                    log(f"browser data: {p['browser']}: a file not read ({n.rsplit(': ', 1)[-1][:80]})", "warn")
+                self._browser_sched.done(p, time.time(), locked=bool(r["locked"]), counts=counts,
+                                         error="; ".join(r["notes"]))
+                log(f"browser data: {p['browser']} read ({sum(counts.values())} items"
+                    f"{', some files in use' if r['locked'] else ''})")
+        finally:
+            if self.stop_ev.is_set():
+                _kill_pool(pool)
+            pool.shutdown(wait=True, cancel_futures=True)
+            self._browser_pool = None
 
     @staticmethod
     def make_embedder(mid, query=False):
@@ -1352,7 +1410,8 @@ class Indexer:
     def worker_names(self):
         """{pid: 'text reader' | 'meaning worker' | 'photo worker'} for the worker processes running now."""
         out = {}
-        for pool, name in ((self._text_pool, "text reader"), (self._mpool, "meaning worker"),
+        for pool, name in ((self._text_pool, "text reader"), (self._browser_pool, "text reader"),
+                           (self._mpool, "meaning worker"),
                            (self._photo_pool, "photo worker")):
             for pid in list(getattr(pool, "_processes", None) or {}):
                 out[pid] = name

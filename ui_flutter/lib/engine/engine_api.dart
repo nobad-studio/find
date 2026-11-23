@@ -126,7 +126,7 @@ abstract class EngineApi {
   Future<Settings> getSettings();
 
   /// [consent]: `appFilesConsent` after the user's yes in the confirm dialog; the engine turns `secret_app_files`
-  /// on only with it.
+  /// on only with it; `browserConsent` likewise for making `browser_data` read more.
   Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent});
 
   /// Whether each global hotkey is registered and working now (`hotkey_state`).

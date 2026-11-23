@@ -799,9 +799,12 @@ class Api:
             return {"changed": []}
         changes = {k: v for k, v in changes.items()
                    if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
-        from .const import APP_FILES_CONSENT
+        from .const import APP_FILES_CONSENT, BROWSER_CONSENT
         if changes.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del changes["secret_app_files"]          # on only with the confirm dialog's word (fix round 1, M7)
+        if "browser_data" in changes and self._browser_reads_more(changes["browser_data"]) \
+                and consent != BROWSER_CONSENT:
+            del changes["browser_data"]              # reading more only after the dialog that shows what is read
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
@@ -817,6 +820,11 @@ class Api:
             self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
         if "secret_app_files" in changed:            # 1.1.0: off takes out what was read, on reads them again
             self._later(self._app_files_on if self._settings.get("secret_app_files") else self._purge_app_files)
+        if "browser_data" in changed:                # 1.2.0: off deletes every row, narrowing the logins' rows
+            self._later(self._browser_narrowed)
+            wake = getattr(self._indexer, "wake", None)
+            if wake is not None:
+                wake.set()
         if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets",
                            "secret_app_files"}:
             self._indexer.rescan()
@@ -865,6 +873,26 @@ class Api:
         if hotkeys is not None:
             out["hotkeys"] = hotkeys
         return out
+
+    def _browser_reads_more(self, value):
+        from .const import BROWSER_DATA
+        from .settings import coerce
+        cur = self._settings.get("browser_data")
+        return BROWSER_DATA.index(coerce("browser_data", value)) > BROWSER_DATA.index(
+            cur if cur in BROWSER_DATA else "off")
+
+    def _browser_narrowed(self):
+        """browser_data changed: the rows of the kinds it no longer reads go (all of them when off), and so do the
+        temporary copies (browserdata.wipe_tmp). Returns how many rows went."""
+        from . import browserdata
+        mode = self._settings.get("browser_data")
+        gone = [k for k in browserdata.KINDS if not browserdata.allowed(mode, k)]
+        n = self._store.browser_clear(None if mode == "off" else gone) if gone else 0
+        if mode == "off":
+            browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        if n:
+            log(f"browser data: {n} rows out of the index ({mode})")
+        return n
 
     def _later(self, fn):
         """Settings work on the index, after the answer, one at a time in order (tests: at once)."""

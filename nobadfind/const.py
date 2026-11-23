@@ -103,6 +103,10 @@ APP_SECRET_PATHS = (("powershell", "psreadline"), ("roaming", "filezilla"), ("ro
 ENV_FILE = ".env"
 # The word set_settings needs (param consent) to turn secret_app_files on; the UI sends it after the confirm dialog
 APP_FILES_CONSENT = "READ_APP_SECRETS"
+# The word set_settings needs to make browser_data read more than it does (off -> history -> history_logins); the UI
+# sends it after the confirm dialog that shows what is read
+BROWSER_CONSENT = "READ_BROWSER_DATA"
+BROWSER_DATA = ("off", "history", "history_logins")
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
                     ("brave-browser", "user data"), ("vivaldi", "user data"), ("opera software",),
@@ -191,6 +195,10 @@ DEFAULTS = {
     # (const.APP_SECRET_*: command histories, FileZilla/WinSCP sites, gh/npm/cargo... tokens, .env files) into the
     # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off removes what was read.
     "secret_app_files": False,      # turned on only with set_settings consent APP_FILES_CONSENT (below)
+    # 1.2.0 (browser spec 2026-11-22): the browsers' history, bookmarks and downloads ("history"), plus saved
+    # logins' site and user name ("history_logins"; never a password), copied and read by browserdata.py into the
+    # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off deletes what was read.
+    "browser_data": "off",          # off | history | history_logins; reading more needs consent BROWSER_CONSENT
     "turbo": False,                 # the optional NTFS index helper (ntfs.py); asks for admin once (turbosvc.py)
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.

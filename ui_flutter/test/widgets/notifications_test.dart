@@ -163,6 +163,8 @@ void main() {
     nav.showPage(SettingsPage.privacy);
     await tester.pumpAndSettle();
     expect(find.text('Show file names in notifications'), findsOneWidget);
+    await tester.ensureVisible(find.text('Show file names in notifications')); // below the Browsers group
+    await tester.pumpAndSettle();
     await tester.tap(find.bySemanticsLabel('Show file names in notifications').last); // its switch
     await tester.pumpAndSettle();
     expect(engine.settingsSet.last, {'notify_show_names': true});

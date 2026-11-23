@@ -11,6 +11,8 @@ Tables
   search_history  the questions you typed yourself, for autocomplete (setting search_history; history.py)
   vdesc   a photo description the user kept (talk about a photo, Keep this description), with the model that made
           it; it is also one chunk of that photo (ord KEPT_ORD) so words and meaning search find it
+  browser_items   the browsers' history, bookmarks, downloads and saved logins' site + user name (setting
+          browser_data, off by default; browserdata.py reads them, never a password)   + browser_fts
   notifications   the last notify.CAP notifications (crashes, restarted workers, updates; notify.py), no paths
 """
 import os
@@ -90,6 +92,18 @@ CREATE INDEX IF NOT EXISTS search_history_last ON search_history(last);
 CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY, t REAL NOT NULL, kind TEXT NOT NULL,
   severity TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
   action TEXT NOT NULL DEFAULT '', read INTEGER NOT NULL DEFAULT 0, key TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS browser_items(id INTEGER PRIMARY KEY, browser TEXT NOT NULL, profile TEXT NOT NULL,
+  kind TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', at REAL,
+  visits INTEGER NOT NULL DEFAULT 0, folder TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS browser_items_src ON browser_items(browser, profile, kind);
+CREATE VIRTUAL TABLE IF NOT EXISTS browser_fts USING fts5(title, url, host, folder, content='browser_items',
+  content_rowid='id', tokenize='unicode61 remove_diacritics 2', prefix='2 3');
+CREATE TRIGGER IF NOT EXISTS browser_ai AFTER INSERT ON browser_items BEGIN
+  INSERT INTO browser_fts(rowid, title, url, host, folder) VALUES (new.id, new.title, new.url, new.host, new.folder);
+  END;
+CREATE TRIGGER IF NOT EXISTS browser_ad AFTER DELETE ON browser_items BEGIN
+  INSERT INTO browser_fts(browser_fts, rowid, title, url, host, folder)
+  VALUES ('delete', old.id, old.title, old.url, old.host, old.folder); END;
 CREATE TRIGGER IF NOT EXISTS files_ad_next AFTER DELETE ON files BEGIN
   DELETE FROM nvecs_next WHERE file_id = old.id; END;
 CREATE TRIGGER IF NOT EXISTS files_au_next AFTER UPDATE OF name, dir ON files
@@ -640,6 +654,49 @@ class Store:
                 raise
         return len(ids)
 
+    # ---------- browser data (1.2.0, opt-in: setting browser_data; browserdata.py) ----------
+    def put_browser_items(self, browser, profile, kind, rows, allow=None):
+        """One browser profile's items of one kind, replacing what it had: rows (kind, title, url, host, at,
+        visits, folder) from browserdata.read_profile. allow: checked under the write lock (the setting may have
+        gone off while the worker read); False drops the rows. True when they went in."""
+        with self.wlock:
+            if allow is not None and not allow():
+                return False
+            self.db.execute("DELETE FROM browser_items WHERE browser = ? AND profile = ? AND kind = ?",
+                            (browser, profile, kind))
+            self.db.executemany(
+                "INSERT INTO browser_items(browser, profile, kind, title, url, host, at, visits, folder) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                [(browser, profile, kind, r[1] or "", r[2], r[3] or "", r[4], int(r[5] or 0), r[6] or "")
+                 for r in rows])
+            self.db.commit()
+            return True
+
+    def browser_clear(self, kinds=None):
+        """Turned off (or narrowed): every row, or the rows of these kinds, go. Returns how many."""
+        with self.wlock:
+            if kinds is None:
+                n = self.db.execute("DELETE FROM browser_items").rowcount
+            else:
+                kinds = list(kinds)
+                n = self.db.execute(f"DELETE FROM browser_items WHERE kind IN ({','.join('?' * len(kinds))})",
+                                    kinds).rowcount
+            self.db.commit()
+            return n
+
+    def browser_keep_profiles(self, keep):
+        """The rows of profiles that are gone (deleted, the browser removed) go: keep is {(browser, profile)}."""
+        with self.wlock:
+            gone = [r for r in self.db.execute("SELECT DISTINCT browser, profile FROM browser_items").fetchall()
+                    if tuple(r) not in keep]
+            self.db.executemany("DELETE FROM browser_items WHERE browser = ? AND profile = ?", gone)
+            self.db.commit()
+            return len(gone)
+
+    def browser_counts(self):
+        """{kind: rows} of what is indexed (kinds with none left out)."""
+        return dict(self.q("SELECT kind, count(*) FROM browser_items GROUP BY kind"))
+
     # ---------- forgetting ----------
     def forget_path(self, path):
         self.remove_paths([path])
@@ -647,7 +704,7 @@ class Store:
     def wipe(self):
         with self.wlock:
             for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "pvecs_next", "chunks", "files", "meta", "apps",
-                      "search_history", "vdesc", "notifications"):
+                      "search_history", "vdesc", "notifications", "browser_items"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT INTO names(names) VALUES('rebuild')")
             self.db.execute("INSERT INTO text(text) VALUES('rebuild')")

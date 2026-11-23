@@ -9,7 +9,7 @@ import 'package:flutter/widgets.dart';
 import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
-import '../../../engine/models/settings.dart' show appFilesConsent;
+import '../../../engine/models/settings.dart' show appFilesConsent, browserConsent, browserDataLevels;
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
 import '../../../widgets/icons.dart';
@@ -51,6 +51,55 @@ class AppFilesSetting extends StatelessWidget {
         onChanged: (v) async {
           if (v && !await confirmDialog(context, title: askTitle, question: ask, yes: 'Read them')) return;
           await s.set('secret_app_files', v, consent: v ? appFilesConsent : null);
+        },
+      ),
+    );
+  }
+}
+
+/// Browser data (setting `browser_data`, 1.2.0, off by default; browserdata.py in the engine): the browsers'
+/// history, bookmarks and downloads, and saved logins' site and user name. Reading more asks once.
+class BrowserDataSetting extends StatelessWidget {
+  const BrowserDataSetting({super.key});
+
+  static const label = 'Search my browsers';
+  static const help =
+      "Off (the default): NOBAD Find doesn't read your browsers. On: it reads Chrome, Edge, Brave, Vivaldi, Opera "
+      'and Firefox, every profile of this Windows account: history (page title, address, site, last visit, '
+      'visits), bookmarks (title, address, folder) and downloads (file path, source site, date); with saved logins '
+      'also the site and user name of each saved login (Firefox: the site only). Never passwords (they are not '
+      'decrypted, kept or shown), page contents, cookies or open tabs. It reads a copy, so your browser keeps '
+      'running. Turning it off removes everything it read.';
+  static const options = [
+    ('off', 'Off'),
+    ('history', 'History, bookmarks and downloads'),
+    ('history_logins', 'Also saved logins (no passwords)'),
+  ];
+  static const askTitle = 'Read your browsers?';
+  static const ask =
+      'NOBAD Find will read the history, bookmarks and downloads of your browsers on this PC, and with saved '
+      "logins the site and user name of each one. Passwords are never read. It all stays in NOBAD Find's "
+      'encrypted index on this PC and can appear in search results. Turn this off to remove it again.';
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
+    final s = AppScope.of(context).settings;
+    final now = s.settings.text('browser_data');
+    return SettingRow(
+      label: label,
+      help: help,
+      control: NbSelect(
+        label: label,
+        value: now,
+        options: options,
+        maxWidth: 260,
+        onChanged: (v) async {
+          final more = browserDataLevels.indexOf(v) > browserDataLevels.indexOf(now);
+          if (more && !await confirmDialog(context, title: askTitle, question: ask, yes: 'Read them')) return;
+          await s.set('browser_data', v, consent: more ? browserConsent : null);
         },
       ),
     );
@@ -139,6 +188,7 @@ class PrivacyPage extends StatelessWidget {
           ],
         ),
         const SettingsGroup('Files other programs keep', icon: NbGlyph.archive, rows: [AppFilesSetting()]),
+        const SettingsGroup('Browsers', icon: NbGlyph.external, rows: [BrowserDataSetting()]),
         const SettingsGroup(
           'Notifications',
           icon: NbGlyph.bell,

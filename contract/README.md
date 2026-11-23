@@ -188,7 +188,14 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`set_settings`** `{changes: {name: value}, consent?: string (≤ 40)}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
   ignored. `secret_app_files: true` is ignored (not in `changed`) unless `consent` is `"READ_APP_SECRETS"`, which
-  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
+  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `browser_data`
+  (1.2.0, `off`|`history`|`history_logins`, **off by default**) is ignored when it would read more than now (`off` →
+  `history` → `history_logins`) unless `consent` is `"READ_BROWSER_DATA"`, sent only after the dialog that shows
+  what is read; narrowing needs no word. `history` reads the browsers' history, bookmarks and downloads,
+  `history_logins` also saved logins' site and user name (never a password value: not decrypted, stored or shown;
+  Firefox's user names are encrypted, so only the site). The engine copies each database with full sharing and reads
+  the copy in a worker process, so a browser is never closed or blocked. `off` deletes every row it read,
+  `history` the logins' rows. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.

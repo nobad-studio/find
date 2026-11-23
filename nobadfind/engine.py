@@ -467,6 +467,8 @@ def run(stop=None, open_ui=None, lock=None):
     lock = lock or lock_name()
     os.makedirs(DATA_DIR, exist_ok=True)
     init_log(LOG_PATH)
+    from . import browserdata
+    browserdata.wipe_tmp(DATA_DIR)  # browser data copies a crash left behind (browserdata.snapshot)
     jobs.setup()                    # nothing the engine starts can outlive it
     log(f"{APP_NAME} {APP_VER} engine starting")
     from . import uilaunch
