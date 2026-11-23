@@ -464,6 +464,30 @@ class FakeEngine implements EngineApi {
   ];
   static const safeDefaultsKept = ['index', 'models', 'privacy', 'folders', 'learned_apps'];
 
+  /// Browser data in the demo: one Edge profile, read a few minutes ago, while the setting is on.
+  int browserItems = 131;
+
+  @override
+  Future<BrowserDataState> browserDataState() => _new('browser_data_state', () {
+    final setting = jStr(_settings['browser_data']).isEmpty ? 'off' : jStr(_settings['browser_data']);
+    final read = DateTime.now().millisecondsSinceEpoch / 1000 - 300;
+    return BrowserDataState(setting, [
+      if (setting != 'off')
+        BrowserProfileState('Edge', 'Work', read, '', {
+          'history': browserItems,
+          'bookmark': 0,
+          'download': 0,
+          'login': 0,
+        }),
+    ]);
+  });
+
+  @override
+  Future<ActionResult> browserClear() => _new('browser_clear', () {
+    browserItems = 0;
+    return _ok;
+  });
+
   /// `performance_state` for the demo PC (16 threads, DirectML, the Vulkan runtime), from the current settings.
   @override
   Future<PerformanceState> performanceState() => _new('performance_state', () {
@@ -610,6 +634,11 @@ class FakeEngine implements EngineApi {
       if (e.key == 'wsearch_prev' || !known.containsKey(e.key)) continue;
       // like the engine: on only with the confirm dialog's word
       if (e.key == 'secret_app_files' && e.value == true && consent != appFilesConsent) continue;
+      if (e.key == 'browser_data' &&
+          consent != browserConsent &&
+          browserDataLevels.indexOf('${e.value}') > browserDataLevels.indexOf('${_settings['browser_data'] ?? 'off'}')) {
+        continue;
+      }
       final want = known[e.key];
       final fits = switch (want) {
         bool _ => e.value is bool,

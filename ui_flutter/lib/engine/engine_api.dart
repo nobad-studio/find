@@ -122,11 +122,18 @@ abstract class EngineApi {
   /// "Reset to safe defaults" (1.2.0): the goal to balanced, every override to auto. Only after the user's yes.
   Future<ResetResult> resetSafeDefaults();
 
+  /// Settings > Privacy (1.2.0 engines): each browser profile read, its items and its last problem
+  /// (`browser_data_state`). An older engine answers -32601.
+  Future<BrowserDataState> browserDataState();
+
+  /// "Clear browser data" (`browser_clear`, 1.2.0): every browser item out of the index. Only after the user's yes.
+  Future<ActionResult> browserClear();
+
   // ---- settings and the index ----
   Future<Settings> getSettings();
 
   /// [consent]: `appFilesConsent` after the user's yes in the confirm dialog; the engine turns `secret_app_files`
-  /// on only with it.
+  /// on only with it; `browserConsent` likewise for making `browser_data` read more.
   Future<SettingsChange> setSettings(Map<String, Object?> changes, {String? consent});
 
   /// Whether each global hotkey is registered and working now (`hotkey_state`).

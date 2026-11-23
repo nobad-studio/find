@@ -76,12 +76,12 @@ CATALOG = [
                "tokenizer.json": ("tokenizer.json", 711396, "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66")},
      "dim": 768, "query_prefix": "Represent this sentence for searching relevant passages: ", "passage_prefix": "", "pooling": "cls",
      "languages": ["en"], "improves": "A bigger English model (no better than GTE small on our test set, slower)", "quality": {"english": 0.864, "hindi": 0.567}, "ram_mb": 125, "speed_note": "about 16 pieces of text a second while indexing; a question in about 25 ms", "builtin": False},
-    {"id": "siglip-base", "feature": "photo", "name": "SigLIP base", "tier": "balanced", "licence": "Apache-2.0",
+    {"id": "siglip-base", "feature": "photo", "name": "SigLIP base", "short": "SigLIP", "tier": "balanced", "licence": "Apache-2.0",
      "source": HF + "google/siglip-base-patch16-224 (ONNX: Xenova/siglip-base-patch16-224)", "rev": PHOTO_REV,
      "repo": "Xenova/siglip-base-patch16-224", "files": dict(PHOTO_FILES), "dir": "photo-model", "dim": 768, "style": "siglip",
      "languages": ["en"], "improves": "Finds photos by what's in them (English questions)", "ram_mb": 156,
      "speed_note": "about 3 photos a second (1 per 0.3 s per thread group); a question in about 60 ms", "builtin": False},
-    {"id": "siglip2-base", "feature": "photo", "name": "SigLIP 2 base", "tier": "best", "licence": "Apache-2.0",
+    {"id": "siglip2-base", "feature": "photo", "name": "SigLIP 2 base", "short": "SigLIP 2", "tier": "best", "licence": "Apache-2.0",
      "source": HF + "google/siglip2-base-patch16-224 (ONNX: onnx-community/siglip2-base-patch16-224-ONNX)",
      "rev": _SIGLIP2_REV, "repo": "onnx-community/siglip2-base-patch16-224-ONNX",
      # vision in fp16 (2026-11-22): the 8-bit vision file blurred the photo vectors (held-out nDCG@10 -0.18 against
@@ -244,8 +244,11 @@ def variants(mid):
 # docs/measurements.md "2026-11-23: reference-profile benchmark (mid measured)" lists every run. A combination missing here was
 # NOT measured: it is never suggested. "floor" is each floor dimension's verdict: pass | fail | not measured.
 # ram_mb = the worker's whole-process peak private bytes; ws_mb its peak working set. On Vulkan (Iris Xe: shared
-# memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own, and
-# ram_upper_bound_mb = private + shared is only the upper bound for the RAM budget (the two may overlap).
+# memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own. The counters
+# overlap on shared-memory graphics, so they are never summed: need_mb, the memory the floor and the budget read, is
+# the biggest single figure, max(ram_mb, ws_mb, shared_mb) (ruling 2026-11-23, as models.talk_need_mb). A GPU row
+# says which graphics it was measured on ("gpu": integrated | discrete); it applies only to that kind.
+# Usefulness (photo_search) is the recorded evaluation's by_channel.find figures (pm-s2-tq-v16.json), V and C.
 # Measured 2026-11-23 on mid only (8 threads by job affinity, Gentle): the low and high runs were stopped by memory
 # pressure on the PC and are not measured; degradation needs them, so it is "not measured" everywhere.
 _BENCH = "measurements.md 2026-11-23: reference-profile benchmark (mid)"
@@ -253,31 +256,31 @@ _NOT_DEGR = {"degradation": "not measured"}
 MEASURED = {
     ("siglip2-base", "fp16-vision", "cpu", "mid"): {
         "workload": "photo_search", "items_s": 1.416, "query_ms": 196.5, "query_p50_ms": 179.6, "ram_mb": 598,
-        "ws_mb": 621, "vram_mb": 0, "shared_mb": 0, "first_vector_s": 5.4, "photos": 500, "searches": 50,
+        "ws_mb": 621, "vram_mb": 0, "shared_mb": 0, "need_mb": 621, "first_vector_s": 5.4, "photos": 500, "searches": 50,
         "crashes": 0, "kills": 0, "visual_ndcg10": 0.812, "visual_recall10": 0.866,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("smolvlm2-500m", "q8_0", "cpu", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 13.53, "cold_first_word_s": 7.94,
-        "load_s": 0.38, "ram_mb": 535, "ws_mb": 628, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 628,
+        "load_s": 0.38, "ram_mb": 535, "ws_mb": 628, "vram_mb": 0, "shared_mb": 0, "need_mb": 628,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("smolvlm2-500m", "q8_0", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 5.77, "cold_first_word_s": 5.14,
-        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "ram_upper_bound_mb": 1696,
+        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "gpu": "integrated", "need_mb": 1033,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("qwen3vl-2b", "q4_k_m", "cpu", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 17.62, "cold_first_word_s": 12.74,
-        "load_s": 3.87, "ram_mb": 1743, "ws_mb": 2410, "vram_mb": 0, "shared_mb": 0, "ram_upper_bound_mb": 2410,
+        "load_s": 3.87, "ram_mb": 1743, "ws_mb": 2410, "vram_mb": 0, "shared_mb": 0, "need_mb": 2410,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="fail", memory="pass",
                       availability="pass"), "source": _BENCH},
     ("qwen3vl-2b", "q4_k_m", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 12.08, "cold_first_word_s": 12.08,
-        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "ram_upper_bound_mb": 4549,
+        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "gpu": "integrated", "need_mb": 2491,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
@@ -294,9 +297,34 @@ def measured(mid, variant, backend, profile):
 
 def vector_tag(mid):
     """What photo vectors are stored under (meta pvec_model): the model id, plus "#<n>" once the catalog changed a
-    file that alters the vectors. A different tag means the photos are looked at again."""
+    file that alters the vectors. A different tag means the photos are looked at again, beside the old vectors
+    (indexer._load_photo): their rows and tag stay until the new set covers every photo and the two swap in one
+    transaction. Meanwhile the old ones answer with the model's text half, which is only right while the re-pins
+    since they were made changed vision files alone: a re-pin that changes the text side too sets
+    "text_changed_at": <its "vectors" number> (old_vectors_askable), and older vectors are then kept but not asked."""
     m = get(mid) or {}
     return f"{mid}#{m['vectors']}" if m.get("vectors") else mid
+
+
+def _tag_number(tag):
+    try:
+        return int(tag.split("#", 1)[1]) if "#" in tag else 0
+    except ValueError:
+        return 0
+
+
+def old_vectors_askable(old_tag, mid):
+    """True when photo vectors stored under old_tag can answer during a rebuild to mid's vectors: their model is a
+    photo model on this PC, and (same model) no re-pin between them changed its text half, i.e. not
+    old #n < text_changed_at <= mid's "vectors"."""
+    old = old_tag.split("#", 1)[0]
+    spec = get(old) or {}
+    if spec.get("feature") != "photo" or not ready(old):
+        return False
+    if old != mid:
+        return True
+    at = spec.get("text_changed_at")
+    return not (at and _tag_number(old_tag) < at <= (spec.get("vectors") or 0))
 
 
 def ids(feature=None):
@@ -405,13 +433,30 @@ def talk_need_mb(m, runtime):
 
 
 def recommend(pc):
-    """light | balanced | best for this PC (the spec's table)."""
+    """light | balanced | best for this PC (the spec's table). The models it picks are recommend_choice's, which
+    delegates photo to the measured floors (modelsuggest)."""
     ram, cores = float(pc.get("ram_gb") or 0), int(pc.get("cores") or 1)
     if ram < NEEDS["balanced"][0] or cores <= 4:
         return "light"
     if (ram >= NEEDS["best"][0] and cores >= NEEDS["best"][1]) or (pc.get("directml") and pc.get("vram_gb", 0) >= 4):
         return "best"
     return "balanced"
+
+
+def recommend_choice(pc, focus="multilingual", suggestions=None):
+    """{"text", "photo", "ocr"} for auto_configure and the models page: the tier's choice (recommend), with photo
+    delegated to the floors (modelsuggest.for_pc's "photo_search"): the suggested model; "" when models were measured
+    for this PC and none meets the floor (no photo model that would thrash); the tier's model only when nothing
+    was measured for a PC like this one. Text keeps the tier (no text floor yet). Talk is never in it: it is offered,
+    and downloaded only when the user ticks it."""
+    c = tier_choice(recommend(pc), focus)
+    entries = (suggestions or {}).get("photo_search") or []
+    pick = next((e["model"] for e in entries if e.get("outcome") == "suggested"), None)
+    if pick:
+        c["photo"] = pick
+    elif any(e.get("outcome") != "not_measured" for e in entries):
+        c["photo"] = ""
+    return c
 
 
 def capable(m, pc, vectors=0):

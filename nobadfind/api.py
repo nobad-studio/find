@@ -12,6 +12,9 @@ import time
 from collections import deque
 
 from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
+from . import modelsuggest
+from . import profile as profile_mod
+from .settings import goal as settings_goal
 from . import governor as governor_mod
 from . import hardware as hw
 from .const import APP_VER, COUNT_SHARE, DEFAULTS, SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
@@ -117,7 +120,7 @@ class Api:
                        roots=self._indexer.roots(self._indexer.drive_list),
                        photo_text=None if quick else self._indexer.photo_text,
                        pindex=None if quick else self._indexer.pindex, cancelled=cancelled,
-                       romanized=self._romanized(), asks=asks)
+                       romanized=self._romanized(), asks=asks, photo_next=None if quick else self._photo_next())
             if not r.get("cancelled"):
                 needs = [] if quick else self._needs(asks, len(r.get("results") or ()))
                 if needs:
@@ -154,6 +157,14 @@ class Api:
             return {"ok": False, "error": "Opening apps and settings isn't available in this copy of NOBAD Find."}
         return lch.run(action_id)
 
+    def _photo_next(self):
+        """(question encoder, vectors) of the photo identity being rebuilt beside the searched one, or None."""
+        ix = self._indexer
+        text, idx = getattr(ix, "photo_text_next", None), getattr(ix, "pindex_next", None)
+        if text is None or idx is None or getattr(ix, "photo_text", None) is None or not getattr(idx, "n", 0):
+            return None
+        return text, idx
+
     def _needs(self, asks, found):
         """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
         counts come from the Index page's cached totals, never a count over the index per keystroke.
@@ -177,6 +188,19 @@ class Api:
                 out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
                             "text": "Photo search is off, so only names and words in pictures are matched. "
                                     "Turn it on to search what is in them."})
+            elif getattr(self._indexer, "photo_model_next", None) and \
+                    (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))[1] > 0:
+                # another photo identity is being built beside the old one (_counts counts that set): the old
+                # vectors answer meanwhile
+                nxt = self._indexer.photo_model_next
+                total, todo = self._totals[2]["photos"]
+                done = max(0, total - todo)
+                name = (models.get(nxt) or {}).get("short") or (models.get(nxt) or {}).get("name") or nxt
+                until = ("the old results answer until then" if getattr(self._indexer, "photo_old_answers", True)
+                         else "until then only those photos can be found by what is in them")
+                out.append({"model": "photo", "state": "analyzing", "id": nxt, "size_mb": mb, "done": done,
+                            "total": total, "text": f"Looking at your photos again with {name}: {done:,} of "
+                                                    f"{total:,}; {until}"})
             else:
                 total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
                 where = asks.get("where")
@@ -583,13 +607,16 @@ class Api:
         mx = s.get("content_max_mb") * 1024 * 1024
         t0 = time.monotonic()
         try:
+            # a photo rebuild (pvecs_next): the photos phase counts the set being built, the one the photo step works on
+            pnext = bool(st.meta("pvec_next_model"))
             counts = {"text": (st.count_readable(text_ext, mx), st.count_needs_text(text_ext, mx)),
                       "ocr": (st.count_readable(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES),
                               st.count_needs_text(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES)),
                       "meaning": ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                   st.count_chunks_without_vectors() + st.count_names_without_vectors(NAME_KINDS)),
                       "photos": (st.count_photos(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES),
-                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES))}
+                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
+                                                         next=pnext))}
             if st.meta("vec_model_next"):
                 counts["rebuild"] = ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                      st.count_chunks_without_vectors(next=True)
@@ -775,9 +802,12 @@ class Api:
             return {"changed": []}
         changes = {k: v for k, v in changes.items()
                    if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
-        from .const import APP_FILES_CONSENT
+        from .const import APP_FILES_CONSENT, BROWSER_CONSENT
         if changes.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del changes["secret_app_files"]          # on only with the confirm dialog's word (fix round 1, M7)
+        if "browser_data" in changes and self._browser_reads_more(changes["browser_data"]) \
+                and consent != BROWSER_CONSENT:
+            del changes["browser_data"]              # reading more only after the dialog that shows what is read
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
@@ -793,6 +823,11 @@ class Api:
             self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
         if "secret_app_files" in changed:            # 1.1.0: off takes out what was read, on reads them again
             self._later(self._app_files_on if self._settings.get("secret_app_files") else self._purge_app_files)
+        if "browser_data" in changed:                # 1.2.0: off deletes every row, narrowing the logins' rows
+            self._later(self._browser_narrowed)
+            wake = getattr(self._indexer, "wake", None)
+            if wake is not None:
+                wake.set()
         if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets",
                            "secret_app_files"}:
             self._indexer.rescan()
@@ -841,6 +876,53 @@ class Api:
         if hotkeys is not None:
             out["hotkeys"] = hotkeys
         return out
+
+    def _browser_reads_more(self, value):
+        from .const import BROWSER_DATA
+        from .settings import coerce
+        cur = self._settings.get("browser_data")
+        return BROWSER_DATA.index(coerce("browser_data", value)) > BROWSER_DATA.index(
+            cur if cur in BROWSER_DATA else "off")
+
+    def browser_clear(self):
+        """Settings > Privacy, "Clear browser data": every browser_items row goes (and any temporary copy). The
+        setting stays as it is: while it's on, a browser's data comes back when it is next read (its files changed)."""
+        from . import browserdata
+        n = self._store.browser_clear()
+        browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        log(f"browser data cleared ({n} rows)")
+        return {"ok": True}
+
+    def browser_data_state(self):
+        """Per browser profile: when it was last read, its rows per kind and its last problem (browserdata.Schedule
+        and the index). Never looks at the browsers' folders itself."""
+        from . import browserdata
+        sched = getattr(self._indexer, "_browser_sched", None)
+        states = sched.states() if isinstance(sched, browserdata.Schedule) else {}
+        counts = self._store.browser_counts_by_profile()
+        out = []
+        for key in sorted(set(states) | set(counts)):
+            st = states.get(key) or {}
+            c = counts.get(key) or {}
+            out.append({"browser": key[0], "profile": key[1], "last_read": st.get("read_at"),
+                        "error": str(st.get("error") or ""), "counts": {k: int(c.get(k, 0)) for k in browserdata.KINDS}})
+        return {"setting": self._settings.get("browser_data"), "profiles": out}
+
+    def _browser_narrowed(self):
+        """browser_data changed: the rows of the kinds it no longer reads go (all of them when off), and so do the
+        temporary copies (browserdata.wipe_tmp). Returns how many rows went."""
+        from . import browserdata
+        mode = self._settings.get("browser_data")
+        sched = getattr(self._indexer, "_browser_sched", None)
+        if isinstance(sched, browserdata.Schedule):
+            sched.reset()                    # on again or wider: every profile is read again, not "unchanged"
+        gone = [k for k in browserdata.KINDS if not browserdata.allowed(mode, k)]
+        n = self._store.browser_clear(None if mode == "off" else gone) if gone else 0
+        if mode == "off":
+            browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        if n:
+            log(f"browser data: {n} rows out of the index ({mode})")
+        return n
 
     def _later(self, fn):
         """Settings work on the index, after the answer, one at a time in order (tests: at once)."""
@@ -1139,11 +1221,26 @@ class Api:
             return "active" if self._settings.get("semantic") and in_use == m["id"] else "ready"
         return "active" if models.selected(self._settings, "photo") == m["id"] else "ready"
 
+    def _suggestions(self, pc, focus):
+        """modelsuggest.for_pc for this PC: its classes (with the user's overrides), the governor's last reading of
+        free memory and graphics memory, the goal, and the talk runtime this PC uses (or would download)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        b = capability.budget(sample, pc)
+        live = {"runtime": {"photo_talk": "vulkan" if models.talk_runtime(pc, self._mdir()) == "llama-vulkan"
+                            else "cpu"}}
+        if b["free_mb"]:
+            live["free_ram_mb"] = b["free_mb"]
+        if b["gpu_kind"] == "dedicated" and b["gpu_free_mb"] is not None:
+            live["gpu_free_mb"] = b["gpu_free_mb"]
+        live["settings"] = {"gpu_reserve_min_mb": self._settings.get("gpu_reserve_min_mb")}    # a safety limit
+        classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
+        return modelsuggest.for_pc(pc, classes, live, settings_goal(self._settings), focus)
+
     def models(self):
         pc = hw.scan()
         focus = self._focus()
         rec = models.recommend(pc)
-        choice = models.tier_choice(rec, focus)
+        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))
         out = []
         rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
@@ -1533,8 +1630,9 @@ class Api:
         return {"ok": True, "error": ""}
 
     def auto_configure(self):
-        tier = models.recommend(hw.scan())
-        choice = models.tier_choice(tier, self._focus())
+        pc, focus = hw.scan(), self._focus()
+        tier = models.recommend(pc)
+        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))     # never a talk model
         changes = {"text_model": choice["text"], "semantic": True, "ocr": True}
         changes.update({"photo_model": choice["photo"], "photo_meaning": True} if choice["photo"] else
                        {"photo_meaning": False})

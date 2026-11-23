@@ -15,7 +15,7 @@ import time
 
 import numpy as np
 
-from . import embed, extract, models, notify, ocr, photo, scope, winapi
+from . import browserdata, embed, extract, models, notify, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
 from .const import APP_SECRET_FILES, COUNT_SHARE, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
@@ -29,6 +29,8 @@ NAMES_ONLY = "names only"         # text_err / photo err of a secret: its conten
 # "credentials"); .env files as well (Store.needs_text env)
 APP_READ_NAMES = frozenset(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
 DEBOUNCE = 2.0
+PHOTO_QUERIES = ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",)
+PHOTO_NEXT_QUERIES = ("SELECT file_id, v FROM pvecs_next WHERE length(v) > 0",)
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
 ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
 MEANING_BACKOFF = (30, 1800)     # seconds before trying a failed meaning worker again: doubling, capped
@@ -150,6 +152,8 @@ class Indexer:
         self._up_target = self._up_since = None     # a higher configuration waiting out UP_HOLD
         self._mpool_starts, self._mpool_why, self._storm_warned = [], "first start", None
         self._text_pool, self._photo_pool = None, None   # for worker_names (the watchdog's messages)
+        self._browser_pool = None        # the text reader that reads browser data (browserdata.py), while it runs
+        self._browser_sched = browserdata.Schedule()
         self.stop_ev = threading.Event()
         self.wake = threading.Event()
         self.status = {"phase": "starting", "files": 0, "texts": 0, "vectors": 0, "paused": "", "rate": 0,
@@ -173,7 +177,13 @@ class Indexer:
         self._memory_noted = None        # when the workers' memory limit was last reported
         self.photo_text = None           # the photo model's text half, for questions (when photo meaning is on)
         self.photo_model = None          # catalog id of the photo model in use
-        self.pindex = embed.VectorIndex(photo.PHOTO_DIM, ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",))             # known_drives(), refreshed by the indexer loop (searches read it)
+        self.pindex = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_QUERIES)
+        # a new photo vector identity (another model, or a re-pin) is built beside the searched one: its model id,
+        # question encoder and vectors (pvecs_next). Both answer a search, each in its own channel; None/empty when
+        # nothing is being rebuilt
+        self.photo_model_next = None
+        self.photo_text_next = None
+        self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)             # known_drives(), refreshed by the indexer loop (searches read it)
 
     # ---------- control ----------
     def roots(self, drives=None):
@@ -473,7 +483,7 @@ class Indexer:
                 # only after every text, scan and meaning vector of a million files is done (0.9.0).
                 self._more = False
                 for step in (self._photo_vectors, self._read_texts, lambda: self._read_texts(images=True),
-                             self._make_vectors):
+                             self._make_vectors, self._read_browsers):
                     if self._recycled:
                         break
                     self._round_end = self._clock() + ROUND_S
@@ -773,6 +783,75 @@ class Indexer:
                 _kill_pool(pool)                    # stopping: the files in flight are read again next time
             pool.shutdown(wait=True, cancel_futures=True)
             self._text_pool = None
+
+    def _read_browsers(self):
+        """Browser data (setting browser_data, off by default; browserdata.py): each profile that's due
+        (browserdata.Schedule) is read by a text reader process (WORKERS job, low priority), never here. The rows
+        go in only if the setting still allows their kind, checked under the write lock."""
+        if browserdata.MODE_KINDS.get(self.settings.get("browser_data")) in (None, ()):
+            return
+        profs = browserdata.profiles()
+        keep = {(p["browser"], p["profile"]) for p in profs}
+        # a profile not listed this time keeps its rows while its folder is still there (a listdir that failed
+        # for a moment); one whose folder is gone (deleted, the browser removed) or now has another name takes its
+        # rows
+        listed = {os.path.normcase(p["dir"]) for p in profs}
+        keep |= {k for k, d in self._browser_sched.dirs().items()
+                 if k not in keep and os.path.normcase(d) not in listed and os.path.isdir(d)}
+        self.store.browser_keep_profiles(keep)
+        self._browser_sched.forget(keep)
+        todo = self._browser_sched.due(profs, time.time())
+        if not todo:
+            return
+        data_dir = os.path.dirname(os.path.abspath(self.store.db_path))
+        pool = self._browser_pool = cf.ProcessPoolExecutor(max_workers=1, initializer=extract.init_worker)
+        try:
+            for p in todo:
+                if self._wait_while_paused(max_wait=RECYCLE_AFTER) is not True:
+                    return
+                mode = self.settings.get("browser_data")
+                if not browserdata.MODE_KINDS.get(mode):
+                    return
+                job = dict(p, data_dir=data_dir, logins=browserdata.allowed(mode, "login"))
+                try:
+                    r = self._await(pool.submit(browserdata.read_profile, job), JOB_TIMEOUT)
+                except cf.BrokenExecutor:
+                    log(f"browser data: the reader stopped on {p['browser']}", "warn")
+                    self._browser_sched.done(p, time.time(), error="the reader stopped")
+                    return
+                except Exception as e:
+                    log(f"browser data: {p['browser']} not read ({type(e).__name__})", "warn")
+                    self._browser_sched.done(p, time.time(), error="couldn't be read")
+                    if isinstance(e, cf.TimeoutError):
+                        _kill_pool(pool)            # our own worker, stuck: never the browser
+                        return
+                    continue
+                if r is None or r is RECYCLE:
+                    return
+                counts, dropped = {}, False
+                for kind, rows in r["kinds"].items():
+                    if self.store.put_browser_items(p["browser"], p["profile"], kind, rows,
+                                                    allow=lambda k=kind: browserdata.allowed(
+                                                        self.settings.get("browser_data"), k)):
+                        counts[kind] = len(rows)
+                    else:
+                        dropped = True
+                if dropped:
+                    continue                        # the setting changed while it read: not marked as read
+                for n in r["notes"]:
+                    log(f"browser data: {p['browser']}: a file not read ({n.rsplit(': ', 1)[-1][:80]})", "warn")
+                self._browser_sched.done(p, time.time(), locked=bool(r["locked"]), counts=counts,
+                                         error="; ".join(r["notes"]))
+                log(f"browser data: {p['browser']} read ({sum(counts.values())} items"
+                    f"{', some files in use' if r['locked'] else ''})")
+        finally:
+            if self.stop_ev.is_set():
+                _kill_pool(pool)
+            pool.shutdown(wait=True, cancel_futures=True)
+            self._browser_pool = None
+            # a reader killed mid-read (stuck, the watchdog, the memory cap) can't delete its copy: the only
+            # browser reader is done now, so whatever is in <data>/tmp/browser-* is left over
+            browserdata.wipe_tmp(data_dir)
 
     @staticmethod
     def make_embedder(mid, query=False):
@@ -1091,8 +1170,14 @@ class Indexer:
 
     # ---------- photo meaning ----------
     def _load_photo(self):
-        """Photo meaning with the photo model chosen in Settings. Photo vectors carry the model id; another model
-        starts them again (SigLIP and SigLIP 2 vectors are never compared)."""
+        """Photo meaning with the photo model chosen in Settings. Photo vectors carry their identity (meta pvec_model:
+        models.vector_tag); SigLIP and SigLIP 2 vectors, or a re-pinned file's and the old file's, are never
+        compared. Another identity is built beside the old vectors (pvecs_next, meta pvec_next_model), which keep
+        answering with their own model until the new set covers every photo; then they swap in one transaction
+        (_finish_photo_rebuild). 1.0.0 dropped them at once instead: photo search was near empty for an hour+.
+        When nothing can ask the old vectors (their model isn't on this PC, or a re-pin changed the text half:
+        models.old_vectors_askable), their rows and tag still stay until that swap; only search leaves them out, and
+        the partial new set is the one photo channel meanwhile. A partial set is never swapped in."""
         pid = models.selected(self.settings, "photo")
         if not pid or not models.ready(pid):
             if self.settings.get("photo_meaning"):
@@ -1102,27 +1187,88 @@ class Indexer:
             had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
                 "SELECT 1 FROM pvecs LIMIT 1") else "")
             tag = models.vector_tag(pid)           # the id, plus "#n" when the catalog re-pinned a vision file
-            if had and had != tag:
-                self.store.drop_photo_vectors()
-                log(f"photo model is now {tag}: the photos are looked at again")
+            building = self.store.meta("pvec_next_model") or ""
+            if had and had != tag and (building == tag or self.store.one("SELECT 1 FROM pvecs LIMIT 1")):
+                old = had.split("#")[0]
+                # the old vectors answer only with their own model's text half, verified on this PC
+                ask_old = bool(models.old_vectors_askable(had, pid)
+                               and self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"))
+                if building != tag:
+                    self.store.drop_next_photo_vectors()     # another rebuild was half done: start over
+                    self.store.set_meta("pvec_next_model", tag)
+                    log(f"photo model is now {tag}: the photos are looked at again beside the {had} vectors"
+                        + (", which answer until then" if ask_old else " (kept until then; they can't be asked)"))
+                self._use_photo_model(old if ask_old else pid, next=pid, ask_old=ask_old)
+                log(f"photo meaning on with {self.photo_model} ({self.pindex.n} photos ready); rebuilding with "
+                    f"{pid} ({self.pindex_next.n} done)")
+                return
+            # else nothing was kept or built for another identity: this one is used at once
+            if self.store.meta("pvec_next_model"):
+                self.store.drop_next_photo_vectors()     # switched back to the searched identity
+                log(f"photo vectors of {building} aren't needed any more")
             self.store.set_meta("pvec_model", tag)
-            spec = models.get(pid)
-            d = models.model_dir(pid)
-            self.photo_model = pid
-            self.photo_text = embed.Lazy(lambda: photo.TextEncoder(d, style=spec.get("style", "siglip")),
-                                         "photo text", model_id=pid)
-            self.pindex.reset(spec["dim"], pid)
-            self.pindex.load(self.store)
+            self._use_photo_model(pid)
             log(f"photo meaning on with {pid} ({self.pindex.n} photos ready)")
         except Exception as e:
             log(f"photo meaning unavailable: {type(e).__name__}", "warn")
             self.photo_text = None
+            self.photo_text_next = None
             notify.post("model_fallback", "Photo search couldn't start",
                         f"An error ({type(e).__name__}) stopped photo search from starting, so searching by what is "
                         "in a photo is off for now. Restarting NOBAD Find tries again.", "warning", action="open_models",
                         key="photo-failed")
 
+    def _photo_encoder(self, pid):
+        spec, d = models.get(pid), models.model_dir(pid)
+        return embed.Lazy(lambda: photo.TextEncoder(d, style=spec.get("style", "siglip")), "photo text", model_id=pid)
+
+    def _use_photo_model(self, pid, next=None, ask_old=True):
+        """Search photos with `pid` (its question encoder and the pvecs made with it); next: the model whose
+        vectors are being built beside them (pvecs_next), searched in its own channel. ask_old=False: nothing can
+        ask the pvecs rows (kept on disk until the swap), so pindex stays empty and only the new set answers."""
+        spec = models.get(pid)
+        self.photo_model = pid
+        self.photo_text = self._photo_encoder(pid)
+        self.pindex.reset(spec["dim"], pid)
+        if ask_old:
+            self.pindex.load(self.store)
+        self.photo_old_answers = ask_old
+        self.photo_model_next = next
+        if next is None:
+            self.photo_text_next = None
+            self.pindex_next.reset(photo.PHOTO_DIM, None)
+            return
+        # a re-pin keeps the model id and its text half: one question encoder in memory for both sets
+        self.photo_text_next = self.photo_text if next == pid else self._photo_encoder(next)
+        self.pindex_next.reset(models.get(next)["dim"], next)
+        self.pindex_next.load(self.store)
+
+    def _finish_photo_rebuild(self, pid):
+        """pvecs_next covers every photo: it replaces pvecs in one transaction, and search moves to it."""
+        tag = models.vector_tag(pid)
+        if models.selected(self.settings, "photo") != pid or self.store.meta("pvec_next_model") != tag:
+            return                                  # the choice changed meanwhile: _load_photo sorts it out
+        if self.store.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES, next=True):
+            return
+        self.store.swap_photo_vectors(tag)          # the vectors and their tag, in one transaction
+        idx, text = self.pindex_next, self.photo_text_next
+        idx.queries = PHOTO_QUERIES
+        idx.load(self.store)                        # now pvecs (the same vectors, what's on disk)
+        # Searches read these attributes without a lock. The rebuild channel goes first (an empty pindex_next
+        # isn't searched: api._photo_next), then model, encoder and index one by one. A search in between pairs at
+        # worst the new encoder with the old index (or the other way round): different model ids are refused by
+        # search._photo_hits; the same id (a re-pin) shares one text half, which is only kept when the re-pin left
+        # the text side alone (models.old_vectors_askable; otherwise pindex is empty), so either pairing asks
+        # vectors with the encoder they belong to.
+        self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)
+        self.photo_model_next, self.photo_text_next = None, None
+        self.photo_model, self.photo_text, self.pindex = pid, text, idx
+        self.photo_old_answers = True
+        self._note(f"Photo search now uses {models.get(pid)['name']}")
+
     _photos_logged = False
+    photo_model_next = photo_text_next = None      # (set in __init__; also for stand-ins made without it)
+    photo_old_answers = True                       # False: a rebuild whose old vectors can't be asked
 
     def _photo_vectors(self):
         """What's in each photo, made in one separate low-priority process (photos are decoded there)."""
@@ -1135,7 +1281,11 @@ class Indexer:
         threads = max(1, min(threads, self._op_limit("photo", threads)))
         pool = cf.ProcessPoolExecutor(max_workers=1, initializer=photo.init_worker, initargs=(threads,))
         self._photo_pool = pool
-        made_with = self.photo_model                 # every batch of this pass is made with this model
+        # every batch of this pass is made with one model: the one being rebuilt for, else the one in use
+        nxt = self.photo_model_next
+        made_with = nxt or self.photo_model
+        tag_key = "pvec_next_model" if nxt else "pvec_model"
+        into = self.pindex_next if nxt else self.pindex
         try:
             while not self.stop_ev.is_set():
                 go = self._wait_while_paused(max_wait=RECYCLE_AFTER)
@@ -1148,18 +1298,21 @@ class Indexer:
                     return                          # the other steps' turn; photos go on next round
                 rows = self._skip_secrets(
                     self.store.photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
-                                              limit=PHOTO_BATCH if self._photo_one_by_one else 64),
-                    lambda r: self.store.set_photo_vector(r[0], r[2], b"", NAMES_ONLY))
+                                              limit=PHOTO_BATCH if self._photo_one_by_one else 64, next=bool(nxt)),
+                    lambda r: self.store.set_photo_vector(r[0], r[2], b"", NAMES_ONLY, next=bool(nxt)))
                 if not rows:
                     if self._photos_logged:
-                        log(f"photos: all looked at ({self.pindex.n} ready)")
+                        log(f"photos: all looked at ({into.n} ready)")
                         self._photos_logged = False
+                    if nxt and self.photo_model_next == nxt:
+                        self._finish_photo_rebuild(nxt)
                     return
                 if not self._photos_logged:
                     left = self.store.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES,
-                                                           photo.MAX_PHOTO_BYTES) \
+                                                           photo.MAX_PHOTO_BYTES, next=bool(nxt)) \
                         if hasattr(self.store, "count_photos_to_read") else len(rows)
-                    log(f"photos: looking at {left} photos with {made_with} ({self.pindex.n} ready)")
+                    log(f"photos: looking at {left} photos {'again ' if nxt else ''}with {made_with} "
+                        f"({into.n} ready)")
                     self._photos_logged = True
                 self.status["phase"] = "photos"
                 step = 1 if self._photo_one_by_one else PHOTO_BATCH
@@ -1176,7 +1329,8 @@ class Indexer:
                         # one of these photos hangs or crashes the reader: read them one by one next time
                         one = len(batch) == 1
                         if one:
-                            self.store.set_photo_vector(batch[0][0], batch[0][2], b"", "unreadable")
+                            self.store.set_photo_vector(batch[0][0], batch[0][2], b"", "unreadable",
+                                                        next=bool(nxt))     # the set being built, never the old
                         else:
                             self._photo_one_by_one = True
                         what = (f"was stuck for {JOB_TIMEOUT // 60} minutes" if isinstance(e, cf.TimeoutError)
@@ -1192,8 +1346,8 @@ class Indexer:
                     if results is RECYCLE:
                         self._recycle(pool, "photo reader")     # these photos are read again later
                         return
-                    if made_with and (self.photo_model != made_with
-                                      or self.store.meta("pvec_model") != models.vector_tag(made_with)):
+                    if made_with and ((self.photo_model_next or self.photo_model) != made_with
+                                      or self.store.meta(tag_key) != models.vector_tag(made_with)):
                         log("photo model changed during the pass: its batch is thrown away, the next pass uses "
                             "the new model")
                         return                      # vectors are only written under the model that made them
@@ -1205,9 +1359,9 @@ class Indexer:
                                 retry = True            # read again one by one next round, not written off
                                 continue
                             err = "too big"
-                        self.store.set_photo_vector(fid, mtime, blob, err)
+                        self.store.set_photo_vector(fid, mtime, blob, err, next=bool(nxt))
                         if blob:
-                            self.pindex.add([fid], np.frombuffer(blob, np.float16)[None])
+                            into.add([fid], np.frombuffer(blob, np.float16)[None])
                             self.status["photos"] = self.status.get("photos", 0) + 1
                     if retry:
                         self._photo_one_by_one = True
@@ -1236,15 +1390,19 @@ class Indexer:
 
     def warm_models(self):
         """The window just opened: load the models now, so the first search is quick (released again when idle)."""
-        for m in (self.embedder, self.photo_text):
+        for m in self._models():
             if isinstance(m, embed.Lazy):
                 try:
                     m.encode(["warm"] if m is self.embedder else "warm")
                 except Exception as e:
                     log(f"model warm-up failed: {type(e).__name__}", "warn")
 
+    def _models(self):
+        extra = self.photo_text_next if self.photo_text_next is not self.photo_text else None
+        return [m for m in (self.embedder, self.photo_text, extra) if m is not None]
+
     def models_loaded(self):
-        return [m.name for m in (self.embedder, self.photo_text) if isinstance(m, embed.Lazy) and m.loaded]
+        return [m.name for m in self._models() if isinstance(m, embed.Lazy) and m.loaded]
 
     def release_idle_models(self, idle=None):
         """Light when idle: models leave memory a few minutes after the last search or indexing work, unless
@@ -1252,7 +1410,7 @@ class Indexer:
         uses too much) always frees them."""
         if idle is None and self.settings is not None and self.settings.get("models_stay_loaded"):
             return
-        for m in (self.embedder, self.photo_text):
+        for m in self._models():
             if isinstance(m, embed.Lazy):
                 m.release_if_idle(idle)
 
@@ -1265,7 +1423,8 @@ class Indexer:
     def worker_names(self):
         """{pid: 'text reader' | 'meaning worker' | 'photo worker'} for the worker processes running now."""
         out = {}
-        for pool, name in ((self._text_pool, "text reader"), (self._mpool, "meaning worker"),
+        for pool, name in ((self._text_pool, "text reader"), (self._browser_pool, "text reader"),
+                           (self._mpool, "meaning worker"),
                            (self._photo_pool, "photo worker")):
             for pid in list(getattr(pool, "_processes", None) or {}):
                 out[pid] = name

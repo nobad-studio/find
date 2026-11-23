@@ -7,6 +7,12 @@ import 'json.dart';
 /// set_settings' consent word for turning `secret_app_files` on (const.APP_FILES_CONSENT in the engine).
 const appFilesConsent = 'READ_APP_SECRETS';
 
+/// set_settings' consent word for making `browser_data` read more (const.BROWSER_CONSENT in the engine).
+const browserConsent = 'READ_BROWSER_DATA';
+
+/// `browser_data`'s values, from reading nothing to reading the most (const.BROWSER_DATA).
+const browserDataLevels = ['off', 'history', 'history_logins'];
+
 /// The engine's settings as it sent them. Unknown keys are kept (a newer engine), missing ones read as the
 /// engine's defaults. The UI never decides what a value means: set_settings sends changes and the engine checks.
 class Settings {
@@ -51,6 +57,8 @@ class Settings {
     'search_history': true,
     // 1.1.0: read command histories, saved logins and tool tokens (Settings > Privacy, after a confirm dialog)
     'secret_app_files': false,
+    // 1.2.0: browser history, bookmarks, downloads (and saved logins' site + user name); Settings > Privacy
+    'browser_data': 'off',
     'models_stay_loaded': false,
     'update_check': true,
     'notify_toasts': true,
@@ -366,5 +374,64 @@ class ResetResult {
   static ResetResult fromJson(Object? v) {
     final m = jMap(v);
     return ResetResult(jBool(m['ok']), jStrs(m['reset']), jStrs(m['kept']));
+  }
+}
+
+/// One browser profile in `browser_data_state` (1.2.0): when it was last read, its rows per kind and its last
+/// problem. [browser] and [profile] come from the browsers: shown as plain text.
+class BrowserProfileState {
+  const BrowserProfileState(this.browser, this.profile, this.lastRead, this.error, this.counts);
+  final String browser;
+  final String profile;
+
+  /// Unix seconds; null when it hasn't been read since the engine started.
+  final double? lastRead;
+  final String error;
+  final Map<String, int> counts;
+
+  int get total => counts.values.fold(0, (a, b) => a + b);
+
+  static BrowserProfileState? fromJson(Object? v) {
+    final m = jMap(v);
+    if (m.isEmpty) return null;
+    final c = jMap(m['counts']);
+    return BrowserProfileState(jStr(m['browser']), jStr(m['profile']), jNumOrNull(m['last_read']), jStr(m['error']), {
+      for (final k in const ['history', 'bookmark', 'download', 'login']) k: jInt(c[k]),
+    });
+  }
+}
+
+/// `browser_data_state` (1.2.0): the setting and each browser profile read or tried.
+class BrowserDataState {
+  const BrowserDataState(this.setting, this.profiles);
+  final String setting;
+  final List<BrowserProfileState> profiles;
+
+  static const none = BrowserDataState('off', []);
+
+  static BrowserDataState fromJson(Object? v) {
+    final m = jMap(v);
+    final s = jStr(m['setting']);
+    return BrowserDataState(s.isEmpty ? 'off' : s, jList(m['profiles'], BrowserProfileState.fromJson));
+  }
+
+  /// One plain line for Settings > Privacy: each profile with its items and when it was read, or its problem.
+  String summary(DateTime now) {
+    if (profiles.isEmpty) {
+      return setting == 'off' ? '' : 'Not read yet: NOBAD Find reads your browsers in the background.';
+    }
+    String ago(double t) {
+      final s = now.millisecondsSinceEpoch / 1000 - t;
+      if (s < 60) return 'just now';
+      if (s < 3600) return '${s ~/ 60} min ago';
+      if (s < 86400) return '${s ~/ 3600} h ago';
+      return '${s ~/ 86400} days ago';
+    }
+
+    return [
+      for (final p in profiles)
+        '${p.browser} (${p.profile}): '
+            '${p.error.isNotEmpty ? p.error : (p.lastRead == null ? '${p.total} items' : '${p.total} items, read ${ago(p.lastRead!)}')}',
+    ].join(' · ');
   }
 }

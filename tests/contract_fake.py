@@ -91,6 +91,21 @@ class FakeApi:
         self.history.discard(text.strip().lower())
         return {"ok": known}
 
+    def browser_clear(self):
+        self._note("browser_clear")
+        self.browser_rows = 0
+        return {"ok": True}
+
+    def browser_data_state(self):
+        """A fixed picture: one Edge profile read, one Firefox profile its browser holds."""
+        n = getattr(self, "browser_rows", 120)
+        return {"setting": self.settings["browser_data"], "profiles": [
+            {"browser": "Edge", "profile": "Work", "last_read": 1700000000.0, "error": "",
+             "counts": {"history": n, "bookmark": 0 if not n else 8, "download": 0 if not n else 3, "login": 0}},
+            {"browser": "Firefox", "profile": "default-release", "last_read": None,
+             "error": "in use by the browser; trying again in 5 min",
+             "counts": {"history": 0, "bookmark": 0, "download": 0, "login": 0}}]}
+
     def history_clear(self):
         self._note("history_clear")
         self.history.clear()
@@ -171,11 +186,14 @@ class FakeApi:
     def set_settings(self, changes, consent=None):
         """Like Settings.update: every value through the real settings.coerce; secret_app_files goes on only with
         the consent word, like Api.set_settings."""
-        from nobadfind.const import APP_FILES_CONSENT
+        from nobadfind.const import APP_FILES_CONSENT, BROWSER_CONSENT, BROWSER_DATA
         new = {k: coerce(k, v) for k, v in changes.items()
                if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
         if new.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del new["secret_app_files"]
+        if "browser_data" in new and consent != BROWSER_CONSENT and \
+                BROWSER_DATA.index(new["browser_data"]) > BROWSER_DATA.index(self.settings["browser_data"]):
+            del new["browser_data"]                   # reading more only with the dialog's word
         power_compat(new, self.settings)
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)

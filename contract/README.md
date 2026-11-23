@@ -89,7 +89,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
     what was typed, the only match, the picture that clearly fits best, a clear winner on name and content). When
     there is one it is always `results[0]`, so Enter opens it. `null` when unsure.
   `channel` (optional, default `"main"`): which search of the UI this is (`"home"` for the Home list, `"bar"`). A newer search on the same connection and channel cancels the one still running, which then answers with `cancelled: true` (and no results): ignore that answer. Other channels are left alone.
-- **`search` → `needs`** (0.9.0, only when something isn't ready): `[{model: photo|meaning, state: missing|off|analyzing, id, size_mb, done, total, text}]`. A described photo search ("black shirt image") whose photo model isn't downloaded (`missing`: offer `model_download`), is switched off (`off`: offer `set_settings` `photo_meaning`), or is still looking at photos (`analyzing`: `done` of `total`); a description that found little while meaning search is missing or off. `text` is the sentence to show.
+- **`search` → `needs`** (0.9.0, only when something isn't ready): `[{model: photo|meaning, state: missing|off|analyzing, id, size_mb, done, total, text}]`. A described photo search ("black shirt image") whose photo model isn't downloaded (`missing`: offer `model_download`), is switched off (`off`: offer `set_settings` `photo_meaning`), or is still looking at photos (`analyzing`: `done` of `total`; also while a new photo model or re-pin looks at them again beside the old vectors, which answer until then); a description that found little while meaning search is missing or off. `text` is the sentence to show.
 - **`suggest`** `{text: string (≤ 2000), channel?: "main"|"bar"|...}` → `{items: [Suggestion], complete: string}`:
   autocomplete for every keystroke (well under a millisecond on the eval corpus, `docs/measurements.md`). Up to 8
   items (5 for `channel: "bar"`), in order: the user's own past questions (only while `search_history` is on), the
@@ -188,7 +188,14 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`set_settings`** `{changes: {name: value}, consent?: string (≤ 40)}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
   ignored. `secret_app_files: true` is ignored (not in `changed`) unless `consent` is `"READ_APP_SECRETS"`, which
-  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
+  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `browser_data`
+  (1.2.0, `off`|`history`|`history_logins`, **off by default**) is ignored when it would read more than now (`off` →
+  `history` → `history_logins`) unless `consent` is `"READ_BROWSER_DATA"`, sent only after the dialog that shows
+  what is read; narrowing needs no word. `history` reads the browsers' history, bookmarks and downloads,
+  `history_logins` also saved logins' site and user name (never a password value: not decrypted, stored or shown;
+  Firefox's user names are encrypted, so only the site). The engine copies each database with full sharing and reads
+  the copy in a worker process, so a browser is never closed or blocked. `off` deletes every row it read,
+  `history` the logins' rows. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.
@@ -301,6 +308,15 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   and `.env` files are then read into the encrypted index (`.env` files are names only until then). Turning it off
   removes their content, and their rows while `include_secrets` is off, without a rebuild. Keys, browser passwords,
   vaults, wallets and Recent items are never read.
+- **`browser_clear`** `{}` → `Ok`: Settings > Privacy, "Clear browser data" (1.2.0). Deletes every browser item
+  read (history, bookmarks, downloads, saved logins' site and user name) and any temporary copy; `browser_data`
+  stays as it is, so while it's on a browser's data comes back when its files next change.
+- **`browser_data_state`** `{}` → `{setting, profiles: [{browser, profile, last_read: number|null, error,
+  counts: {history, bookmark, download, login}}]}` (1.2.0): each browser profile read or tried since the engine
+  started, or with rows in the index. `last_read` = unix seconds (null: not since the engine started), `error` =
+  `""` or the last problem in plain words (a file in use by the browser and when it's tried again, or given up
+  until it changes; a file layout this version doesn't know). Show it as plain text; the names come from the
+  browsers.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string, helper: not_installed|installed|needs_update}`: the
   optional turbo index, an elevated helper that reads NTFS's own file list and change journal (names, sizes, times
@@ -431,7 +447,7 @@ lines, rewrites the `recv` lines), then review the diff.
 |---|---|
 | `01-connect-and-search.jsonl` | hello, subscribe, status, ui_shown, search (words, filters only, empty), thumbnail, open, reveal, path_of, a path instead of an id (refused), a filter word that does not exist (refused), an unknown method, status events, ui_hidden |
 | `02-events.jsonl` | every event: status, level, activity, download progress/ready/failed, show (hotkeys and to_main), here, a notice waiting for a listener, unsubscribe, quit and quitting |
-| `03-settings-and-system.jsonl` | get/set_settings (and a bad one), pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words, the creative apps list (a path dropped) |
+| `03-settings-and-system.jsonl` | get/set_settings (and a bad one; secret_app_files and browser_data with and without their consent words), browser_data_state, browser_clear, pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words, the creative apps list (a path dropped) |
 | `04-indexing-page.jsonl` | status_full method and event, pause_for/resume with level events, bad pauses (a string, 0), learned_apps, reset_learned, hardware, forget |
 | `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state |

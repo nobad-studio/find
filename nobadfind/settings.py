@@ -5,7 +5,7 @@ import re
 import threading
 import time
 
-from .const import (DEFAULTS, FEATURE_BACKENDS, GOALS, GPU_BACKGROUND, GPU_RESERVE_MAX_MB,
+from .const import (BROWSER_DATA, DEFAULTS, FEATURE_BACKENDS, GOALS, GPU_BACKGROUND, GPU_RESERVE_MAX_MB,
                     GPU_RESERVE_MIN_MB, PROFILE_CLASSES, VARIANTS)
 
 _HOTKEY = re.compile(r"^(?:(?:ctrl|alt|shift|win)\+){1,3}(?:[a-z0-9]|space|f(?:[1-9]|1[0-2]))$")
@@ -133,6 +133,8 @@ def coerce(key, value):
         return value if value in ("classic", "ice") else d
     if key == "scope":
         return value if value in SCOPES else d
+    if key == "browser_data":
+        return value if value in BROWSER_DATA else d
     if key == "notify_level":
         return value if value in ("info", "warning", "error") else d
     if isinstance(d, bool):

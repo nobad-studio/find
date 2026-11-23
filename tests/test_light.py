@@ -60,7 +60,8 @@ def test_lookalike_photos_are_less_sure(tmp_path):
         v[0], v[1] = score, (1 - score ** 2) ** 0.5
         return v
     vi.add(ids, np.stack([at(0.10), at(0.095), at(0.07)]))        # two close to the best, one look-alike
-    r = search.search(s, "tulips", photo_text=_Text(), pindex=vi)["results"]
+    # a description: on a one-word search ("tulips") policy D drops the look-alike instead
+    r = search.search(s, "tulips in a field", photo_text=_Text(), pindex=vi)["results"]
     assert [x["weak"] for x in r] == [False, False, True]
     assert r[2]["why"][-1] == "the picture may show it"
     s.close()

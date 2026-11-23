@@ -84,6 +84,24 @@ Specific to this app:
   finishes after it went off is dropped (`Store.set_text` `allow`, checked under the write lock); off
   removes their content (and their rows while secrets are off) with a targeted purge (`Api._purge_app_files`), no
   rebuild. Recent items and jump lists stay out whatever it says.
+  The other opt-in exception is **browser data** (maintainer decision 2026-11-22, browser spec
+  `docs/superpowers/specs/2026-11-22-find-browser-data-and-filters-design.md` §2-§3, `browserdata.py`, setting
+  `browser_data` = `off` | `history` | `history_logins`, **off by default**; it replaces "no browser history" for
+  this opt-in only): Chrome, Edge, Brave, Vivaldi, Opera and Firefox, each of the user's own profiles. `history`
+  reads history (title, url, host, last visit, visit count), bookmarks (title, url, folder) and downloads (file
+  path, source site, date); `history_logins` also saved logins' **site and user name only** (Chromium
+  `origin_url`/`username_value`; Firefox `logins.json` hostname, its user names are encrypted and not decrypted).
+  **Password values are never selected, decrypted, stored, logged or shown** (`Login Data` is read in memory, never
+  copied to disk); never page contents, cookies or session data; only http(s) addresses. Turned on (or to read more)
+  only with `set_settings` `consent: "READ_BROWSER_DATA"`, sent after the dialog in Settings > Privacy that says what
+  is read; off deletes every `browser_items` row and the temp copies, `history` the logins. **Never kill or close
+  a browser, never ask it to close:** each database (+ `-wal`, `-shm`) is opened with full sharing
+  (`CreateFileW` share read/write/delete), copied into `<data>\tmp\browser-<random>` (this user only), opened
+  `mode=ro&immutable=1`, read and deleted at once (also on error; wiped at engine start); a locked file is retried
+  at 1, 5 and 30 minutes, then given up with a note. An unknown schema is skipped with a note, never guessed. The
+  read runs in a text-reader worker (WORKERS job, low priority), never in the engine; rows go into the encrypted
+  index (`store.browser_items`, FTS `browser_fts`). Browser profiles stay names only for the **file** walk: their
+  databases are read only through this feature.
 - **Everything indexed is untrusted:** file names, folder names and file contents go to the UI only through
   `esc()`; FTS queries only through `store.fts_quote`; nothing builds a shell string; files are never executed
   except by the user's explicit Open (by result id, never a path from the page). Names, folders, snippets, drive
@@ -132,7 +150,13 @@ Specific to this app:
   (OpenAI CLIP's model card rules out deployment, so it isn't used).
 - Vectors carry their model's id (`meta vec_model`, `pvec_model`); a search never compares vectors from two models
   (`search._meaning_hits` / `_photo_hits` check it). A text-model switch rebuilds beside the old vectors
-  (`vecs_next`) and swaps them in one transaction.
+  (`vecs_next`) and swaps them in one transaction. So does a new photo vector identity (another photo model or a
+  re-pin, `models.vector_tag`): `pvecs_next` + `meta pvec_next_model`, the old set answering in its own search
+  channel until the new one covers every photo (`indexer._load_photo` / `_finish_photo_rebuild`). Never drop a
+  working vector index on an identity change, and test the upgrade from the last release's index.
+  A photo re-pin (`"vectors"` bumped) that changes the text side too sets `"text_changed_at": <that number>`:
+  older vectors are then never asked with the new text half. Their rows and tag still stay until the swap (as when
+  the old model isn't on the PC); only search leaves them out. A partial set is never swapped in.
 - Photos for photo meaning are decoded only by Windows' decoders in the one photo worker process (`photo.py`).
   Result previews come from Windows' thumbnail cache (`thumbs.py`), asked for by result id, never a page path.
 - Models are `embed.Lazy`: loaded on use, released when idle. Don't hold a model outside that wrapper. The one

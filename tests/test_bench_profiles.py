@@ -136,3 +136,10 @@ def test_p95_is_nearest_rank_never_rounded_down():
     assert bench.p95([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) == 10          # 10 samples: the slowest
     assert bench.p95(list(range(1, 51))) == 48
     assert bench.p95([]) is None
+
+
+def test_floors_are_the_apps_one_table_and_fp32_has_no_borrowed_usefulness():
+    from nobadfind import modelsuggest as suggest
+    assert bench.FLOORS is suggest.FLOORS
+    assert bench.usefulness("siglip2-base", "fp16-vision") is not None
+    assert bench.usefulness("siglip2-base", "fp32-vision") is None
