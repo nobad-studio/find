@@ -167,7 +167,7 @@ def test_a_model_not_downloaded_yet_changes_nothing(tmp_path, monkeypatch):
 
 
 # ---------- photos: one model's vectors at a time ----------
-def test_photo_model_switch_starts_the_photo_vectors_again(tmp_path, monkeypatch):
+def test_photo_model_switch_builds_the_new_vectors_beside_the_old(tmp_path, monkeypatch):
     s = _store(tmp_path)
     s.set_photo_vector(1, 1.0, embed.to_blob(np.ones(768)), None)
     monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: True)
@@ -179,9 +179,11 @@ def test_photo_model_switch_starts_the_photo_vectors_again(tmp_path, monkeypatch
     assert ix.photo_text.model_id == "siglip-base"
     st["photo_model"] = "siglip2-base"
     ix._load_photo()
-    assert ix.photo_model == "siglip2-base" and ix.pindex.model == "siglip2-base"
-    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 0             # SigLIP and SigLIP 2 are never compared
-    assert ix.photo_text._factory() == ("enc", models.model_dir("siglip2-base"), "siglip2")
+    # 1.2.0: the SigLIP vectors stay searched with SigLIP; SigLIP 2's are built beside them (test_photo_rebuild)
+    assert ix.photo_model == "siglip-base" and ix.pindex.model == "siglip-base" and ix.pindex.n == 1
+    assert ix.photo_model_next == "siglip2-base" and ix.pindex_next.model == "siglip2-base"
+    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 1 and s.q("SELECT count(*) FROM pvecs_next")[0][0] == 0
+    assert ix.photo_text_next._factory() == ("enc", models.model_dir("siglip2-base"), "siglip2")
 
 
 def test_siglip2_questions_are_lower_case_with_end_of_text_and_padding():
@@ -268,11 +270,12 @@ def test_vectors_made_by_the_8bit_siglip2_vision_are_made_again(tmp_path, monkey
     monkeypatch.setattr(indexer.photo, "TextEncoder", lambda model_dir, style="siglip": object())
     ix = indexer.Indexer(s, S(photo_meaning=True, photo_model="siglip2-base"), vindex=embed.VectorIndex())
     ix._load_photo()
-    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 0
-    assert s.meta("pvec_model") == models.vector_tag("siglip2-base") == "siglip2-base#2"
-    assert ix.photo_model == "siglip2-base" and ix.pindex.model == "siglip2-base"
-    ix._load_photo()                                             # loading again keeps the new vectors' tag
-    assert s.meta("pvec_model") == "siglip2-base#2"
+    # made again beside the old ones (pvecs_next), which keep answering until then (test_photo_rebuild)
+    assert s.q("SELECT count(*) FROM pvecs")[0][0] == 1 and s.meta("pvec_model") == "siglip2-base"
+    assert s.meta("pvec_next_model") == models.vector_tag("siglip2-base") == "siglip2-base#2"
+    assert ix.photo_model == ix.photo_model_next == "siglip2-base" and ix.pindex_next.model == "siglip2-base"
+    ix._load_photo()                                             # loading again keeps the rebuild going
+    assert s.meta("pvec_next_model") == "siglip2-base#2" and s.q("SELECT count(*) FROM pvecs")[0][0] == 1
 
 
 def test_siglip_base_vectors_are_kept_by_the_repin(tmp_path, monkeypatch):

@@ -29,6 +29,8 @@ NAMES_ONLY = "names only"         # text_err / photo err of a secret: its conten
 # "credentials"); .env files as well (Store.needs_text env)
 APP_READ_NAMES = frozenset(APP_SECRET_FILES | {run[-1] for run in SECRET_FILES_IN})
 DEBOUNCE = 2.0
+PHOTO_QUERIES = ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",)
+PHOTO_NEXT_QUERIES = ("SELECT file_id, v FROM pvecs_next WHERE length(v) > 0",)
 PHOTO_BATCH = 8                  # photos sent to the photo reader at a time
 ROUND_S = 120                    # seconds each step (photos, text, OCR, meaning) works before the next one's turn
 MEANING_BACKOFF = (30, 1800)     # seconds before trying a failed meaning worker again: doubling, capped
@@ -173,7 +175,13 @@ class Indexer:
         self._memory_noted = None        # when the workers' memory limit was last reported
         self.photo_text = None           # the photo model's text half, for questions (when photo meaning is on)
         self.photo_model = None          # catalog id of the photo model in use
-        self.pindex = embed.VectorIndex(photo.PHOTO_DIM, ("SELECT file_id, v FROM pvecs WHERE length(v) > 0",))             # known_drives(), refreshed by the indexer loop (searches read it)
+        self.pindex = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_QUERIES)
+        # a new photo vector identity (another model, or a re-pin) is built beside the searched one: its model id,
+        # question encoder and vectors (pvecs_next). Both answer a search, each in its own channel; None/empty when
+        # nothing is being rebuilt
+        self.photo_model_next = None
+        self.photo_text_next = None
+        self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)             # known_drives(), refreshed by the indexer loop (searches read it)
 
     # ---------- control ----------
     def roots(self, drives=None):
@@ -1091,8 +1099,11 @@ class Indexer:
 
     # ---------- photo meaning ----------
     def _load_photo(self):
-        """Photo meaning with the photo model chosen in Settings. Photo vectors carry the model id; another model
-        starts them again (SigLIP and SigLIP 2 vectors are never compared)."""
+        """Photo meaning with the photo model chosen in Settings. Photo vectors carry their identity (meta pvec_model:
+        models.vector_tag); SigLIP and SigLIP 2 vectors, or a re-pinned file's and the old file's, are never
+        compared. Another identity is built beside the old vectors (pvecs_next, meta pvec_next_model), which keep
+        answering with their own model until the new set covers every photo; then they swap in one transaction
+        (_finish_photo_rebuild). 1.0.0 dropped them at once instead: photo search was near empty for an hour+."""
         pid = models.selected(self.settings, "photo")
         if not pid or not models.ready(pid):
             if self.settings.get("photo_meaning"):
@@ -1102,27 +1113,86 @@ class Indexer:
             had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
                 "SELECT 1 FROM pvecs LIMIT 1") else "")
             tag = models.vector_tag(pid)           # the id, plus "#n" when the catalog re-pinned a vision file
+            building = self.store.meta("pvec_next_model") or ""
             if had and had != tag:
-                self.store.drop_photo_vectors()
+                old = had.split("#")[0]
+                spec_old = models.get(old) or {}
+                if spec_old.get("feature") == "photo" and models.ready(old) and \
+                        self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"):
+                    if building != tag:
+                        self.store.drop_next_photo_vectors()     # another rebuild was half done: start over
+                        self.store.set_meta("pvec_next_model", tag)
+                        log(f"photo model is now {tag}: the photos are looked at again beside the {had} vectors, "
+                            "which answer until then")
+                    self._use_photo_model(old, next=pid)
+                    log(f"photo meaning on with {old} ({self.pindex.n} photos ready); rebuilding with {pid} "
+                        f"({self.pindex_next.n} done)")
+                    return
+                # nothing can ask the old vectors (their model is gone, or there are none): the new identity
+                # takes over now, with whatever of it was already built
+                if building == tag:
+                    self.store.swap_photo_vectors(tag)
+                else:
+                    self.store.drop_photo_vectors()
                 log(f"photo model is now {tag}: the photos are looked at again")
+            if self.store.meta("pvec_next_model"):
+                self.store.drop_next_photo_vectors()     # switched back to the searched identity
+                log(f"photo vectors of {building} aren't needed any more")
             self.store.set_meta("pvec_model", tag)
-            spec = models.get(pid)
-            d = models.model_dir(pid)
-            self.photo_model = pid
-            self.photo_text = embed.Lazy(lambda: photo.TextEncoder(d, style=spec.get("style", "siglip")),
-                                         "photo text", model_id=pid)
-            self.pindex.reset(spec["dim"], pid)
-            self.pindex.load(self.store)
+            self._use_photo_model(pid)
             log(f"photo meaning on with {pid} ({self.pindex.n} photos ready)")
         except Exception as e:
             log(f"photo meaning unavailable: {type(e).__name__}", "warn")
             self.photo_text = None
+            self.photo_text_next = None
             notify.post("model_fallback", "Photo search couldn't start",
                         f"An error ({type(e).__name__}) stopped photo search from starting, so searching by what is "
                         "in a photo is off for now. Restarting NOBAD Find tries again.", "warning", action="open_models",
                         key="photo-failed")
 
+    def _photo_encoder(self, pid):
+        spec, d = models.get(pid), models.model_dir(pid)
+        return embed.Lazy(lambda: photo.TextEncoder(d, style=spec.get("style", "siglip")), "photo text", model_id=pid)
+
+    def _use_photo_model(self, pid, next=None):
+        """Search photos with `pid` (its question encoder and the pvecs made with it); next: the model whose
+        vectors are being built beside them (pvecs_next), searched in its own channel."""
+        spec = models.get(pid)
+        self.photo_model = pid
+        self.photo_text = self._photo_encoder(pid)
+        self.pindex.reset(spec["dim"], pid)
+        self.pindex.load(self.store)
+        self.photo_model_next = next
+        if next is None:
+            self.photo_text_next = None
+            self.pindex_next.reset(photo.PHOTO_DIM, None)
+            self.status.pop("photo_rebuild", None)
+            return
+        # a re-pin keeps the model id and its text half: one question encoder in memory for both sets
+        self.photo_text_next = self.photo_text if next == pid else self._photo_encoder(next)
+        self.pindex_next.reset(models.get(next)["dim"], next)
+        self.pindex_next.load(self.store)
+        self.status["photo_rebuild"] = {"from": pid, "to": next}
+
+    def _finish_photo_rebuild(self, pid):
+        """pvecs_next covers every photo: it replaces pvecs in one transaction, and search moves to it."""
+        tag = models.vector_tag(pid)
+        if models.selected(self.settings, "photo") != pid or self.store.meta("pvec_next_model") != tag:
+            return                                  # the choice changed meanwhile: _load_photo sorts it out
+        if self.store.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES, next=True):
+            return
+        self.store.swap_photo_vectors(tag)          # the vectors and their tag, in one transaction
+        idx, text = self.pindex_next, self.photo_text_next
+        idx.queries = PHOTO_QUERIES
+        idx.load(self.store)                        # now pvecs (the same vectors, what's on disk)
+        self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)
+        self.photo_model_next, self.photo_text_next = None, None
+        self.photo_model, self.photo_text, self.pindex = pid, text, idx
+        self.status.pop("photo_rebuild", None)
+        self._note(f"Photo search now uses {models.get(pid)['name']}")
+
     _photos_logged = False
+    photo_model_next = photo_text_next = None      # (set in __init__; also for stand-ins made without it)
 
     def _photo_vectors(self):
         """What's in each photo, made in one separate low-priority process (photos are decoded there)."""
@@ -1135,7 +1205,11 @@ class Indexer:
         threads = max(1, min(threads, self._op_limit("photo", threads)))
         pool = cf.ProcessPoolExecutor(max_workers=1, initializer=photo.init_worker, initargs=(threads,))
         self._photo_pool = pool
-        made_with = self.photo_model                 # every batch of this pass is made with this model
+        # every batch of this pass is made with one model: the one being rebuilt for, else the one in use
+        nxt = self.photo_model_next
+        made_with = nxt or self.photo_model
+        tag_key = "pvec_next_model" if nxt else "pvec_model"
+        into = self.pindex_next if nxt else self.pindex
         try:
             while not self.stop_ev.is_set():
                 go = self._wait_while_paused(max_wait=RECYCLE_AFTER)
@@ -1148,18 +1222,21 @@ class Indexer:
                     return                          # the other steps' turn; photos go on next round
                 rows = self._skip_secrets(
                     self.store.photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
-                                              limit=PHOTO_BATCH if self._photo_one_by_one else 64),
-                    lambda r: self.store.set_photo_vector(r[0], r[2], b"", NAMES_ONLY))
+                                              limit=PHOTO_BATCH if self._photo_one_by_one else 64, next=bool(nxt)),
+                    lambda r: self.store.set_photo_vector(r[0], r[2], b"", NAMES_ONLY, next=bool(nxt)))
                 if not rows:
                     if self._photos_logged:
-                        log(f"photos: all looked at ({self.pindex.n} ready)")
+                        log(f"photos: all looked at ({into.n} ready)")
                         self._photos_logged = False
+                    if nxt and self.photo_model_next == nxt:
+                        self._finish_photo_rebuild(nxt)
                     return
                 if not self._photos_logged:
                     left = self.store.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES,
-                                                           photo.MAX_PHOTO_BYTES) \
+                                                           photo.MAX_PHOTO_BYTES, next=bool(nxt)) \
                         if hasattr(self.store, "count_photos_to_read") else len(rows)
-                    log(f"photos: looking at {left} photos with {made_with} ({self.pindex.n} ready)")
+                    log(f"photos: looking at {left} photos {'again ' if nxt else ''}with {made_with} "
+                        f"({into.n} ready)")
                     self._photos_logged = True
                 self.status["phase"] = "photos"
                 step = 1 if self._photo_one_by_one else PHOTO_BATCH
@@ -1192,8 +1269,8 @@ class Indexer:
                     if results is RECYCLE:
                         self._recycle(pool, "photo reader")     # these photos are read again later
                         return
-                    if made_with and (self.photo_model != made_with
-                                      or self.store.meta("pvec_model") != models.vector_tag(made_with)):
+                    if made_with and ((self.photo_model_next or self.photo_model) != made_with
+                                      or self.store.meta(tag_key) != models.vector_tag(made_with)):
                         log("photo model changed during the pass: its batch is thrown away, the next pass uses "
                             "the new model")
                         return                      # vectors are only written under the model that made them
@@ -1205,9 +1282,9 @@ class Indexer:
                                 retry = True            # read again one by one next round, not written off
                                 continue
                             err = "too big"
-                        self.store.set_photo_vector(fid, mtime, blob, err)
+                        self.store.set_photo_vector(fid, mtime, blob, err, next=bool(nxt))
                         if blob:
-                            self.pindex.add([fid], np.frombuffer(blob, np.float16)[None])
+                            into.add([fid], np.frombuffer(blob, np.float16)[None])
                             self.status["photos"] = self.status.get("photos", 0) + 1
                     if retry:
                         self._photo_one_by_one = True
@@ -1236,15 +1313,19 @@ class Indexer:
 
     def warm_models(self):
         """The window just opened: load the models now, so the first search is quick (released again when idle)."""
-        for m in (self.embedder, self.photo_text):
+        for m in self._models():
             if isinstance(m, embed.Lazy):
                 try:
                     m.encode(["warm"] if m is self.embedder else "warm")
                 except Exception as e:
                     log(f"model warm-up failed: {type(e).__name__}", "warn")
 
+    def _models(self):
+        extra = self.photo_text_next if self.photo_text_next is not self.photo_text else None
+        return [m for m in (self.embedder, self.photo_text, extra) if m is not None]
+
     def models_loaded(self):
-        return [m.name for m in (self.embedder, self.photo_text) if isinstance(m, embed.Lazy) and m.loaded]
+        return [m.name for m in self._models() if isinstance(m, embed.Lazy) and m.loaded]
 
     def release_idle_models(self, idle=None):
         """Light when idle: models leave memory a few minutes after the last search or indexing work, unless
@@ -1252,7 +1333,7 @@ class Indexer:
         uses too much) always frees them."""
         if idle is None and self.settings is not None and self.settings.get("models_stay_loaded"):
             return
-        for m in (self.embedder, self.photo_text):
+        for m in self._models():
             if isinstance(m, embed.Lazy):
                 m.release_if_idle(idle)
 

@@ -132,7 +132,10 @@ Specific to this app:
   (OpenAI CLIP's model card rules out deployment, so it isn't used).
 - Vectors carry their model's id (`meta vec_model`, `pvec_model`); a search never compares vectors from two models
   (`search._meaning_hits` / `_photo_hits` check it). A text-model switch rebuilds beside the old vectors
-  (`vecs_next`) and swaps them in one transaction.
+  (`vecs_next`) and swaps them in one transaction. So does a new photo vector identity (another photo model or a
+  re-pin, `models.vector_tag`): `pvecs_next` + `meta pvec_next_model`, the old set answering in its own search
+  channel until the new one covers every photo (`indexer._load_photo` / `_finish_photo_rebuild`). Never drop a
+  working vector index on an identity change, and test the upgrade from the last release's index.
 - Photos for photo meaning are decoded only by Windows' decoders in the one photo worker process (`photo.py`).
   Result previews come from Windows' thumbnail cache (`thumbs.py`), asked for by result id, never a page path.
 - Models are `embed.Lazy`: loaded on use, released when idle. Don't hold a model outside that wrapper. The one

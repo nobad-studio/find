@@ -117,7 +117,7 @@ class Api:
                        roots=self._indexer.roots(self._indexer.drive_list),
                        photo_text=None if quick else self._indexer.photo_text,
                        pindex=None if quick else self._indexer.pindex, cancelled=cancelled,
-                       romanized=self._romanized(), asks=asks)
+                       romanized=self._romanized(), asks=asks, photo_next=None if quick else self._photo_next())
             if not r.get("cancelled"):
                 needs = [] if quick else self._needs(asks, len(r.get("results") or ()))
                 if needs:
@@ -154,6 +154,14 @@ class Api:
             return {"ok": False, "error": "Opening apps and settings isn't available in this copy of NOBAD Find."}
         return lch.run(action_id)
 
+    def _photo_next(self):
+        """(question encoder, vectors) of the photo identity being rebuilt beside the searched one, or None."""
+        ix = self._indexer
+        text, idx = getattr(ix, "photo_text_next", None), getattr(ix, "pindex_next", None)
+        if text is None or idx is None or getattr(ix, "photo_text", None) is None or not getattr(idx, "n", 0):
+            return None
+        return text, idx
+
     def _needs(self, asks, found):
         """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
         counts come from the Index page's cached totals, never a count over the index per keystroke.
@@ -177,6 +185,17 @@ class Api:
                 out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
                             "text": "Photo search is off, so only names and words in pictures are matched. "
                                     "Turn it on to search what is in them."})
+            elif getattr(self._indexer, "photo_model_next", None) and \
+                    (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))[1] > 0:
+                # another photo identity is being built beside the old one (_counts counts that set): the old
+                # vectors answer meanwhile
+                nxt = self._indexer.photo_model_next
+                total, todo = self._totals[2]["photos"]
+                done = max(0, total - todo)
+                name = (models.get(nxt) or {}).get("short") or (models.get(nxt) or {}).get("name") or nxt
+                out.append({"model": "photo", "state": "analyzing", "id": nxt, "size_mb": mb, "done": done,
+                            "total": total, "text": f"Looking at your photos again with {name}: {done:,} of "
+                                                    f"{total:,}; the old results answer until then"})
             else:
                 total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
                 where = asks.get("where")
@@ -583,13 +602,16 @@ class Api:
         mx = s.get("content_max_mb") * 1024 * 1024
         t0 = time.monotonic()
         try:
+            # a photo rebuild (pvecs_next): the photos phase counts the set being built, the one the photo step works on
+            pnext = bool(st.meta("pvec_next_model"))
             counts = {"text": (st.count_readable(text_ext, mx), st.count_needs_text(text_ext, mx)),
                       "ocr": (st.count_readable(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES),
                               st.count_needs_text(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES)),
                       "meaning": ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                   st.count_chunks_without_vectors() + st.count_names_without_vectors(NAME_KINDS)),
                       "photos": (st.count_photos(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES),
-                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES))}
+                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
+                                                         next=pnext))}
             if st.meta("vec_model_next"):
                 counts["rebuild"] = ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                      st.count_chunks_without_vectors(next=True)

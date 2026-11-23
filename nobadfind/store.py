@@ -6,6 +6,8 @@ Tables
   vecs    meaning-search vectors for chunks (float16)
   nvecs   meaning-search vectors for file and folder names (so a photo or a bill is found by what its name means)
   pvecs   photo-meaning vectors (what's in the picture), with the file time they were made for
+  pvecs_next  the photo vectors of a new identity (meta pvec_next_model: another photo model, or a re-pin), built
+          beside pvecs while those keep answering; they swap in one transaction once every photo has one
   search_history  the questions you typed yourself, for autocomplete (setting search_history; history.py)
   vdesc   a photo description the user kept (talk about a photo, Keep this description), with the model that made
           it; it is also one chunk of that photo (ord KEPT_ORD) so words and meaning search find it
@@ -45,12 +47,14 @@ CREATE TRIGGER IF NOT EXISTS files_ai AFTER INSERT ON files BEGIN
   INSERT INTO names(rowid, name, dir) VALUES (new.id, new.name, new.dir); END;
 CREATE TABLE IF NOT EXISTS nvecs(file_id INTEGER PRIMARY KEY, v BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS pvecs(file_id INTEGER PRIMARY KEY, mtime REAL, v BLOB NOT NULL, err TEXT);
+CREATE TABLE IF NOT EXISTS pvecs_next(file_id INTEGER PRIMARY KEY, mtime REAL, v BLOB NOT NULL, err TEXT);
 CREATE TABLE IF NOT EXISTS vdesc(file_id INTEGER PRIMARY KEY, text TEXT NOT NULL, model TEXT, at REAL);
 CREATE TRIGGER IF NOT EXISTS files_ad AFTER DELETE ON files BEGIN
   INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
   DELETE FROM chunks WHERE file_id = old.id;
   DELETE FROM nvecs WHERE file_id = old.id;
   DELETE FROM pvecs WHERE file_id = old.id;
+  DELETE FROM pvecs_next WHERE file_id = old.id;
   DELETE FROM vdesc WHERE file_id = old.id; END;
 CREATE TRIGGER IF NOT EXISTS files_au AFTER UPDATE OF name, dir ON files
   WHEN old.name IS NOT new.name OR old.dir IS NOT new.dir BEGIN
@@ -374,7 +378,8 @@ class Store:
                 marks = ",".join("?" * len(part))
                 n += self.db.execute(f"UPDATE files SET text_mtime = NULL, text_err = NULL WHERE text_err = ? AND id IN "
                                      f"({marks})", (mark, *part)).rowcount
-                self.db.execute(f"DELETE FROM pvecs WHERE err = ? AND file_id IN ({marks})", (mark, *part))
+                for t in ("pvecs", "pvecs_next"):
+                    self.db.execute(f"DELETE FROM {t} WHERE err = ? AND file_id IN ({marks})", (mark, *part))
             self.db.commit()
         return n
 
@@ -455,11 +460,13 @@ class Store:
             self.db.execute("DELETE FROM nvecs_next")
             self.db.commit()
 
-    def photos_to_read(self, exts, min_bytes, max_bytes, limit=64):
+    # next=True: pvecs_next, the photo vectors of the identity being built beside pvecs (meta pvec_next_model)
+    def photos_to_read(self, exts, min_bytes, max_bytes, limit=64, next=False):
         """Photos without a vector, or changed since theirs was made."""
         marks = ",".join("?" * len(exts))
+        t = "pvecs_next" if next else "pvecs"
         return self._first(lambda extra: (
-            f"SELECT f.id, f.path, f.mtime FROM files f LEFT JOIN pvecs p ON p.file_id = f.id "
+            f"SELECT f.id, f.path, f.mtime FROM files f LEFT JOIN {t} p ON p.file_id = f.id "
             f"WHERE f.ext IN ({marks}) AND f.size BETWEEN ? AND ? "
             f"AND (p.file_id IS NULL OR p.mtime IS NOT f.mtime){extra} ORDER BY f.mtime DESC LIMIT ?"),
             (*sorted(exts), min_bytes, max_bytes), limit)
@@ -496,17 +503,44 @@ class Store:
         return self.one(f"SELECT count(*) FROM files WHERE ext IN ({marks}) AND size BETWEEN ? AND ?",
                         (*sorted(exts), min_bytes, max_bytes)) or 0
 
-    def count_photos_to_read(self, exts, min_bytes, max_bytes):
+    def count_photos_to_read(self, exts, min_bytes, max_bytes, next=False):
         marks = ",".join("?" * len(exts))
-        return self.one(f"SELECT count(*) FROM files f LEFT JOIN pvecs p ON p.file_id = f.id "
+        t = "pvecs_next" if next else "pvecs"
+        return self.one(f"SELECT count(*) FROM files f LEFT JOIN {t} p ON p.file_id = f.id "
                         f"WHERE f.ext IN ({marks}) AND f.size BETWEEN ? AND ? "
                         f"AND (p.file_id IS NULL OR p.mtime IS NOT f.mtime)",
                         (*sorted(exts), min_bytes, max_bytes)) or 0
 
-    def set_photo_vector(self, file_id, mtime, blob, err=None):
+    def set_photo_vector(self, file_id, mtime, blob, err=None, next=False):
+        t = "pvecs_next" if next else "pvecs"
         with self.wlock:
-            self.db.execute("INSERT OR REPLACE INTO pvecs(file_id, mtime, v, err) VALUES(?,?,?,?)",
+            self.db.execute(f"INSERT OR REPLACE INTO {t}(file_id, mtime, v, err) VALUES(?,?,?,?)",
                             (file_id, mtime, blob, err))
+            self.db.commit()
+
+    def swap_photo_vectors(self, tag):
+        """The new identity's photo vectors replace the old ones and the index is tagged `tag` (pvec_model), all in
+        one transaction: a search, or a crash, sees one complete set with its own tag or the other, never a mix."""
+        with self.wlock:
+            self.db.execute("BEGIN")
+            try:
+                for k, v in (("pvec_model", tag), ("pvec_next_model", "")):
+                    self.db.execute("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                                    (k, v))
+                self.db.execute("DELETE FROM pvecs")
+                self.db.execute("INSERT INTO pvecs(file_id, mtime, v, err) SELECT file_id, mtime, v, err FROM pvecs_next")
+                self.db.execute("DELETE FROM pvecs_next")
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+
+    def drop_next_photo_vectors(self):
+        """The half-built set of a photo identity that isn't wanted any more (pvecs, the searched set, stays)."""
+        with self.wlock:
+            self.db.execute("DELETE FROM pvecs_next")
+            self.db.execute("INSERT INTO meta(k,v) VALUES('pvec_next_model','') ON CONFLICT(k) DO UPDATE SET "
+                            "v=excluded.v")
             self.db.commit()
 
     def drop_photo_vectors(self):
@@ -579,7 +613,8 @@ class Store:
     def with_content(self):
         """(id, path) of every file something was read from: text chunks, a photo vector or a kept description."""
         return self.q("SELECT id, path FROM files WHERE id IN (SELECT file_id FROM chunks) OR id IN "
-                      "(SELECT file_id FROM pvecs WHERE length(v) > 0) OR id IN (SELECT file_id FROM vdesc)")
+                      "(SELECT file_id FROM pvecs WHERE length(v) > 0) OR id IN "
+                      "(SELECT file_id FROM pvecs_next WHERE length(v) > 0) OR id IN (SELECT file_id FROM vdesc)")
 
     def drop_content(self, file_ids, mark):
         """What was read from these files goes (text, its words and vectors, photo vectors, a kept description); the
@@ -595,7 +630,8 @@ class Store:
                     marks = ",".join("?" * len(part))
                     self.db.execute(f"DELETE FROM chunks WHERE file_id IN ({marks})", part)   # text, vecs: triggers
                     self.db.execute(f"DELETE FROM vdesc WHERE file_id IN ({marks})", part)
-                    self.db.execute(f"UPDATE pvecs SET v = x'', err = ? WHERE file_id IN ({marks})", (mark, *part))
+                    for t in ("pvecs", "pvecs_next"):
+                        self.db.execute(f"UPDATE {t} SET v = x'', err = ? WHERE file_id IN ({marks})", (mark, *part))
                     self.db.execute(f"UPDATE files SET text_mtime = mtime, text_err = ? WHERE id IN ({marks})",
                                     (mark, *part))
                 self.db.execute("COMMIT")
@@ -610,7 +646,7 @@ class Store:
 
     def wipe(self):
         with self.wlock:
-            for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "chunks", "files", "meta", "apps",
+            for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "pvecs_next", "chunks", "files", "meta", "apps",
                       "search_history", "vdesc", "notifications"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT INTO names(names) VALUES('rebuild')")
