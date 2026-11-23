@@ -129,3 +129,80 @@ def test_remove_aside_copies_deletes_only_the_settings_copies(tmp_path):
     assert st.remove_aside_copies() == 1
     assert os.listdir(tmp_path).count("other.txt") == 1 and _asides(tmp_path) == []
     assert p.exists()
+
+
+# ---------- fix round 1 ----------
+def _fail_the_write(monkeypatch, p):
+    real = os.replace
+
+    def bad(src, dst):
+        if str(dst) == str(p) and str(src).endswith(".tmp"):
+            raise OSError(5, "disk")
+        return real(src, dst)
+    monkeypatch.setattr(settings_mod.os, "replace", bad)
+    return real
+
+
+def test_a_failed_write_after_the_merge_changes_nothing_and_the_next_save_merges_again(tmp_path, monkeypatch):
+    p = _write(tmp_path)
+    for how in ("update", "forget", "mark"):
+        with monkeypatch.context() as m:
+            _lock_once(m, p)
+            st = settings_mod.Settings(str(p))
+            before = st.all()
+            real = _fail_the_write(m, p)
+            try:
+                if how == "update":
+                    st.update({"hotkey": "ctrl+alt+k"})
+                elif how == "forget":
+                    st.forget(str(tmp_path / "x.txt"))
+                else:
+                    st._forgot_read = False
+                    m.setattr(st, "_load_forgotten", lambda: None)
+                    st.mark_forgotten(["C:\\Work\\private"])
+                raised = False
+            except OSError:
+                raised = True
+            assert raised, how
+            assert st.read_failed, how                                      # still not known to be safe
+            if how == "update":
+                assert st.all() == before                                   # rolled back to the pre-merge state
+            m.setattr(settings_mod.os, "replace", real)
+            st.update({"theme": "light"})                                   # the next save: the FILE again
+        saved = json.loads(p.read_text(encoding="utf-8"))
+        assert saved["roots"] == ["C:\\Work"] and saved["hotkey"] == "ctrl+alt+f" and saved["theme"] == "light", how
+        assert not st.read_failed and _asides(tmp_path) == []
+        p.write_bytes(json.dumps(RAW).encode("utf-8"))
+
+
+def test_the_set_aside_and_a_blocked_save_are_said_through_the_notification_path(tmp_path, monkeypatch):
+    from nobadfind import engine, notify
+
+    class Center:
+        def __init__(self):
+            self.posted = []
+
+        def post(self, kind, title, body, severity, **kw):
+            self.posted.append((kind, body, kw.get("key")))
+    c = Center()
+    monkeypatch.setattr(notify, "CENTER", c)
+    p = _write(tmp_path, b"{ broken")
+    st = settings_mod.Settings(str(p))
+    st.on_notice = engine.say_settings
+    st.update({"theme": "light"})
+    st.update({"theme": "dark"})
+    assert len(c.posted) == 1 and c.posted[0][0] == "internal_error"
+    assert "couldn't read its settings file" in c.posted[0][1] and "s.json.unreadable-" in c.posted[0][1]
+    # blocked: said too
+    d = tmp_path / "b"
+    d.mkdir()
+    p2 = d / "s.json"
+    p2.write_bytes(b"{ broken")
+    st2 = settings_mod.Settings(str(p2))
+    st2.on_notice = engine.say_settings
+    real = os.replace
+    monkeypatch.setattr(settings_mod.os, "replace",
+                        lambda a, b: (_ for _ in ()).throw(PermissionError(13, "x")) if str(a) == str(p2)
+                        else real(a, b))
+    st2.update({"theme": "light"})
+    assert "kept for now" in c.posted[-1][1]

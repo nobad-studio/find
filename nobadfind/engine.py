@@ -454,6 +454,13 @@ def main(stop=None):
     return run(stop, lock=lock)
 
 
+def say_settings(text):
+    """S0: the settings file couldn't be read (set aside) or a change couldn't be saved yet, as a notification.
+    No kind fits exactly; internal_error (a warning) is the nearest: the app's own file. Once a day per text."""
+    from . import notify
+    notify.post("internal_error", "Settings file", text, "warning", key=text, every=86400)
+
+
 def run(stop=None, open_ui=None, lock=None):
     """The engine, once the caller holds the single-instance lock (main, app.main). open_ui: the window to start
     the UI on ("main", "settings", "index", "bar"), or None to start without one. Returns the exit code."""
@@ -515,6 +522,9 @@ def run(stop=None, open_ui=None, lock=None):
     api._governor, api._activity, api._apps = governor, activity, apps
     api._turbo = turbo
     api._notify = center
+    settings.on_notice = lambda text: say_settings(text)      # S0: an unreadable settings file, said once
+    if getattr(settings, "notice", ""):
+        say_settings(settings.notice)               # it was set aside while starting, before the centre existed
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
     center.listen(rpc.events.notification)
     turbo._push = rpc.events.turbo

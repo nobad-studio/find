@@ -159,6 +159,9 @@ FORGOT_NOTE = ("Forgotten for now, but NOBAD Find couldn't save its protected li
 # Said once when an unreadable settings file was moved aside (the name is added)
 UNREADABLE_NOTE = ("NOBAD Find couldn't read its settings file, so it started from the defaults and kept the old "
                    "file as ")
+# Said when a change can't be written yet because the unreadable file can't be moved aside either
+BLOCKED_NOTE = ("NOBAD Find couldn't save a settings change because its settings file is still in use. The change "
+                "is kept for now and is saved when the file can be written.")
 
 
 class Settings:
@@ -188,6 +191,7 @@ class Settings:
         self.goal_pending = False                       # the file was read and has no performance_goal (settle_goal)
         self.read_failed = False                        # settings.json is there but couldn't be read or isn't settings:
         #   _save then re-reads it (merging) or sets it aside first, never writes the defaults over it (S0)
+        self.on_notice = None                           # engine: fn(text) posts it as a notification (a later save too)
         self.notice = ""                                # said once: the file was set aside (UNREADABLE_NOTE)
         self._changed = set()                           # keys this session changed while read_failed (the merge)
         try:
@@ -423,6 +427,13 @@ class Settings:
                     raise
         return changed
 
+    def _say(self, text):
+        if self.on_notice is not None:
+            try:
+                self.on_notice(text)
+            except Exception:
+                pass
+
     def remove_aside_copies(self):
         """Delete the settings copies set aside when the file couldn't be read (settings.json.unreadable-<stamp>): they
         hold folder paths (Wipe: nothing of the old index's surroundings stays). Returns how many went."""
@@ -454,15 +465,11 @@ class Settings:
                 raw = json.load(f)
         except FileNotFoundError:
             raw = None
-            self._changed.clear()
-            self.read_failed = False                    # gone meanwhile: a new install
-            return True
+            return True                                 # gone meanwhile: a new install, nothing to merge
         except (OSError, ValueError):
             raw = None
         if isinstance(raw, dict):
             self._merge_raw(raw)
-            self.read_failed = False
-            self._changed.clear()
             log("settings file read on the second try; the changes were added to it")
             return True
         stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -476,11 +483,11 @@ class Settings:
         except OSError as e:
             log(f"settings file can't be read or moved aside (error {e.errno}); not saved, tried again at the next "
                 "change", "warn")
+            self._say(BLOCKED_NOTE)
             return False
         log(f"settings file couldn't be read; kept as {os.path.basename(aside)} and started from the defaults", "warn")
         self.notice = UNREADABLE_NOTE + os.path.basename(aside)
-        self.read_failed = False
-        self._changed.clear()
+        self._say(self.notice)
         return True
 
     def _merge_raw(self, raw):
@@ -503,7 +510,8 @@ class Settings:
 
     def _save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        blocked = self.read_failed and not self._settle_unreadable()
+        settling = self.read_failed                     # read_failed and _changed clear only once the write worked
+        blocked = settling and not self._settle_unreadable()
         if not self._forgot_read:
             self._load_forgotten()                      # unreadable before: maybe it can be read now (never overwritten)
         ex = list(self.data.get("exclude") or [])
@@ -530,4 +538,7 @@ class Settings:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plain, f, indent=1)
         os.replace(tmp, self.path)
+        if settling:
+            self.read_failed = False
+            self._changed.clear()
         self.goal_pending = False                       # the file holds performance_goal now
