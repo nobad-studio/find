@@ -129,6 +129,8 @@ def coerce(key, value):
         return value if value in WSEARCH_STARTS else d
     if key == "theme":
         return value if value in ("dark", "light") else d
+    if key == "theme_style":
+        return value if value in ("classic", "ice") else d
     if key == "scope":
         return value if value in SCOPES else d
     if key == "notify_level":

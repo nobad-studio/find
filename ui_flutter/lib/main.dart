@@ -44,6 +44,8 @@ Future<void> main(List<String> args) async {
       settings: {
         'welcome_seen': Platform.environment['NOBAD_FIND_FAKE_WELCOME'] == '0',
         if (Platform.environment['NOBAD_FIND_FAKE_GLASS'] == '0') 'glass': false,
+        // screenshots of the Minimal ice style (the fake engine starts in Classic, like a real one)
+        if (Platform.environment['NOBAD_FIND_FAKE_STYLE'] == 'ice') 'theme_style': 'ice',
       },
     );
   } else {

@@ -17,11 +17,19 @@ class GeneralPage extends StatelessWidget {
         'Look',
         icon: NbGlyph.palette,
         rows: [
+          ChoiceSetting(
+            'theme_style',
+            'Theme style',
+            'Classic: warm light behind the glass and colourful icons. Minimal ice: cold, clearer frosted glass '
+                'and quiet icons.',
+            [('classic', 'Classic'), ('ice', 'Minimal ice')],
+          ),
           SwitchSetting(
             'glass',
             'See-through window',
-            "Windows 11 frosted glass (Acrylic) behind the window, while Windows' own Transparency effects switch "
-                'is on (Settings > Personalization > Colors). With that off the window stays solid.',
+            "Windows 11 glass behind the window (Mica, or frosted Acrylic in Minimal ice), while Windows' own "
+                'Transparency effects switch is on (Settings > Personalization > Colors). With that off the window '
+                'stays solid.',
           ),
         ],
       ),

@@ -71,7 +71,7 @@ class _NobadFindAppState extends State<NobadFindApp> {
   late final nav = AppNav(widget.startPage);
   late final notifications = widget.mode == AppMode.main ? NotificationsController(widget.engine) : null;
   bool _glass = false;
-  (bool, bool)? _applied;
+  (bool, bool, bool)? _applied;
   late bool _motionOff = widget.reduceMotion ?? systemAnimationsOff();
 
   /// On screen (not hidden or minimized): animations only run while it is.
@@ -119,11 +119,12 @@ class _NobadFindAppState extends State<NobadFindApp> {
   void _restyle() {
     final s = settings.settings;
     final glass = s.glass && !_transparencyOff;
-    final want = (s.dark, glass);
+    // the style (Classic or Minimal ice) picks Mica or Acrylic, so a change re-applies the look at once
+    final want = (s.dark, glass, s.ice);
     if (want == _applied) return;
     _applied = want;
     final base = s.dark ? NbColors.dark : NbColors.light;
-    final took = widget.window.look(dark: s.dark, glass: glass, canvasRgb: base.bg.toARGB32() & 0xFFFFFF);
+    final took = widget.window.look(dark: s.dark, glass: glass, canvasRgb: base.bg.toARGB32() & 0xFFFFFF, ice: s.ice);
     setState(() => _glass = took);
   }
 
@@ -166,7 +167,10 @@ class _NobadFindAppState extends State<NobadFindApp> {
     return ListenableBuilder(
       listenable: settings,
       builder: (context, _) {
-        final c = (settings.settings.dark ? NbColors.dark : NbColors.light).withGlass(_glass);
+        final c = (settings.settings.dark ? NbColors.dark : NbColors.light).withGlass(
+          _glass,
+          iceStyle: settings.settings.ice,
+        );
         final bar = widget.mode == AppMode.bar;
         return MaterialApp(
           title: bar ? 'NOBAD Find bar' : 'NOBAD Find',

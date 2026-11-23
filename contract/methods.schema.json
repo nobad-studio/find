@@ -2971,6 +2971,13 @@
         "glass": {
           "type": "boolean"
         },
+        "theme_style": {
+          "enum": [
+            "classic",
+            "ice"
+          ],
+          "description": "The window's look: classic (Mica, warm glows; the default) or ice (Minimal ice: Acrylic, cold frost)."
+        },
         "bg_notice_seen": {
           "type": "boolean"
         },
@@ -3192,6 +3199,7 @@
         "wsearch_prev",
         "theme",
         "glass",
+        "theme_style",
         "bg_notice_seen",
         "welcome_seen",
         "scope",
@@ -3329,6 +3337,13 @@
         },
         "glass": {
           "type": "boolean"
+        },
+        "theme_style": {
+          "enum": [
+            "classic",
+            "ice"
+          ],
+          "description": "The window's look: classic (Mica, warm glows; the default) or ice (Minimal ice: Acrylic, cold frost)."
         },
         "bg_notice_seen": {
           "type": "boolean"

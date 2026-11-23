@@ -152,18 +152,66 @@ class NbIcon extends StatelessWidget {
 }
 
 /// An icon in a small frosted tile (32 px, the glyph at 16): Settings group headers, model rows, this PC's tiles.
-/// Cool tint and a cool white glyph; [accent] (the selected or suggested one) takes the orange.
+/// Classic: each meaning its own colour ([tints]), the glyph in it on a tint of it. Minimal ice: a cool tint and a
+/// cool white glyph. [accent] (the selected or suggested one) takes the orange in both.
 class GlyphTile extends StatelessWidget {
   const GlyphTile(this.glyph, {super.key, this.accent = false, this.size = 32});
   final NbGlyph glyph;
   final bool accent;
   final double size;
 
+  /// One colour per meaning, the same everywhere (Classic). Glyphs not listed are neutral.
+  static const tints = {
+    // speed and how hard it works
+    NbGlyph.gauge: NbTint.orange,
+    NbGlyph.bolt: NbTint.orange,
+    NbGlyph.sliders: NbTint.orange,
+    // privacy and what is kept
+    NbGlyph.shield: NbTint.green,
+    NbGlyph.battery: NbTint.green,
+    NbGlyph.clock: NbTint.teal,
+    NbGlyph.archive: NbTint.teal,
+    NbGlyph.apps: NbTint.teal,
+    // folders and what is indexed
+    NbGlyph.folder: NbTint.amber,
+    NbGlyph.folderShut: NbTint.amber,
+    NbGlyph.list: NbTint.amber,
+    NbGlyph.drive: NbTint.amber,
+    NbGlyph.bell: NbTint.amber,
+    // keys, the window, talk
+    NbGlyph.keyboard: NbTint.violet,
+    NbGlyph.window: NbTint.violet,
+    NbGlyph.moon: NbTint.violet,
+    NbGlyph.chat: NbTint.violet,
+    // search and meaning
+    NbGlyph.search: NbTint.blue,
+    NbGlyph.openFile: NbTint.blue,
+    NbGlyph.textDoc: NbTint.blue,
+    NbGlyph.translate: NbTint.blue,
+    NbGlyph.download: NbTint.blue,
+    // the PC's parts
+    NbGlyph.processor: NbTint.cyan,
+    NbGlyph.chip: NbTint.cyan,
+    NbGlyph.memory: NbTint.cyan,
+    NbGlyph.pulse: NbTint.cyan,
+    NbGlyph.pc: NbTint.cyan,
+    NbGlyph.graphics: NbTint.magenta,
+    NbGlyph.palette: NbTint.magenta,
+    // photos and pictures
+    NbGlyph.image: NbTint.pink,
+    NbGlyph.scan: NbTint.pink,
+    // about, updates, quitting
+    NbGlyph.info: NbTint.neutral,
+    NbGlyph.sync: NbTint.neutral,
+    NbGlyph.power: NbTint.neutral,
+  };
+
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    if (!c.ice) return _classic(c);
     final r = BorderRadius.circular(size * .3125);
-    final tint = accent ? c.orangeA(c.isDark ? .14 : .11) : c.iceTile;
+    final tint = accent ? c.iceAccentTile : c.iceTile;
     return Container(
       width: size,
       height: size,
@@ -178,7 +226,29 @@ class GlyphTile extends StatelessWidget {
         ),
         border: Border.all(color: tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)), width: .8),
       ),
-      child: NbIcon(glyph, size: size / 2, color: accent ? c.orange : c.iceGlyph),
+      // the accent glyph: the orange step that reads on its orange tile (the raw orange doesn't)
+      child: NbIcon(glyph, size: size / 2, color: accent ? c.tint(NbTint.orange) : c.iceGlyph),
+    );
+  }
+
+  Widget _classic(NbColors c) {
+    final t = accent ? NbTint.orange : tints[glyph] ?? NbTint.neutral;
+    final tile = c.tintTile(t);
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(size * .3125),
+        // its own colour, lit from the top
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [tile, tile.withValues(alpha: tile.a * .6)],
+        ),
+        border: Border.all(color: tile.withValues(alpha: tile.a * 1.5), width: .8),
+      ),
+      child: NbIcon(glyph, size: size / 2, color: c.tint(t)),
     );
   }
 }

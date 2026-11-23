@@ -21,8 +21,9 @@ abstract class WindowControl {
   void fitBar(int rows);
   void front();
 
-  /// Dark or light title bar, Acrylic (or Mica) glass on or off. True when Windows took the glass.
-  bool look({required bool dark, required bool glass, required int canvasRgb});
+  /// Dark or light title bar, glass on or off: Mica, or Acrylic for [ice] (the Minimal ice style). True when
+  /// Windows took the glass.
+  bool look({required bool dark, required bool glass, required int canvasRgb, bool ice = false});
 
   /// Close the window, which ends this UI process (the engine keeps running).
   void close();
@@ -43,7 +44,7 @@ class NoWindow implements WindowControl {
   @override
   void front() {}
   @override
-  bool look({required bool dark, required bool glass, required int canvasRgb}) => false;
+  bool look({required bool dark, required bool glass, required int canvasRgb, bool ice = false}) => false;
   @override
   void close() {}
   @override
@@ -236,8 +237,8 @@ class Win32Window implements WindowControl {
   }
 
   @override
-  bool look({required bool dark, required bool glass, required int canvasRgb}) =>
-      WindowLook.apply(hwnd, dark: dark, glass: glass, canvasRgb: canvasRgb, acrylic: acrylic);
+  bool look({required bool dark, required bool glass, required int canvasRgb, bool ice = false}) =>
+      WindowLook.apply(hwnd, dark: dark, glass: glass, canvasRgb: canvasRgb, acrylic: acrylic, ice: ice);
 
   /// The quick find bar: Acrylic and round corners (set by main.dart for `--bar`).
   static bool acrylic = false;

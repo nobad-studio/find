@@ -45,6 +45,7 @@ class Settings {
     'wsearch_prev': '',
     'theme': 'dark',
     'glass': true,
+    'theme_style': 'classic',
     'bg_notice_seen': false,
     'welcome_seen': false,
     'search_history': true,
@@ -86,6 +87,10 @@ class Settings {
   /// 0.8.5 is dark only (maintainer decision 2026-11-19), whatever an older engine says.
   bool get dark => true;
   bool get glass => flag('glass');
+
+  /// The window's look: Minimal ice (Acrylic, cold frost) or Classic (Mica, warm glows; the default, and what an
+  /// engine that doesn't know the setting gives).
+  bool get ice => text('theme_style') == 'ice';
 
   Settings merged(Map<String, Object?> changes) => Settings({...values, ...changes});
 }
