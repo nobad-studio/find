@@ -136,6 +136,18 @@ class PrivacyPage extends StatelessWidget {
           ],
         ),
         const SettingsGroup('Files other programs keep', rows: [AppFilesSetting()]),
+        const SettingsGroup(
+          'Notifications',
+          rows: [
+            SwitchSetting(
+              'notify_show_names',
+              'Show file names in notifications',
+              'Off: notifications never name a file or show where it is. On: the name of the file involved (not '
+                  'its folder), also in Windows notifications, which can show on the lock screen. Turning it off '
+                  'removes the names kept so far. Notifications are kept encrypted with the index, at most 100.',
+            ),
+          ],
+        ),
         SettingsGroup(
           'Your data',
           rows: [

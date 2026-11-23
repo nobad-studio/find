@@ -6,6 +6,7 @@ library;
 import 'models/update.dart';
 import 'models/json.dart';
 import 'models/models_info.dart';
+import 'models/notification.dart';
 import 'models/scope_info.dart';
 import 'models/status.dart';
 
@@ -16,6 +17,7 @@ sealed class EngineEvent {
   static const mainWindow = [
     'status', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', 'models', 'turbo', 'update', //
     'vision',
+    'notification',
   ];
 
   /// What the quick find bar subscribes to.
@@ -69,6 +71,9 @@ sealed class EngineEvent {
         final st = jStr(m['state']);
         if (job == null || !VisionEvent.states.contains(st)) return null;
         return VisionEvent(job: job, state: st, text: jStr(m['text']), model: jStr(m['model']), note: jStr(m['note']));
+      case 'notification':
+        final n = AppNotification.fromJson(m['item']);
+        return n == null ? null : NotificationEvent(n, unread: jInt(m['unread']));
     }
     return null;
   }
@@ -173,6 +178,13 @@ class VisionEvent extends EngineEvent {
   final String text;
   final String model;
   final String note;
+}
+
+/// A new notification (the bell); [unread] is the engine's count with it.
+class NotificationEvent extends EngineEvent {
+  const NotificationEvent(this.item, {this.unread = 0});
+  final AppNotification item;
+  final int unread;
 }
 
 /// The engine is ending: exit instead of reconnecting.

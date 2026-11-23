@@ -181,6 +181,12 @@ DEFAULTS = {
     # 2026-11-21: heavy creative apps (video, 3D, audio). While one is in front NOBAD Find works at Light and leaves
     # the graphics card alone, like for a game. Program file names; the user can edit the list.
     "creative_apps": [],            # filled from CREATIVE_APPS below
+    # notifications (notify.py, maintainer request 2026-11-21): all of them in the window's bell; Windows toasts
+    # (local only, on the lock screen and in the Action Center) from notify_level up
+    "notify_toasts": True,
+    "notify_level": "warning",      # the lowest severity that gets a Windows toast: info | warning | error
+    "notify_quiet": True,           # no toast while a game, a call or a presentation is on (the governor's detection)
+    "notify_show_names": False,     # file names in notifications; off: never a path or a name
 }
 
 CREATIVE_APPS = [

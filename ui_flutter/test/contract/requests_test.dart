@@ -160,6 +160,14 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.visionCancel();
     case 'vision_keep' when p['file_id'] is int && p['text'] is String && (p['text'] as String).length <= 2000:
       return c.visionKeep(p['file_id'] as int, p['text'] as String);
+    case 'notifications_list':
+      return c.notificationsList();
+    case 'notifications_read' when p['all'] == true && p.length == 1:
+      return c.notificationsRead(all: true);
+    case 'notifications_read' when p['ids'] is List && (p['ids'] as List).every((i) => i is int) && p.length == 1:
+      return c.notificationsRead(ids: (p['ids'] as List).cast<int>());
+    case 'notifications_clear':
+      return c.notificationsClear();
   }
   return c.call(m, p);
 }

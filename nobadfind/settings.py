@@ -82,6 +82,8 @@ def coerce(key, value):
         return value if value in ("dark", "light") else d
     if key == "scope":
         return value if value in SCOPES else d
+    if key == "notify_level":
+        return value if value in ("info", "warning", "error") else d
     if isinstance(d, bool):
         return value if isinstance(value, bool) else d
     return d

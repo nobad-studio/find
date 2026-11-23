@@ -9,6 +9,7 @@ Tables
   search_history  the questions you typed yourself, for autocomplete (setting search_history; history.py)
   vdesc   a photo description the user kept (talk about a photo, Keep this description), with the model that made
           it; it is also one chunk of that photo (ord KEPT_ORD) so words and meaning search find it
+  notifications   the last notify.CAP notifications (crashes, restarted workers, updates; notify.py), no paths
 """
 import os
 import secrets
@@ -82,6 +83,9 @@ CREATE TRIGGER IF NOT EXISTS chunks_ad_next AFTER DELETE ON chunks BEGIN
 CREATE TABLE IF NOT EXISTS search_history(k TEXT PRIMARY KEY, q TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 1,
   last REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS search_history_last ON search_history(last);
+CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY, t REAL NOT NULL, kind TEXT NOT NULL,
+  severity TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL DEFAULT '', read INTEGER NOT NULL DEFAULT 0, key TEXT NOT NULL DEFAULT '');
 CREATE TRIGGER IF NOT EXISTS files_ad_next AFTER DELETE ON files BEGIN
   DELETE FROM nvecs_next WHERE file_id = old.id; END;
 CREATE TRIGGER IF NOT EXISTS files_au_next AFTER UPDATE OF name, dir ON files
@@ -607,7 +611,7 @@ class Store:
     def wipe(self):
         with self.wlock:
             for t in ("vecs", "nvecs", "vecs_next", "nvecs_next", "pvecs", "chunks", "files", "meta", "apps",
-                      "search_history", "vdesc"):
+                      "search_history", "vdesc", "notifications"):
                 self.db.execute(f"DELETE FROM {t}")
             self.db.execute("INSERT INTO names(names) VALUES('rebuild')")
             self.db.execute("INSERT INTO text(text) VALUES('rebuild')")

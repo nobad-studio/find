@@ -6,8 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nobad_find/app/app.dart';
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/engine_api.dart';
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/features/consent/download_consent_dialog.dart';
+import 'package:nobad_find/features/notifications/notification_bell.dart';
 import 'package:nobad_find/platform/demo.dart';
 import 'package:nobad_find/platform/window.dart';
 
@@ -153,6 +155,45 @@ void main() {
         await pumpApp(tester, engineFor(theme), size: const Size(1180, 760));
         askDownloadConsent(appNavigator.currentContext!, 'photo');
         await shoot(tester, 'consent_$theme');
+      });
+
+      testWidgets('notifications', (tester) async {
+        final now = DateTime.now().millisecondsSinceEpoch / 1000; // "5 min ago" on any PC and time zone
+        final engine = engineFor(theme)
+          ..notifications.addAll([
+            AppNotification(
+              id: 3,
+              t: now - 300,
+              kind: 'worker_restarted',
+              severity: NotifySeverity.warning,
+              title: 'A text reader used too much memory',
+              body: 'NOBAD Find stopped a text reader using 1.6 GB. The file it was reading is skipped; the other '
+                  'files go on.',
+              action: const NotifyAction('open_indexing', 'Open Indexing'),
+            ),
+            AppNotification(
+              id: 2,
+              t: now - 7200,
+              kind: 'internal_error',
+              severity: NotifySeverity.error,
+              title: 'Part of NOBAD Find stopped',
+              body: 'The update-check thread stopped after an internal error (ValueError). The rest keeps running; '
+                  'restarting NOBAD Find starts it again.',
+            ),
+            AppNotification(
+              id: 1,
+              t: now - 9000,
+              kind: 'update_available',
+              severity: NotifySeverity.info,
+              title: 'NOBAD Find 0.9.9 is available',
+              body: 'You have 0.9.3. Update downloads it from GitHub, checks it and installs it.',
+              action: const NotifyAction('update', 'Update'),
+              read: true,
+            ),
+          ]);
+        await pumpApp(tester, engine, size: const Size(1180, 760));
+        await tester.tap(find.byType(NotificationBell));
+        await shoot(tester, 'notifications_$theme');
       });
 
       testWidgets('quick find bar', (tester) async {

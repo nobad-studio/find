@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from . import hardware as _hw
 from . import jobs as _jobs
 from .const import CREATIVE_APPS
-from . import winapi
+from . import notify, winapi
 from .log import log
 
 FULL, GENTLE, LIGHT, PAUSED = "full", "gentle", "light", "paused"
@@ -451,6 +451,9 @@ class Governor(threading.Thread):
         self._eco = eco if eco is not None else (lambda on, pid, job=None: winapi.eco_qos(on, pid=pid, job=job))
         self._eco_set = {}                       # worker pid -> EcoQoS on/off as last applied
         self._now = threading.Event()            # Pause / Resume: decide again now
+        self._last = None                        # the newest sample (busy_with)
+        self._paused_since = None                # (since, reason) of a pause that isn't the user's own break
+        self._pause_told = False                 # that pause was already worth a notification
 
     # ---------- control ----------
     def pause_for(self, seconds):
@@ -466,6 +469,28 @@ class Governor(threading.Thread):
         self.brain.pause_until = 0.0
         self.activity.add("info", "You resumed NOBAD Find")
         self._now.set()
+
+    def busy_with(self):
+        """A game, a call or a presentation is on (the newest sample): notifications stay in the window then."""
+        s = self._last
+        return bool(s is not None and (s.game or s.call or s.presentation))
+
+    def _long_pause(self, s, d):
+        """A pause that isn't the user's own break and lasts LONG_PAUSE: one notification, so a PC that never
+        gets indexed isn't silent about why."""
+        if d.level != PAUSED or s.t < self.brain.pause_until:
+            self._paused_since, self._pause_told = None, False
+            return
+        if self._paused_since is None:
+            self._paused_since = s.t
+        if self._pause_told or s.t - self._paused_since < notify.LONG_PAUSE:
+            return
+        self._pause_told = True
+        why = d.reason.split(":", 1)[-1].strip() if d.reason.startswith("Paused:") else d.reason
+        why = why[:1].upper() + why[1:]
+        notify.post("indexing_paused_reason", f"Indexing has been paused for {notify.LONG_PAUSE // 60} minutes",
+                    f"{why}. NOBAD Find goes on by itself when that ends; searching works meanwhile.", "info",
+                    action="open_indexing", key="paused-long", every=3 * 3600)
 
     def stop(self):
         self._stop_ev.set()
@@ -489,6 +514,7 @@ class Governor(threading.Thread):
         self._usage = self._read_usage()            # once per tick: find_cpu and find_mb share it
         s = self._sense()
         self.sample = s                             # the last reading (talk about a photo checks free memory)
+        self._last = s                              # busy_with (notifications' quiet rule) reads it
         d = self.brain.decide(s)
         self._history.append({"t": s.t, "cpu": s.cpu, "gpu": s.gpu, "find_cpu": s.find_cpu,
                               "find_mb": self._usage["memory_mb"], "level": d.level})
@@ -505,6 +531,10 @@ class Governor(threading.Thread):
             log(f"governor could not work out the limits: {type(e).__name__}", "warn")
         if d.release_models:
             self._let_models_go(s)
+        try:
+            self._long_pause(s, d)
+        except Exception as e:
+            log(f"governor pause note failed: {type(e).__name__}", "warn")
         try:
             self._eco_workers(d.level)
         except Exception as e:

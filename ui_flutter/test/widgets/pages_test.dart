@@ -150,6 +150,8 @@ void main() {
 
       await tester.tap(find.text('Privacy & data'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Delete index')); // below the fold with the Notifications group
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Delete index'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'delete');

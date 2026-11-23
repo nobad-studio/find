@@ -327,6 +327,14 @@ class EngineClient {
   Future<ActionResult> historyForget(String text) => _ok('history_forget', {'text': _cap(text)});
   Future<ActionResult> historyClear() => _ok('history_clear');
 
+  // ---- notifications (the bell) ----
+  Future<NotificationList> notificationsList() async => NotificationList.fromJson(await call('notifications_list'));
+
+  /// Marks [ids] read, or every one with [all]. The engine's unread count after it.
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false}) async =>
+      jInt(jMap(await call('notifications_read', all ? {'all': true} : {'ids': ids.take(200).toList()}))['unread']);
+  Future<ActionResult> notificationsClear() => _ok('notifications_clear');
+
   /// The engine refuses longer text (-32602): cut it, never at half a character.
   static String _cap(String s) {
     if (s.length <= maxTextLength) return s;

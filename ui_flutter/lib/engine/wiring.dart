@@ -221,5 +221,17 @@ class PipeEngine implements EngineApi {
   Future<VisionAnswer> visionKeep(int fileId, String text) => _pipe.visionKeep(fileId, text);
 
   @override
+  Future<NotificationList> notificationsList() async =>
+      _pipe.serves('notifications_list') ? _pipe.notificationsList() : NotificationList.empty;
+
+  @override
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false}) async =>
+      _pipe.serves('notifications_read') ? _pipe.notificationsRead(ids: ids, all: all) : 0;
+
+  @override
+  Future<ActionResult> notificationsClear() async =>
+      _pipe.serves('notifications_clear') ? _pipe.notificationsClear() : const ActionResult(true);
+
+  @override
   void dispose() => _pipe.dispose();
 }

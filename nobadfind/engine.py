@@ -478,6 +478,16 @@ def run(stop=None, open_ui=None, lock=None):
     store = Store(DB_PATH, KEY_PATH)
     if not store.encrypted:
         log("SQLCipher missing: the index is NOT encrypted", "warn")
+    from . import notify
+    late = {}                                       # the governor and the tray's balloon, once they exist
+
+    def balloon(title, text):
+        return bool(late.get("balloon", lambda t, b: False)(title, text))
+    center = notify.Center(settings, store=store, toast=notify.windows_toast(balloon=balloon),
+                           quiet=lambda: bool(late["governor"].busy_with()) if "governor" in late else False)
+    center.load()
+    notify.CENTER = center                          # from here on any part of the engine can post
+    notify.install_thread_hook()                    # an uncaught error in a thread is posted, never fatal
     vindex = embed.VectorIndex()
     activity = Activity()
     pieces = {}
@@ -488,6 +498,7 @@ def run(stop=None, open_ui=None, lock=None):
     apps = AppMemory(store)
     governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"],
                         release_models=hooks["release_all"], plan=hooks["plan"], drives=hooks["drives"])
+    late["governor"] = governor
     measure = measure_overrides(os.environ)
     if measure["level"]:
         governor.brain.fixed = measure["level"]
@@ -503,7 +514,9 @@ def run(stop=None, open_ui=None, lock=None):
     pieces["api"] = api                           # the talk worker's idle release and memory release (worker_hooks)
     api._governor, api._activity, api._apps = governor, activity, apps
     api._turbo = turbo
+    api._notify = center
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
+    center.listen(rpc.events.notification)
     turbo._push = rpc.events.turbo
     api._on_vision = lambda ev: rpc.events.push("vision", ev)     # talk about a photo (vlm/worker.Talker)
     api._on_talk_budget = jobs.set_talk_allowance                 # the worker group's limit + the talk model
@@ -546,6 +559,7 @@ def run(stop=None, open_ui=None, lock=None):
     api._settings_worker = later.put
     wiring.tray_ok = lambda: tray_box["icon"] is not None
     wiring.balloon = lambda title, text: bool(tray_box["icon"] and tray_box["icon"].balloon(title, text))
+    late["balloon"] = wiring.balloon               # a Windows toast Windows refused goes to the tray balloon
     log(f"engine ready (pid {os.getpid()})")
     print(f"NOBAD Find engine ready (pid {os.getpid()}). Ctrl+C stops it.", flush=True)
     tip, n = None, 0
@@ -567,6 +581,8 @@ def run(stop=None, open_ui=None, lock=None):
     except KeyboardInterrupt:
         pass
     log("engine stopping")
+    notify.CENTER = None
+    notify.uninstall_thread_hook()
     if tray_box["icon"] is not None:
         tray_box["icon"].stop()
     for hk in keys:

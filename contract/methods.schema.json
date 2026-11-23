@@ -1174,6 +1174,91 @@
         ],
         "additionalProperties": false
       }
+    },
+    "notifications_list": {
+      "description": "The notification bell's list: everything kept (in memory and inside the encrypted index, at most 100), newest first, and how many are unread.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/notifications"
+      }
+    },
+    "notifications_read": {
+      "description": "Mark notifications read: these ids (unknown ids are ignored), or all of them.",
+      "params": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            },
+            "required": [
+              "ids"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "all": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "all"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "examples": [
+          {
+            "ids": [
+              1,
+              2
+            ]
+          },
+          {
+            "all": true
+          }
+        ]
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "unread": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "ok",
+          "error",
+          "unread"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notifications_clear": {
+      "description": "The panel's Clear: deletes every notification, from memory and from the index.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
     }
   },
   "$defs": {
@@ -2863,6 +2948,26 @@
             "pattern": "^[a-z0-9][a-z0-9 ._()+-]{0,59}\\.exe$"
           },
           "description": "Program file names (lower case, like \"blender.exe\") of heavy creative apps: while one is in front NOBAD Find works at Light and leaves the graphics card alone. [] = none."
+        },
+        "notify_toasts": {
+          "type": "boolean",
+          "description": "Show notifications from notify_level up as Windows notifications too (local only; they can show on the lock screen and in the Action Center)."
+        },
+        "notify_level": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "description": "The lowest severity that gets a Windows notification; all of them stay in the window's bell."
+        },
+        "notify_quiet": {
+          "type": "boolean",
+          "description": "No Windows notification while a game, a call or a presentation is on (they wait in the bell)."
+        },
+        "notify_show_names": {
+          "type": "boolean",
+          "description": "File names in notifications (off: never a name or a path); turning it off removes the names kept so far."
         }
       },
       "required": [
@@ -2911,7 +3016,11 @@
         "settings_rev",
         "models_stay_loaded",
         "update_check",
-        "creative_apps"
+        "creative_apps",
+        "notify_toasts",
+        "notify_level",
+        "notify_quiet",
+        "notify_show_names"
       ],
       "additionalProperties": false
     },
@@ -3078,6 +3187,26 @@
             "maxLength": 260
           },
           "description": "Program file names of heavy creative apps (\"blender.exe\"). The engine lower-cases them and drops anything that isn't a plain program file name (a folder, a path); at most 100. [] = none."
+        },
+        "notify_toasts": {
+          "type": "boolean",
+          "description": "Show notifications from notify_level up as Windows notifications too (local only; they can show on the lock screen and in the Action Center)."
+        },
+        "notify_level": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ],
+          "description": "The lowest severity that gets a Windows notification; all of them stay in the window's bell."
+        },
+        "notify_quiet": {
+          "type": "boolean",
+          "description": "No Windows notification while a game, a call or a presentation is on (they wait in the bell)."
+        },
+        "notify_show_names": {
+          "type": "boolean",
+          "description": "File names in notifications (off: never a name or a path); turning it off removes the names kept so far."
         }
       },
       "additionalProperties": false
@@ -3952,6 +4081,121 @@
         "readers",
         "photo",
         "vision"
+      ],
+      "additionalProperties": false
+    },
+    "notification": {
+      "description": "One notification (notify.py). Text is plain, never markup, and never has a file path; detail is a file name only while notify_show_names is on (\"\" otherwise). action is the one button, or null.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "t": {
+          "type": "number",
+          "description": "When, in seconds since 1970."
+        },
+        "kind": {
+          "enum": [
+            "worker_crashed",
+            "worker_restarted",
+            "model_fallback",
+            "model_released_memory",
+            "internal_error",
+            "suggestion",
+            "update_available",
+            "turbo_needs_ok",
+            "indexing_paused_reason"
+          ],
+          "description": "A UI shows a kind it doesn't know like any other."
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "action": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/notification_action"
+            }
+          ]
+        },
+        "read": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "t",
+        "kind",
+        "severity",
+        "title",
+        "body",
+        "detail",
+        "action",
+        "read"
+      ],
+      "additionalProperties": false
+    },
+    "notification_action": {
+      "description": "What the notification's button does: open_indexing, open_performance, open_models, open_turbo (Settings > What to index) or update (Settings > About). label is the button's text.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "enum": [
+            "open_indexing",
+            "open_performance",
+            "open_models",
+            "open_turbo",
+            "update"
+          ]
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "notifications": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/notification"
+          },
+          "description": "Newest first, at most 100."
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "items",
+        "unread"
       ],
       "additionalProperties": false
     }

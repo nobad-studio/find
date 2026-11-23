@@ -33,6 +33,19 @@
 - Setup reads the service back after creating it and fails unless its privilege list is exactly the two it needs.
   A setup that fails part way no longer leaves a half copy (`bin.new`) in Program Files.
 
+### Notifications
+- A bell in every page's header, with the number of unread notifications: when a worker stops or is restarted
+  (too much memory, a file that crashed a reader), when a search model can't be used, when NOBAD Find frees memory,
+  when an internal error stops part of it, when a newer version is available, when turbo needs your OK, and when indexing
+  has been paused for 30 minutes for a reason that isn't your own break. Each has at most one button (Open
+  Indexing, Update, ...); Mark all read and Clear.
+- Warnings and errors also show as Windows notifications, made on this PC (nothing is sent anywhere), at most 5 an
+  hour and the same one at most once in 10 minutes. Settings > General: Windows notifications, which ones go to
+  Windows, quiet during games and calls. If Windows refuses (no Start menu shortcut, from source), the tray icon's
+  balloon says it.
+- Notifications never name a file or show a path, unless "Show file names in notifications" (Settings > Privacy &
+  data, off) is on. The last 100 are kept encrypted inside the index.
+
 ## 1.1.0 · 2026-11-22
 
 ### Talk about a photo

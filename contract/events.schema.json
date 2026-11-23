@@ -183,6 +183,24 @@
         "note"
       ],
       "additionalProperties": false
+    },
+    "notification": {
+      "description": "A new notification was posted (sent on the next tick); unread is the count with it.",
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "methods.schema.json#/$defs/notification"
+        },
+        "unread": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "item",
+        "unread"
+      ],
+      "additionalProperties": false
     }
   },
   "$defs": {

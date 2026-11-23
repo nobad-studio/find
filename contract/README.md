@@ -36,7 +36,8 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 
 1. `hello`: check `protocol` is 1 (refuse a newer engine and say why). `pid` is the engine's process id: call
    `AllowSetForegroundWindow(pid)` before `pick_folder` and `wsearch_set`, so their windows can come to the front.
-2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting`;
+2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting
+   models turbo update notification`;
    bar: `show quitting`). The engine tells the two apart by this (a client with `here` is a main window): a
    `show` for a window no connected UI has starts that UI instead.
 3. `status` once (events only report changes), then `ui_shown` when the window is on screen.
@@ -113,6 +114,25 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `""`. The `here` event brings the same value as soon as it is known.
 - **`to_main`** `{text?: string (≤ 2000)}` → `{ok: true}`: the bar's Alt+Enter. The engine sends `show {what: "main", text}`,
   so the main window comes up with the same words in its search box.
+
+### Notifications
+
+Crashes, restarted workers, model fallbacks, internal errors, suggestions, updates and long pauses
+(`nobadfind/notify.py`, maintainer request 2026-11-21). Kept in memory and inside the encrypted index, at most 100,
+newest first. The text never has a file path; `detail` is a file name only while `notify_show_names` is on. The
+same kind of event is posted at most once per 10 minutes (its key), and at most 5 an hour also go to Windows as a
+local toast (`notify_toasts`, from `notify_level` up, not while a game, a call or a presentation is on with
+`notify_quiet`). Nothing goes over the network.
+
+- `Notification` = `{id: int, t: number, kind, severity: info|warning|error, title (≤ 80), body (≤ 300), detail
+  (≤ 120), action: null|{id, label}, read: bool}`. `kind` is `worker_crashed worker_restarted model_fallback
+  model_released_memory internal_error suggestion update_available turbo_needs_ok indexing_paused_reason` (show an
+  unknown kind like any other). `action.id` is `open_indexing open_performance open_models open_turbo update`; the UI
+  opens that page (`update`: Settings > About, where Install asks for its own consent). `label` is the button's text.
+- **`notifications_list`** `{}` → `{items: [Notification], unread: int}`: the bell's panel.
+- **`notifications_read`** `{ids: [int]}` or `{all: true}` → `{ok, error, unread}`: mark read. Unknown ids are
+  ignored; anything else (`{}`, `all: false`, both at once, ids that aren't whole numbers) is `-32602`.
+- **`notifications_clear`** `{}` → `Ok`: the panel's Clear: every notification goes, from memory and the index.
 
 ### Status and the governor
 
@@ -343,6 +363,8 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`here`** → `{path}`: after the main hotkey, the File Explorer folder it was pressed in (`""` if none). Comes shortly
   after `show`; a newer press wins.
 - **`quitting`** → `{}`: the engine is ending. Exit instead of reconnecting.
+- **`notification`** → `{item: Notification, unread: int}`: a new notification (sent on the next tick, within
+  half a second); `unread` counts it. A duplicate (the same key within its time) isn't posted at all.
 - **`turbo`** → `TurboState` (as `turbo_state`): the turbo index started, stopped, read a drive, lost a change journal
   (it reads the drive again) or hit an error.
 - **`vision`** -> `{job, state: loading|answering|done|error|cancelled, text, model, note}`: the answer to a photo
@@ -384,3 +406,4 @@ lines, rewrites the `recv` lines), then review the diff.
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
+| `09-notifications.jsonl` | notifications_list (empty, three), notification events, a duplicate key not posted, a path kept out of the text, notifications_read (some ids, all, and bad ones), notifications_clear |

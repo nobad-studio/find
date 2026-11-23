@@ -15,3 +15,6 @@ winrt-Windows.Foundation.Collections==3.2.1
 # Result previews: Windows' own thumbnails (the cache Explorer uses)
 winrt-Windows.Storage==3.2.1
 winrt-Windows.Storage.FileProperties==3.2.1
+# Notifications (notify.py): Windows' own local toasts; no push service, nothing over the network
+winrt-Windows.UI.Notifications==3.2.1
+winrt-Windows.Data.Xml.Dom==3.2.1

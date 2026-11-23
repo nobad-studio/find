@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 
 import 'events.dart';
 import 'models/models_info.dart';
+import 'models/notification.dart';
 import 'models/scope_info.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
@@ -21,6 +22,7 @@ import 'models/status.dart';
 import 'models/update.dart';
 import 'models/vision.dart';
 
+export 'models/notification.dart';
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
 export 'models/vision.dart';
 
@@ -208,6 +210,16 @@ abstract class EngineApi {
 
   /// Keep [text] as the photo's description so searches find it ('' forgets it); [VisionAnswer.kept] says which.
   Future<VisionAnswer> visionKeep(int fileId, String text);
+
+  // ---- notifications: the bell (an older engine has none: an empty list, never an error) ----
+  /// Everything kept, newest first, with the unread count.
+  Future<NotificationList> notificationsList();
+
+  /// Mark [ids] read, or all of them; the engine's unread count after it.
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false});
+
+  /// The panel's Clear: every notification goes.
+  Future<ActionResult> notificationsClear();
 
   void dispose();
 }
