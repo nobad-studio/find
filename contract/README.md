@@ -132,7 +132,11 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   state: off|running|waiting|done, done, total|null, rate, eta_s|null}]`), `models` (cards: `[{id:
   meaning|photo|ocr, name, license, size_mb, on_disk, loaded, memory_mb|null, device, items, download:
   null|{got_mb, size_mb, mb_s}}]`), `activity` (newest first, at most 50: `[{t, kind, text}]`). Other keys may
-  appear (indexer details); ignore them.
+  appear (indexer details); ignore them. It answers at once (1.1.1): the index totals (`with_text chunks
+  vectors name_vectors photo_vectors`) are counted in the background, one count at a time; until the first count
+  is in, `counting_totals` is `true` and they are the indexer's own running numbers or `0` (the Index page says
+  "Counting…" for them); `files` is the indexer's live count, and `db_bytes` is always current.
+  An engine before 1.1.1 sends no `counting_totals`.
 - **`pause_for`** `{seconds: int ≥ 1}` → `Ok`: pause indexing (at most 24 hours; less than 1 is `-32602`).
 - **`resume`** `{}` → `Ok`: end a pause now.
 - **`learned_apps`** `{}` → `{apps: [{exe, seen: int, lag_events: int, worst_cpu: number|null, worst_gpu:

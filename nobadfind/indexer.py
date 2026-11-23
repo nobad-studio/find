@@ -17,7 +17,7 @@ import numpy as np
 
 from . import embed, extract, models, ocr, photo, scope, winapi
 from .governor import FULL, PAUSED, workers_for
-from .const import APP_SECRET_FILES, SECRET_FILES_IN
+from .const import APP_SECRET_FILES, COUNT_SHARE, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
 from .log import log
 from .walker import Walker
@@ -141,6 +141,7 @@ class Indexer:
         self._pause = (0.0, "")          # (checked at, reason): the checks cost a registry walk
         self._watched = None             # roots the live watcher covers
         self._stats_at = None            # when _refresh_stats last counted the index
+        self._stats_took = 0.0           # and how long that count took
         self.turbo = None                # turbo.Turbo (engine.py): the optional elevated NTFS reader, or None
         self._walked = {}                # removable root -> when it was last walked
         self.drive_list = []
@@ -512,14 +513,17 @@ class Indexer:
         return False
 
     def _refresh_stats(self):
-        """The index counts for the status (six COUNTs over every row: about a second at a million entries), at
-        most every STATS_EVERY seconds. Changes arriving all the time (a whole PC with caches) must not make the
-        watching loop count the whole index each round."""
+        """The index counts for the status (six COUNTs over every row: about 10 s on a 950,000-file, 10 GB
+        encrypted index, measured 2026-11-23), at most every STATS_EVERY seconds or COUNT_SHARE times as long as
+        the last count took, whichever is longer (1.1.1: every 30 s stalled the watching loop a third of the time).
+        Changes arriving all the time (a whole PC with caches) must not make the watching loop count the whole
+        index each round."""
         now = self._clock()
-        if self._stats_at is not None and now - self._stats_at < STATS_EVERY:
+        if self._stats_at is not None and now - self._stats_at < max(STATS_EVERY, COUNT_SHARE * self._stats_took):
             return
         self._stats_at = now
         self.status.update(self.store.stats())
+        self._stats_took = self._clock() - now
 
     def _removable_roots(self, roots):
         rem = {d["root"].lower() for d in winapi.drives() if d["type"] == "removable"}

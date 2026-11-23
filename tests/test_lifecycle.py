@@ -74,24 +74,28 @@ def test_release_models_releases_now():
     assert released == [("meaning", 0), ("photo text", 0)]
 
 
-needs_model = pytest.mark.skipif(not embed.model_ready(), reason="meaning model not downloaded")
+# These two read the model installed on the maintainer's PC (read only): off unless NOBAD_FIND_REAL_MODEL=1, so a
+# run gives the same result on every machine and nothing in the suite reads the real data folder by accident.
+REAL_MODEL = os.path.join(os.environ.get("LOCALAPPDATA") or "", "NOBAD", "Find", "model")
+needs_model = pytest.mark.skipif(not (os.environ.get("NOBAD_FIND_REAL_MODEL") == "1" and embed.model_ready(REAL_MODEL)),
+                                 reason="real meaning model: set NOBAD_FIND_REAL_MODEL=1 with it downloaded")
 
 
 @needs_model
 def test_meaning_worker_matches_in_process():
     texts = ["contract: The tenant pays the rent", "goa beach sunset", "electricity bill march", "x"]
     with cf.ProcessPoolExecutor(max_workers=1, initializer=embed.init_meaning_worker,
-                                initargs=(embed.MODEL_DIR, 2, False)) as pool:
+                                initargs=(REAL_MODEL, 2, False)) as pool:
         data = pool.submit(embed.encode_job, texts).result(timeout=120)
     assert isinstance(data, bytes)
     got = np.frombuffer(data, np.float32).reshape(len(texts), embed.MODEL_DIM)
-    want = embed.Embedder(gpu=False).encode(texts)
+    want = embed.Embedder(REAL_MODEL, gpu=False).encode(texts)
     assert np.allclose(got, want, atol=1e-5)
 
 
 @needs_model
 def test_embedder_gpu_false_uses_cpu_only():
-    e = embed.Embedder(gpu=False)
+    e = embed.Embedder(REAL_MODEL, gpu=False)
     assert e.device == "CPU"
     assert e.sess.get_providers() == ["CPUExecutionProvider"]
 
