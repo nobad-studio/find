@@ -11,7 +11,9 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
+from . import hardware as _hw
 from . import jobs as _jobs
+from .const import CREATIVE_APPS
 from . import winapi
 from .log import log
 
@@ -31,6 +33,21 @@ LIMITS = {
     "IDLE_AFTER": 120,
     "IDLE_CPU_MAX": 50,
     "LAG_FIND_CORES": 0.5,   # NOBAD Find counts as working (so a lag may be learned) from half a core
+    # 2026-11-21, the combined state of Windows. Each rule turns on after ON_FOR seconds of its condition and off
+    # only after its clear condition held OFF_FOR seconds and it was on for at least RULE_HOLD (no flapping).
+    "HIGH_COMMIT": 85,       # commit charge (% of the commit limit) where the models go, then Light, then Paused
+    "COMMIT_CLEAR": 80,
+    "COMMIT_LIGHT_AFTER": 20,    # seconds of high commit (after the models were let go) before Light
+    "COMMIT_PAUSE_AFTER": 60,    # ... and before Paused
+    "DISK_SLOW_MS": 50,      # average ms per transfer on the indexed drives: the walk and the readers slow down
+    "DISK_BUSY": 90,         # ... or the disk busy this % of the time
+    "DISK_CLEAR_MS": 20,
+    "DISK_CLEAR_BUSY": 60,
+    "THERMAL_LIMIT": 90,     # Windows holds the processor below this % of its speed (passive cooling): one level down
+    "THERMAL_CLEAR": 99,
+    "ON_FOR": 4,             # seconds a measured condition must hold to turn its rule on
+    "OFF_FOR": 10,           # seconds its clear condition must hold to turn it off
+    "RULE_HOLD": 30,         # the least time a rule stays on once it turned on
 }
 
 _EASING = {
@@ -57,12 +74,62 @@ class Sample:
     call: bool
     idle_s: float
     foreground_is_self: bool = False     # the window in front is NOBAD Find's own (main window or bar)
+    # 2026-11-21: None = unknown, never "bad"
+    commit_pct: float | None = None      # commit charge, % of the commit limit (winapi.commit_status)
+    commit_free_mb: int | None = None    # what Windows can still promise
+    disk_busy: float | None = None       # % of the time the indexed drives' disks are busy (winapi.DiskSampler)
+    disk_ms: float | None = None         # average ms per transfer there
+    battery_saver: bool | None = None    # Windows' battery saver (winapi.battery_saver)
+    thermal: float | None = None         # lowest thermal-zone passive limit, % (100 = no throttling)
+    gpu_mem: dict | None = None          # hardware.gpu_memory_free: {"kind", "free_mb", "used_mb", "budget_mb"}
 
 
 @dataclass
 class Decision:
     level: str
     reason: str
+    gpu: bool = True             # graphics-card work allowed (no: battery saver, a creative app in front)
+    io_slow: bool = False        # the disk is slow: the names walk and the readers slow down (not the meaning step)
+    release_models: bool = False     # let go of the models now (high commit; once per episode)
+
+
+class _Latch:
+    """A rule's on/off state with hysteresis: on after its condition held `on_for` seconds; off only after its
+    clear condition held `off_for` seconds and it has been on `hold` seconds. Anything else keeps the state. Time
+    only from the samples."""
+
+    def __init__(self, on_for=None, off_for=None, hold=None):
+        self.on_for = LIMITS["ON_FOR"] if on_for is None else on_for
+        self.off_for = LIMITS["OFF_FOR"] if off_for is None else off_for
+        self.hold = LIMITS["RULE_HOLD"] if hold is None else hold
+        self.on = False
+        self.since = None            # when it turned on
+        self._want_since = None      # when the condition (off) or the clear condition (on) started holding
+
+    def update(self, t, cond, clear):
+        if not self.on:
+            if not cond:
+                self._want_since = None
+            else:
+                if self._want_since is None:
+                    self._want_since = t
+                if t - self._want_since >= self.on_for:
+                    self.on, self.since, self._want_since = True, t, None
+                    return True              # turned on now
+            return False
+        if not clear:
+            self._want_since = None
+        else:
+            if self._want_since is None:
+                self._want_since = t
+            if t - self._want_since >= self.off_for and t - self.since >= self.hold:
+                self.on, self.since, self._want_since = False, None, None
+        return False
+
+
+def _app_listed(exe, names):
+    exe = (exe or "").lower()
+    return bool(exe) and any(exe == (n or "").lower() for n in (names or ()))
 
 
 def workers_for(level, plan):
@@ -73,6 +140,58 @@ def workers_for(level, plan):
     if level == LIGHT:
         return 1
     return 0
+
+
+# Per-operation concurrency (2026-11-21), the one place these limits live: for each operation
+# effective = min(user, cpu, memory, governor) (vision: and the graphics card), recomputed every governor tick
+# (Governor.limits). OP_MB: the memory one more stream of it needs, so free RAM bounds how many run at once.
+OPS = ("walk", "readers", "photo", "vision")
+OP_MB = {"walk": 16, "readers": 300, "photo": 100, "vision": 1500}
+WALK_SLOW_SHARE = 4      # a slow disk (or Light): a quarter of the walk threads
+VISION_GPU_MB = 1024     # free graphics memory one vision stream needs; at most one stream per graphics card
+
+
+def _fallback_plan(cpu):
+    return {"cpu": cpu, "walk_threads": min(32, cpu * 2), "text_workers": max(1, min(8, cpu - 2)),
+            "text_workers_idle": max(1, min(16, cpu - 1)), "model_threads": max(1, cpu // 2)}
+
+
+def op_limits(level, plan, s=None, d=None, settings=None, cpu_count=None):
+    """{op: {"user", "cpu", "memory", "governor", ["gpu",] "effective", "by"}} for the names walk, the text
+    readers, the photo step (threads of the one photo worker) and the future vision step. "by" names the factor
+    that set the effective number. Unknown free memory (None or 0) doesn't limit anything."""
+    cpu = int((plan or {}).get("cpu") or cpu_count or os.cpu_count() or 1)
+    plan = dict(_fallback_plan(cpu), **{k: v for k, v in (plan or {}).items() if v})
+    free = getattr(s, "free_mb", None) or None
+    spare = None if free is None else max(0, free - LIMITS["LOW_FREE_MB"])
+    io_slow, gpu_ok = bool(getattr(d, "io_slow", False)), bool(getattr(d, "gpu", True))
+    get = settings.get if settings is not None else (lambda k: None)
+
+    def mem(op, user):
+        return user if spare is None else min(user, spare // OP_MB[op])
+
+    out = {}
+    walk = int(plan["walk_threads"])
+    gov = {FULL: walk, GENTLE: walk, LIGHT: max(1, walk // WALK_SLOW_SHARE), PAUSED: 0}[level]
+    if io_slow:
+        gov = min(gov, max(1, walk // WALK_SLOW_SHARE))
+    out["walk"] = {"user": walk, "cpu": cpu * 4, "memory": mem("walk", walk), "governor": gov}
+    readers = int(get("workers") or plan["text_workers_idle"])
+    gov = workers_for(level, plan)
+    if io_slow and gov:
+        gov = max(1, gov // 2)
+    out["readers"] = {"user": readers, "cpu": max(1, cpu - 1), "memory": mem("readers", readers), "governor": gov}
+    photo = int(plan["model_threads"]) if get("photo_meaning") is not False else 0
+    out["photo"] = {"user": photo, "cpu": max(1, cpu // 2), "memory": mem("photo", photo),
+                    "governor": 0 if level == PAUSED else max(1, workers_for(level, plan))}
+    gm = getattr(s, "gpu_mem", None)
+    gpu = 1 if gpu_ok and (gm is None or gm.get("free_mb", 0) >= VISION_GPU_MB) else 0
+    out["vision"] = {"user": 1, "cpu": 1, "memory": mem("vision", 1), "governor": 1 if level in (FULL, GENTLE) else 0,
+                     "gpu": gpu}
+    for row in out.values():
+        by = min(row, key=lambda k: row[k])         # first smallest in order: user, cpu, memory, governor, gpu
+        row["effective"], row["by"] = max(0, int(row[by])), by
+    return out
 
 
 def _app(exe, unknown="an app"):
@@ -97,12 +216,56 @@ class Brain:
         self._hot_since = None   # when CPU/GPU became continuously hot
         self._lag_recorded = False  # this lag episode already sent to record_lag
         self.fixed = None        # a level pinned for a measurement (engine.measure_overrides, dev only)
+        self.commit = _Latch()                                   # Windows close to its commit limit
+        self.disk = _Latch()                                     # the indexed drives' disk is slow
+        self.saver = _Latch(on_for=0)                            # battery saver: at once, off after OFF_FOR
+        self.thermal = _Latch(off_for=60)                        # held back by heat; it cools slowly
+        self.creative = _Latch(on_for=0)                         # a heavy creative app in front
+        self._creative_exe = ""
+
+    def _creative_apps(self):
+        names = self.settings.get("creative_apps")
+        return CREATIVE_APPS if names is None else names
+
+    def _sense_rules(self, s):
+        """Every 2026-11-21 rule's latch from this sample; True when high commit started now (let go of models)."""
+        L = LIMITS
+        started = self.commit.update(s.t, s.commit_pct is not None and s.commit_pct >= L["HIGH_COMMIT"],
+                                     s.commit_pct is None or s.commit_pct < L["COMMIT_CLEAR"])
+        self.disk.update(s.t, (s.disk_ms is not None and s.disk_ms >= L["DISK_SLOW_MS"])
+                         or (s.disk_busy is not None and s.disk_busy >= L["DISK_BUSY"]),
+                         (s.disk_ms is None or s.disk_ms < L["DISK_CLEAR_MS"])
+                         and (s.disk_busy is None or s.disk_busy < L["DISK_CLEAR_BUSY"]))
+        self.saver.update(s.t, s.battery_saver is True, s.battery_saver is not True)
+        self.thermal.update(s.t, s.thermal is not None and s.thermal < L["THERMAL_LIMIT"],
+                            s.thermal is None or s.thermal >= L["THERMAL_CLEAR"])
+        front = _app_listed(s.foreground, self._creative_apps()) and not s.foreground_is_self
+        self.creative.update(s.t, front, not front)
+        if self.creative.on and front:
+            self._creative_exe = s.foreground
+        return started
+
+    def _commit_stage(self, t):
+        """0 = models let go, 1 = Light, 2 = Paused; None when commit isn't high."""
+        if not self.commit.on:
+            return None
+        held = t - self.commit.since
+        return 2 if held >= LIMITS["COMMIT_PAUSE_AFTER"] else 1 if held >= LIMITS["COMMIT_LIGHT_AFTER"] else 0
+
+    def _wanted(self, s):
+        level, reason = self._wanted_base(s)
+        if self.thermal.on and level != PAUSED:
+            lower = ORDER[ORDER.index(level) - 1]
+            held = f" to {round(s.thermal)}% of its speed" if s.thermal is not None else ""
+            return lower, (f"{_prefix(lower)}: Windows is holding the processor back{held} to cool it, "
+                           "so NOBAD Find works one level lower")
+        return level, reason
 
     def _games_mode(self):
         mode = self.settings.get("games_mode")
         return mode if mode in ("always", "smart", "off") else "smart"
 
-    def _wanted(self, s):
+    def _wanted_base(self, s):
         """The level the sensors allow right now, with its reason. CPU is what the other apps use: Find's own
         work must not count as you using the PC (Full would never hold while you're away)."""
         others = None if s.cpu is None else max(0.0, s.cpu - (s.find_cpu or 0.0))
@@ -147,11 +310,21 @@ class Brain:
                 self._lag_recorded = True
             return PAUSED, lag
         self._lag_recorded = False
+        stage = self._commit_stage(s.t)
+        commit = f"{round(s.commit_pct)}%" if s.commit_pct is not None else "high"
+        if stage == 2:
+            return PAUSED, (f"Paused: Windows is close to the memory it can promise programs (commit {commit}) "
+                            "for a minute")
         boost = self.settings.get("power") == "boost"
         if net and boost and s.free_mb < LIMITS["TIGHT_FREE_MB"]:
             return LIGHT, f"Light: memory is getting tight ({s.free_mb} MB free), so NOBAD Find uses 1 worker"
         if net and hot and boost:
             return GENTLE, "Gentle: other apps need the processor, so Boost steps down"
+        if stage == 1:
+            return LIGHT, (f"Light: Windows is close to the memory it can promise programs (commit {commit}), "
+                           "so NOBAD Find let go of its models and uses 1 worker")
+        if self.saver.on:
+            return LIGHT, "Light: battery saver is on, so NOBAD Find uses 1 worker and not the graphics card"
 
         if s.game:
             mode = self._games_mode()
@@ -164,6 +337,9 @@ class Brain:
                                      f"make room for {_app(s.foreground, 'a game')}")
                 return LIGHT, (f"Light: {_app(s.foreground, 'a game')} is running, "
                                "so NOBAD Find uses 1 worker")
+        if self.creative.on:
+            return LIGHT, (f"Light: {_app(self._creative_exe, 'a creative app')} is in front, so NOBAD Find uses "
+                           "1 worker and leaves the graphics card to it")
         if (s.idle_s >= LIMITS["IDLE_AFTER"] and others is not None
                 and others < LIMITS["IDLE_CPU_MAX"]):
             return FULL, "Boost: every thread" if boost else "Full: you're away"
@@ -175,6 +351,22 @@ class Brain:
         if self.fixed in ORDER:
             self._level = self.fixed
             return Decision(self.fixed, f"{_prefix(self.fixed)}: fixed for a measurement")
+        release = self._sense_rules(s)
+        d = self._step(s)
+        d.release_models = release
+        d.gpu = not (self.saver.on or self.creative.on)
+        d.io_slow = self.disk.on
+        if d.io_slow and d.level != PAUSED:
+            if s.disk_ms is not None and s.disk_ms >= LIMITS["DISK_CLEAR_MS"]:
+                how = f"{round(s.disk_ms)} ms a transfer"
+            elif s.disk_busy is not None:
+                how = f"busy {round(s.disk_busy)}% of the time"
+            else:
+                how = "busy"
+            d.reason += f"; the disk is slow ({how}), so the file walk and the readers slow down"
+        return d
+
+    def _step(self, s):
         wanted, reason = self._wanted(s)
         if self._level is None:
             self._level = wanted
@@ -230,7 +422,7 @@ class _SafeApps:
 
 class Governor(threading.Thread):
     def __init__(self, settings, apps, activity, sense=None, every=2.0, jobs=None, watchdog=None,
-                 release_idle=None, eco=None):
+                 release_idle=None, eco=None, release_models=None, plan=None, drives=None):
         super().__init__(daemon=True, name="governor")
         self.settings, self.activity = settings, activity
         self.apps = _SafeApps(apps)                 # a store error must never stop the governor
@@ -239,8 +431,12 @@ class Governor(threading.Thread):
         self.jobs = _jobs if jobs is None else jobs
         self.watchdog = watchdog
         self.release_idle = release_idle            # models idle for a few minutes leave memory (window closed too)
+        self.release_models = release_models        # high commit: every model out of memory now (indexer.release_models)
+        self._plan = plan                           # the indexer's plan (threads per operation), for self.limits
+        self._drives = drives                       # the drives the index is on, for the disk sensor
         self.decision = Decision(GENTLE, "Gentle: starting up")
-        self.sample = None                          # the last Sample (None before the first tick)
+        self.sample = None                          # the last Sample (talk and capability.assess read it)
+        self.limits = op_limits(GENTLE, None, None, None, settings)     # per-operation concurrency, every tick
         self._history = deque(maxlen=HISTORY)
         self._stop_ev = threading.Event()
         self._applied = None
@@ -248,6 +444,8 @@ class Governor(threading.Thread):
         self._usage = {"cpu_seconds": 0.0, "memory_mb": 0}
         self._sense = sense or self._real_sense
         self._cpu, self._gpu = None, None
+        self._disk = self._therm = self._gmem = None
+        self._slow2 = (0.0, None, None)          # (checked at, battery saver, thermal)
         self._slow = (0.0, False, False)         # (checked at, on battery, in call)
         self._last_cpu_s = None                  # (wall time, Find's CPU seconds)
         self._eco = eco if eco is not None else (lambda on, pid, job=None: winapi.eco_qos(on, pid=pid, job=job))
@@ -302,6 +500,12 @@ class Governor(threading.Thread):
             self.activity.add("level", d.reason)
         self.decision = d
         try:
+            self.limits = op_limits(d.level, self._plan() if self._plan is not None else None, s, d, self.settings)
+        except Exception as e:
+            log(f"governor could not work out the limits: {type(e).__name__}", "warn")
+        if d.release_models:
+            self._let_models_go(s)
+        try:
             self._eco_workers(d.level)
         except Exception as e:
             log(f"governor could not set efficiency mode: {type(e).__name__}", "warn")
@@ -320,6 +524,19 @@ class Governor(threading.Thread):
         except Exception as e:
             log(f"releasing idle models failed: {type(e).__name__}", "warn")
         return d
+
+    def _let_models_go(self, s):
+        """High commit: the models leave memory now (the watchdog's release path), once per episode."""
+        if self.release_models is None:
+            return
+        try:
+            self.release_models()
+        except Exception as e:
+            log(f"releasing models failed: {type(e).__name__}", "warn")
+            return
+        commit = f" ({round(s.commit_pct)}%)" if s.commit_pct is not None else ""
+        self.activity.add("model", f"Windows is close to the memory it can promise programs{commit}, so NOBAD Find "
+                                   "let go of its search models")
 
     def _eco_workers(self, level):
         """Efficiency mode (EcoQoS) for Find's worker processes at Light and Paused (a game, a call, a busy PC):
@@ -369,12 +586,28 @@ class Governor(threading.Thread):
         now = time.time()
         if now - self._slow[0] >= SLOW_SENSE_EVERY:
             self._slow = (now, winapi.on_battery(), winapi.in_call())
+        if self._disk is None:
+            self._disk, self._therm = winapi.DiskSampler(), winapi.ThermalSampler()
+            self._gmem = winapi.GpuMemorySampler()
+        if now - self._slow2[0] >= SLOW_SENSE_EVERY:
+            self._slow2 = (now, winapi.battery_saver(), self._therm.read())
         load, free = winapi.memory_status()
+        commit, commit_free = winapi.commit_status()
+        busy, ms = self._disk.read(self._drive_letters())
         return Sample(t=now, cpu=self._cpu.percent(), gpu=self._gpu.percent(), mem_load=load, free_mb=free,
                       find_cpu=self._find_cpu(now), foreground=winapi.foreground_exe(),
                       game=winapi.fullscreen_game(), presentation=winapi.presentation_mode(),
                       hung=winapi.foreground_hung(), battery=self._slow[1], call=self._slow[2],
-                      idle_s=winapi.idle_seconds(), foreground_is_self=self._front_is_self())
+                      idle_s=winapi.idle_seconds(), foreground_is_self=self._front_is_self(),
+                      commit_pct=commit, commit_free_mb=commit_free, disk_busy=busy, disk_ms=ms,
+                      battery_saver=self._slow2[1], thermal=self._slow2[2],
+                      gpu_mem=_hw.gpu_memory_free(_hw.adapter_memory(), self._gmem.read()))
+
+    def _drive_letters(self):
+        try:
+            return list(self._drives() or []) if self._drives is not None else []
+        except Exception:
+            return []
 
     @staticmethod
     def _front_is_self():

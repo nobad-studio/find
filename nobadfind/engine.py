@@ -148,8 +148,13 @@ def worker_hooks(pieces):
             "release_talk": on("api", lambda a: a.vision_stop("Stopped: NOBAD Find needed the memory."), False),
             "talk_mb": on("api", lambda a: a.vision_budget_mb(), 0),
             "recycle": on("indexer", lambda i: i.recycle_workers()),
+            # high commit (governor v2): every model leaves memory, the talk worker's first
+            "release_all": both(lambda a: a.vision_stop("Stopped: NOBAD Find needed the memory."),
+                                lambda i: i.release_models()),
             "release_idle": both(lambda a: a.vision_tick(), lambda i: i.release_idle_models()),
-            "names": both(lambda a: a.vision_pids(), lambda i: i.worker_names(), {})}
+            "names": both(lambda a: a.vision_pids(), lambda i: i.worker_names(), {}),
+            "plan": on("indexer", lambda i: i.status.get("plan")),
+            "drives": on("indexer", lambda i: [d["root"] for d in i.drive_list if d.get("present")], [])}
 
 
 def show_requests(base, show, stop, make=winapi.show_event, wait=winapi.wait_any, spawn=None):
@@ -481,7 +486,8 @@ def run(stop=None, open_ui=None, lock=None):
                                                          "release_talk")},
                         keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
-    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
+    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"],
+                        release_models=hooks["release_all"], plan=hooks["plan"], drives=hooks["drives"])
     measure = measure_overrides(os.environ)
     if measure["level"]:
         governor.brain.fixed = measure["level"]

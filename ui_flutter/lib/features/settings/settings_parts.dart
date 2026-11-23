@@ -173,6 +173,37 @@ class TextSetting extends StatelessWidget {
   }
 }
 
+/// A list of short names edited as one comma-separated line (`creative_apps`). The engine checks every name and
+/// drops what doesn't fit; the field then shows what it kept.
+class NamesSetting extends StatelessWidget {
+  const NamesSetting(this.k, this.label, this.help, {super.key});
+  final String k;
+  final String label;
+  final String help;
+
+  static List<String> split(String v) => [
+    for (final n in v.split(',')) if (n.trim().isNotEmpty) n.trim(),
+  ];
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
+    final s = AppScope.of(context).settings;
+    return SettingRow(
+      label: label,
+      help: help,
+      below: NbField(
+        label: label,
+        width: double.infinity,
+        value: s.settings.list(k).join(', '),
+        onSubmit: (v) => s.set(k, split(v)),
+      ),
+    );
+  }
+}
+
 class FoldersSetting extends StatelessWidget {
   const FoldersSetting(this.k, this.label, this.help, {super.key});
   final String k;

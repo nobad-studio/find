@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' show TextField;
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/status.dart';
 import 'package:nobad_find/widgets/controls.dart';
 
 import '../support/fake_engine.dart';
@@ -39,6 +40,22 @@ void main() {
       await tester.tap(find.text('Resume'));
       await tester.pumpAndSettle();
       expect(find.text('Working gently'), findsOneWidget);
+    });
+
+    testWidgets('2026-11-21: how many of each operation run at once now, and what set it', (tester) async {
+      final engine = FakeEngine()
+        ..limits = const OpLimits(
+          walk: OpLimit(8, 'governor'),
+          readers: OpLimit(2, 'memory'),
+          photo: OpLimit(4, 'cpu'),
+          vision: OpLimit(0, 'gpu'),
+        );
+      await pumpApp(tester, engine, size: const Size(1080, 2600));
+      await ctrl(tester, LogicalKeyboardKey.digit2);
+      expect(find.text('Running at once now'), findsOneWidget);
+      expect(find.text('Text readers · set by free memory'), findsOneWidget);
+      expect(find.text('File walk threads · set by the current level'), findsOneWidget);
+      expect(find.text('Vision streams · set by the graphics card'), findsOneWidget);
     });
 
     testWidgets('watches status_full only while open; there is no light theme to pick (0.8.5 is dark only)', (tester) async {

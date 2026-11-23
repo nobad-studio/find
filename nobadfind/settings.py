@@ -15,6 +15,24 @@ SCOPES = ("whole_pc", "my_files", "custom")
 MAX_PATHS = 5000
 
 
+_EXE = re.compile(r"^[a-z0-9][a-z0-9 ._()+-]{0,59}\.exe$")
+
+
+def _exe_names(v, default):
+    """A list of program file names ("blender.exe"): lower case, no folders, at most CREATIVE_MAX; [] is allowed
+    (no creative apps). Anything else is the default."""
+    from .const import CREATIVE_MAX
+    if not isinstance(v, list):
+        return list(default)
+    out = []
+    for n in v[:CREATIVE_MAX]:
+        if isinstance(n, str):
+            n = n.strip().lower()
+            if _EXE.match(n):
+                out.append(n)
+    return list(dict.fromkeys(out))
+
+
 def _paths(v):
     if not isinstance(v, list):
         return []
@@ -30,6 +48,8 @@ def coerce(key, value):
     d = DEFAULTS[key]
     if key in ("roots", "exclude"):
         return _paths(value)
+    if key == "creative_apps":
+        return _exe_names(value, d)
     if key == "content_max_mb":
         try:
             return max(1, min(500, int(value)))

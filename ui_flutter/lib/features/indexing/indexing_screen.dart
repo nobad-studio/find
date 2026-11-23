@@ -237,6 +237,21 @@ class _IndexingScreenState extends State<IndexingScreen> {
               value: d.plan?.ssd == null ? '–' : (d.plan!.ssd! ? 'SSD' : 'Hard disk'), label: 'Drive type'),
         ],
       ),
+      if (d.limits != null) ...[
+        const SectionTitle('Running at once now'),
+        TileGrid(
+          min: 200,
+          children: [
+            for (final (name, l) in [
+              ('File walk threads', d.limits!.walk),
+              ('Text readers', d.limits!.readers),
+              ('Photo threads', d.limits!.photo),
+              ('Vision streams', d.limits!.vision),
+            ])
+              NbStat(hue: NbHue.use, glyph: NbGlyph.sliders, value: '${l.effective}', label: '$name · ${l.byLabel}'),
+          ],
+        ),
+      ],
       const SectionTitle('Folders being searched'),
       _PlainList([for (final r in d.roots) (r, '')]),
       const SectionTitle('Drives'),

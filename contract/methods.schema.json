@@ -752,6 +752,15 @@
         "$ref": "#/$defs/models"
       }
     },
+    "capability_state": {
+      "description": "Settings -> Models \"Your PC, now\": which models this PC can run RIGHT NOW (capability.assess), from the governor's last reading of free memory, commit, graphics memory, CPU/GPU load, battery and battery saver, not from the installed memory alone. can_run/why/device have one key per model id of the catalog. Ask again while the page is open (a reading every 2 s); before the governor's first reading budget.live is false and only the installed facts decide.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/capability_state"
+      }
+    },
     "model_use": {
       "description": "Choose the model for a feature (it turns the feature on). Not downloaded yet: it is chosen, needs_download is true and it is used once downloaded. A switched text model rebuilds the meaning vectors in the background (status_full phase rebuild); the old ones stay in use until then.",
       "params": {
@@ -2223,6 +2232,9 @@
         "reason": {
           "type": "string"
         },
+        "limits": {
+          "$ref": "#/$defs/op_limits"
+        },
         "history": {
           "type": "array",
           "items": {
@@ -2284,7 +2296,8 @@
         "resources",
         "phases",
         "models",
-        "activity"
+        "activity",
+        "limits"
       ],
       "additionalProperties": true
     },
@@ -2842,6 +2855,14 @@
         },
         "update_check": {
           "type": "boolean"
+        },
+        "creative_apps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9 ._()+-]{0,59}\\.exe$"
+          },
+          "description": "Program file names (lower case, like \"blender.exe\") of heavy creative apps: while one is in front NOBAD Find works at Light and leaves the graphics card alone. [] = none."
         }
       },
       "required": [
@@ -2889,7 +2910,8 @@
         "search_history",
         "settings_rev",
         "models_stay_loaded",
-        "update_check"
+        "update_check",
+        "creative_apps"
       ],
       "additionalProperties": false
     },
@@ -3048,6 +3070,14 @@
         },
         "update_check": {
           "type": "boolean"
+        },
+        "creative_apps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 260
+          },
+          "description": "Program file names of heavy creative apps (\"blender.exe\"). The engine lower-cases them and drops anything that isn't a plain program file name (a folder, a path); at most 100. [] = none."
         }
       },
       "additionalProperties": false
@@ -3727,6 +3757,203 @@
           "file_id": 7
         }
       ]
+    },
+    "capability_state": {
+      "type": "object",
+      "properties": {
+        "can_run": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "why": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One plain sentence per model: why it can't run now, or what it fits in."
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "gpu",
+              "cpu"
+            ]
+          }
+        },
+        "budget": {
+          "type": "object",
+          "description": "The live numbers behind it; null = unknown right now (never counted against a model).",
+          "properties": {
+            "live": {
+              "type": "boolean"
+            },
+            "installed_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "free_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reserve_mb": {
+              "type": "integer"
+            },
+            "usable_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "commit_pct": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "commit_free_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "gpu_kind": {
+              "enum": [
+                "dedicated",
+                "shared",
+                null
+              ]
+            },
+            "gpu_free_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "gpu_budget_mb": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cpu": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "gpu": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "battery": {
+              "type": "boolean"
+            },
+            "battery_saver": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "live",
+            "installed_mb",
+            "free_mb",
+            "reserve_mb",
+            "usable_mb",
+            "commit_pct",
+            "commit_free_mb",
+            "gpu_kind",
+            "gpu_free_mb",
+            "gpu_budget_mb",
+            "cpu",
+            "gpu",
+            "battery",
+            "battery_saver"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "can_run",
+        "why",
+        "device",
+        "budget"
+      ],
+      "additionalProperties": false
+    },
+    "op_limit": {
+      "type": "object",
+      "properties": {
+        "effective": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "user": {
+          "type": "integer"
+        },
+        "cpu": {
+          "type": "integer"
+        },
+        "memory": {
+          "type": "integer"
+        },
+        "governor": {
+          "type": "integer"
+        },
+        "gpu": {
+          "type": "integer"
+        },
+        "by": {
+          "enum": [
+            "user",
+            "cpu",
+            "memory",
+            "governor",
+            "gpu"
+          ]
+        }
+      },
+      "required": [
+        "effective",
+        "user",
+        "cpu",
+        "memory",
+        "governor",
+        "by"
+      ],
+      "additionalProperties": false
+    },
+    "op_limits": {
+      "type": "object",
+      "description": "How many of each operation may run at once now (governor.op_limits, every 2 s): effective = the smallest of what you set (user), the processor, free memory and the governor's level (vision: and the graphics card); by = which one set it. walk = names-walk threads, readers = text readers, photo = threads of the photo worker, vision = the future vision step (at most 1).",
+      "properties": {
+        "walk": {
+          "$ref": "#/$defs/op_limit"
+        },
+        "readers": {
+          "$ref": "#/$defs/op_limit"
+        },
+        "photo": {
+          "$ref": "#/$defs/op_limit"
+        },
+        "vision": {
+          "$ref": "#/$defs/op_limit"
+        }
+      },
+      "required": [
+        "walk",
+        "readers",
+        "photo",
+        "vision"
+      ],
+      "additionalProperties": false
     }
   }
 }

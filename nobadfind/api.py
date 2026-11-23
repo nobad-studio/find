@@ -11,7 +11,8 @@ import threading
 import time
 from collections import deque
 
-from . import embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import capability, embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import governor as governor_mod
 from . import hardware as hw
 from .const import APP_VER
 from .indexer import NAME_KINDS
@@ -412,6 +413,9 @@ class Api:
             st["history"] = gov.history
         else:
             st["level"], st["reason"], st["history"] = st.get("level", ""), st.get("reason", ""), []
+        limits = getattr(gov, "limits", None)
+        st["limits"] = limits if limits else governor_mod.op_limits(
+            st["level"] if st["level"] in governor_mod.ORDER else governor_mod.GENTLE, st.get("plan"))
         history = st["history"]
         st["resources"] = self._resources(now, history[-1].get("gpu") if history else None)
         st["phases"] = self._phases(now, st)
@@ -626,6 +630,12 @@ class Api:
     def hardware(self):
         return hw.scan()
 
+    def capability_state(self):
+        """Settings -> Models "Your PC, now": what this PC can run right now (capability.assess) from the
+        governor's last reading. measured: per-model numbers from this PC (an in-app benchmark, later)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}))
+
     def get_settings(self):
         return self._settings.all()
 
@@ -663,7 +673,7 @@ class Api:
             self._indexer.wake.set()
         if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
             self._indexer.replan()                     # 0.9.3: the new workers now, no restart
-        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call"}:
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call", "creative_apps"}:
             g = getattr(self._indexer, "governor", None)
             if g is not None and hasattr(g, "now"):
                 g.now()
@@ -1140,7 +1150,8 @@ class Api:
         m = talk[1] if deeper and len(talk) > 1 else talk[0]
         gov = self._governor
         sample = getattr(gov, "sample", None)
-        ok, why = talk_assess(m, sample, hw.scan()) if deeper else talk_fits(m, sample)
+        pc = hw.scan()
+        ok, why = talk_assess(m, sample, pc, models.talk_runtime(pc, self._mdir()))
         return (m, "") if ok else (None, why or f"Not now: {m['name']} can't run on this PC right now.")
 
     def _vision_job(self, op, ids, question, deeper):
@@ -1255,14 +1266,15 @@ class Api:
 
     def vision_state(self):
         d = self._mdir()
-        rid = models.talk_runtime(hw.scan(), d)          # the one a question would use (or ask to download)
+        pc = hw.scan()
+        rid = models.talk_runtime(pc, d)                 # the one a question would use (or ask to download)
         sample = getattr(self._governor, "sample", None)
         # the talk worker runs in the worker group under the level's CPU cap (and efficiency mode at Light): the
         # seconds are the ones measured at that level (docs/measurements.md, tools/measure_talk.py)
         level = getattr(getattr(self._governor, "decision", None), "level", None) or "full"
         out = []
         for i, m in enumerate(models.talk_models()):
-            ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
+            ok, why = talk_assess(m, sample, pc, rid)
             load_s, answer_s = models.talk_timing(m, rid, level)    # measured: this runtime, this level
             out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
                         "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
@@ -1468,38 +1480,18 @@ class Api:
 
 MAX_READ_TEXT = 4000             # characters of a photo's read text (OCR) shown first for a question about writing
 MAX_KEPT = 2000                  # characters of a kept description
-TALK_MARGIN_MB, TALK_MARGIN_SHARE = 256, 0.25       # as capability.MARGIN_MB / MARGIN_SHARE (PR #16)
 
 
-def talk_fits(m, sample):
-    """(True, "") when the talk model's measured need (catalog ram_mb) plus the margin fits in free RAM now (the
-    governor's last sample, else Windows now); unknown free memory never refuses."""
-    free = getattr(sample, "free_mb", None) if sample is not None else None
-    if not free:
+def talk_assess(m, sample, pc, runtime):
+    """(can run now, why) for a talk model: capability.assess (the governor's last sample, the installed PC) with
+    the model's measured need on the runtime this PC uses (models.talk_need_mb: max(ram_mb, vram_mb) on Vulkan,
+    counted against system RAM, since shared graphics memory is never separate capacity; ram_mb on the processor).
+    Before the governor's first reading, free memory is Windows' now."""
+    if sample is None:
         free = winapi.memory_status()[1]
-    need = int(m.get("ram_mb") or 0)
-    if free and need + TALK_MARGIN_MB + TALK_MARGIN_SHARE * need > free:
-        short = m["name"].split()[0]
-        return False, (f"Not now: only {free / 1024:.1f} GB free, {short} needs about {need / 1024:.1f} GB "
-                       "plus margin")
-    return True, ""
-
-
-def talk_assess(m, sample, pc):
-    """(can run now, why) for the deeper talk model. capability.assess (PR #16) when it is there; until it merges,
-    this fallback: models.capable (the installed PC) and talk_fits (free memory now).
-    TEMPORARY (find 1.1 release fix, maintainer ruling): the fallback, talk_fits' use here and TALK_MARGIN_* go
-    when PR #16 merges; tests/test_vlm_progress.py::test_talk_assess_uses_capability_assess_when_the_module_is_there
-    proves the capability path is taken (and the fallback isn't) as soon as nobadfind.capability exists."""
-    try:
-        from . import capability
-    except ImportError:
-        capability = None
-    if capability is not None:
-        r = capability.assess(sample, pc, catalog=[m])
-        return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
-    ok, why = models.capable(m, pc)
-    return (ok, why) if not ok else talk_fits(m, sample)
+        sample = {"free_mb": free} if free else None
+    r = capability.assess(sample, pc, {m["id"]: {"ram_mb": models.talk_need_mb(m, runtime)}}, catalog=[m])
+    return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
 
 
 class DownloadRate:

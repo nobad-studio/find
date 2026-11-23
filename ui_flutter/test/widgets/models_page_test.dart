@@ -1,6 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nobad_find/engine/engine_api.dart' show RpcException;
+import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/models/models_info.dart';
+import 'package:nobad_find/engine/models/status.dart';
 import 'package:nobad_find/widgets/controls.dart';
 
 import '../support/fake_engine.dart';
@@ -196,4 +199,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.settingsSet.last, {'models_stay_loaded': true});
   });
+
+  testWidgets('2026-11-21: Your PC shows what is free right now, and a model that does not fit now says why', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    expect(engine.calls, contains('capability_state'));
+    expect(find.text('Right now'), findsOneWidget);
+    expect(find.text('2.1 GB'), findsOneWidget); // 2.2 GB free on the 15.7 GB demo PC
+    expect(find.text('Memory free of 15.7 GB, 1.5 GB kept for Windows'), findsOneWidget);
+    expect(find.text('Graphics memory free (shared with the PC)'), findsOneWidget); // Intel iGPU
+    expect(find.text('4 of 7'), findsOneWidget);
+    // multilingual-e5-small fits the installed PC, but not the memory free now
+    expect(find.textContaining('Not now: it needs about 544 MB'), findsWidgets);
+  });
+
+  testWidgets('2026-11-21: the live part follows the status beat (not every beat)', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    engine.capability = const CapabilityState(
+      canRun: {'gte-small': true},
+      budget: CapabilityBudget(live: true, freeMb: 9000, reserveMb: 1500),
+    );
+    for (var i = 0; i < 2; i++) {
+      engine.emit(const StatusEvent(EngineStatus(level: 'gentle', reason: 'Gentle: ok')));
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('8.8 GB'), findsNothing); // not on every beat
+    engine.emit(const StatusEvent(EngineStatus(level: 'gentle', reason: 'Gentle: ok')));
+    await tester.pumpAndSettle();
+    expect(find.text('8.8 GB'), findsOneWidget);
+  });
+
+  testWidgets('2026-11-21: an older engine (no capability_state): the page works, without the live part', (
+    tester,
+  ) async {
+    await openModels(tester, _NoCapability());
+    expect(find.text('Recommended for this PC: Balanced'), findsOneWidget);
+    expect(find.text('Right now'), findsNothing);
+  });
+}
+
+class _NoCapability extends FakeEngine {
+  @override
+  Future<CapabilityState> capabilityState() =>
+      Future.error(const RpcException(-32601, "This version of NOBAD Find's engine can't do that yet."));
 }

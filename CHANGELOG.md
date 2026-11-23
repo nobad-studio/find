@@ -1,5 +1,27 @@
 # NOBAD Find changelog
 
+## 1.2.0 · (in development)
+
+### Staying out of your way
+- NOBAD Find now reacts to more of what Windows is doing, not only to free memory. When Windows is close to the
+  memory it can promise programs (commit), it lets go of its search models first, then works with 1 worker, then
+  pauses if that lasts a minute. A slow or busy disk slows the file walk and the text readers (not the meaning
+  step). Battery saver, or a video, 3D or music app in front (Settings > Performance > Creative apps, a list you can
+  edit), means 1 worker and no graphics card. When Windows holds the processor back to cool it, NOBAD Find works one
+  level lower. Each rule waits a few seconds before it starts and stays on at least 30 seconds, so small swings
+  don't make it flap. Readings Windows can't give count as unknown, never as a problem.
+- Settings > Models > Your PC shows "Right now": the memory free, the commit, the graphics memory free and the
+  power, and each model says when it can't run now and why (for example: 3 GB free is not enough for a model that
+  needs 4 GB, even on a 16 GB PC).
+- The Index page shows how many file-walk threads, text readers, photo threads and vision streams may run at once
+  now, and what set each number (your setting, the processor, free memory, the current level, the graphics card).
+
+### Talk about a photo
+- Both talk models now use the same check as the search models ("Right now" in Settings > Models): free memory
+  after the 1.5 GB kept for Windows, Windows' commit, battery saver (both wait while it is on), the charger
+  (Qwen3-VL waits on battery) and other apps' use of the processor. On a graphics card the model's graphics need
+  counts against system memory too, if it is the bigger one.
+
 ## 1.1.0 · 2026-11-22
 
 ### Talk about a photo

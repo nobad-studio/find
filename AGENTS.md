@@ -148,9 +148,10 @@ Specific to this app:
   callbacks is capped per phase, tokens while answering, fixed bounds where llama.cpp has no callback); never
   turn the watchdog off or just raise a bound. Stop (and the engine's own stops) reach a load or an eval through
   those callbacks. While a job runs the worker's memory and I/O priority are normal (`winapi.worker_activity`),
-  low again when it ends; its CPU priority, the job and the CPU cap never change. **Temporary:** until PR #16
-  (`capability.assess`) merges, `api.talk_assess` falls back to `models.capable` + free RAM (`talk_fits`);
-  delete that fallback when it lands (`tests/test_vlm_progress.py` checks the capability path is taken).
+  low again when it ends; its CPU priority, the job and the CPU cap never change. Whether a talk model can run now
+  is `capability.assess` only (`api.talk_assess`), with its measured need on the runtime this PC uses
+  (`models.talk_need_mb`: on Vulkan max(ram_mb, vram_mb), counted against system RAM); no fallback
+  (`tests/test_vlm_progress.py::test_no_fallback_left`).
 - Typed network paths (\\server\share) are never looked up on disk (`search.folder_checker`): only folders already
   in the index or the folder list count, so typing one can't make Windows contact a server.
 - New setting: `const.DEFAULTS` + `settings.coerce` + a row on its Flutter Settings page

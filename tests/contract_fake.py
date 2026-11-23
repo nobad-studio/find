@@ -111,7 +111,11 @@ class FakeApi:
                 "paused": self.paused}
 
     def status(self):
-        return dict(STATUS_FULL, level=self.gov.level, reason=self.gov.reason, paused=self.paused)
+        from types import SimpleNamespace
+        from nobadfind import governor
+        limits = governor.op_limits(self.gov.level, STATUS_FULL["plan"], SimpleNamespace(free_mb=8000, gpu_mem=None),
+                                    None, self.settings)
+        return dict(STATUS_FULL, level=self.gov.level, reason=self.gov.reason, paused=self.paused, limits=limits)
 
     def downloads(self):
         return {k: dict(v) for k, v in self.dl.items()}
@@ -205,6 +209,12 @@ class FakeApi:
             return {"ok": False, "error": "Allow the photo model download in Settings first."}
         self.dl["photo"].update(state="downloading", got=0, size=0)
         return {"ok": True}
+
+    def capability_state(self):
+        """The real capability.assess over a fixed reading: 2.2 GB free on the 15.7 GB PC, so the bigger models
+        are "not now"."""
+        from nobadfind import capability
+        return capability.assess(CAPABILITY_SAMPLE, self.hardware(), {})
 
     # model tiers: the real catalog, a fixed PC, nothing downloaded unless the transcript downloads it
     def models(self):
@@ -455,6 +465,10 @@ SCOPE_INFO = {
         {"id": "network", "name": "Network drives", "summary": "Mapped network drives.",
          "names_only": "none", "why": "Mapped network drives.", "examples": ["Z:\\"],
          "included": False, "locked": False, "count": None}]}
+
+CAPABILITY_SAMPLE = {"free_mb": 2200, "commit_pct": 62.0, "commit_free_mb": 9000, "cpu": 24.0, "find_cpu": 4.0,
+                     "gpu": 3.0, "battery": False, "battery_saver": False,
+                     "gpu_mem": {"kind": "shared", "free_mb": 7300, "used_mb": 700, "budget_mb": 8000}}
 
 STATUS_FULL = {
     "phase": "text", "files": 1200, "texts": 310, "vectors": 0, "paused": "", "rate": 0, "errors": 0,

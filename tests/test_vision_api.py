@@ -263,7 +263,8 @@ def test_missing_model_or_runtime_names_the_download(env):
 def test_not_enough_free_memory_refuses_smolvlm(env, monkeypatch):
     monkeypatch.setattr(api_mod.winapi, "memory_status", lambda: (95, 900))
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
-    assert r["ok"] is False and r["error"].startswith("Not now: only 0.9 GB free, SmolVLM2 needs about 1.0 GB")
+    assert r["ok"] is False and r["error"].startswith("Not now: it needs about 1.0 GB plus")
+    assert "900 MB of memory is free (NOBAD Find leaves 1.5 GB to Windows)" in r["error"]
 
 
 def test_compare_needs_two_different_photos(env):
@@ -394,11 +395,11 @@ def test_out_of_memory_mid_answer_is_an_error_and_the_next_job_works(env):
 def test_deeper_needs_capability(env, monkeypatch):
     a, ev = env["a"], env["events"]
     monkeypatch.setattr(api_mod, "talk_assess",
-                        lambda m, sample, pc: (False, "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"))
+                        lambda m, sample, pc, runtime: (False, "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"))
     r = a.vision_ask(env["ids"]["sea.jpg"], "what is the mood here?", deeper=True)
     assert r == {"ok": False, "error": "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin", "job": 0}
     assert not [x for x in FakeSession.log if x[0] == "load"] and env["start"].started == []
-    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc: (True, ""))
+    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc, runtime: (True, ""))
     r1 = a.vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(ev, r1["job"]))
     r2 = a.vision_ask(env["ids"]["sea.jpg"], "what is the mood here?", deeper=True)
@@ -407,16 +408,17 @@ def test_deeper_needs_capability(env, monkeypatch):
     assert seq == [("load", SMOL), ("close", SMOL), ("load", QWEN)]             # the other model leaves first
 
 
-def test_the_fallback_assessment_checks_the_pc_and_free_memory(monkeypatch):
+def test_the_assessment_checks_the_pc_and_free_memory(monkeypatch):
+    """capability.assess decides: the installed PC first, then free memory after the 1.5 GB kept for Windows."""
     qwen = models.get(QWEN)
     small_pc = dict(PC, ram_gb=7.8, cores=4)
-    ok, why = api_mod.talk_assess(qwen, None, small_pc)
+    ok, why = api_mod.talk_assess(qwen, None, small_pc, "llama-cpu")
     assert not ok and "16 GB" in why
     sample = type("S", (), {"free_mb": 3072})()
-    ok, why = api_mod.talk_assess(qwen, sample, PC)
-    assert not ok and why == "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"
+    ok, why = api_mod.talk_assess(qwen, sample, PC, "llama-cpu")
+    assert not ok and why.startswith("Not now: it needs about 2.4 GB plus") and "3.0 GB of memory is free" in why
     sample.free_mb = 6000
-    assert api_mod.talk_assess(qwen, sample, PC) == (True, "")
+    assert api_mod.talk_assess(qwen, sample, PC, "llama-cpu") == (True, "Fits now: needs about 2.4 GB, 5.9 GB free")
 
 
 def test_text_question_shows_stored_ocr_first(env):
@@ -538,6 +540,12 @@ def test_worker_hooks_reach_the_talk_worker_first(env):
     assert _final(ev, r["job"]) == {"job": r["job"], "state": "cancelled", "text": "", "model": SMOL,
                                     "note": "Stopped: NOBAD Find needed the memory."}
     assert not a.vision_state()["running"] and hooks["talk_mb"]() == 0
+    # high commit (governor v2, release_models): the talk worker leaves first, then the indexer's models
+    real_stop = a.vision_stop
+    a.vision_stop = lambda why="": order.append("talk stop") or real_stop(why)
+    order.clear()
+    hooks["release_all"]()
+    assert order == ["talk stop", "indexer release"]
 
 
 def _watchdog(a, mb, job_mb, order, keep=False, start=None):
@@ -556,7 +564,7 @@ def test_the_watchdog_gives_the_deeper_talk_worker_its_own_budget(env, monkeypat
     """C1: Qwen (2411 MB measured) in the talk worker is not killed at WORKER_MB, and Find's total may grow by it."""
     from nobadfind import watchdog as wd
     a, ev = env["a"], env["events"]
-    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc: (True, ""))
+    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc, runtime: (True, ""))
     budgets = []
     start = thread_start(env["opts"], pid=4242)
     a._talk = worker.Talker(ev.append, start=start, on_budget=budgets.append)

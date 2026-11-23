@@ -405,6 +405,7 @@ class EngineClient {
 
   // ---- 0.8 ----
   Future<ModelsInfo> models() async => ModelsInfo.fromJson(await call('models'));
+  Future<CapabilityState> capabilityState() async => CapabilityState.fromJson(await call('capability_state'));
   Future<ModelUse> modelUse(String feature, String id) async =>
       ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id}));
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});

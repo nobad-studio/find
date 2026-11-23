@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/models_info.dart';
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/engine/models/settings.dart';
 import 'package:nobad_find/engine/models/status.dart';
@@ -123,6 +124,19 @@ void main() {
           expect(d.phases.map((p) => p.id), containsAll(['names', 'text', 'watching']));
           expect(d.models.map((m) => m.id), containsAll(['meaning', 'photo', 'ocr']));
           expect(d.history, isNotEmpty);
+          // 2026-11-21: how many of each operation may run at once, and what set it
+          expect(d.limits, isNotNull);
+          expect(d.limits!.readers.effective, greaterThan(0));
+          expect(d.limits!.walk.byLabel, startsWith('set by '));
+        case 'capability_state':
+          final cap = CapabilityState.fromJson(r);
+          expect(cap.budget.live, isTrue);
+          expect(cap.budget.freeMb, 2200);
+          expect(cap.budget.gpuKind, 'shared'); // the demo PC's Intel iGPU: shared memory only
+          expect(cap.runsNow('gte-small'), isTrue);
+          expect(cap.runsNow('multilingual-e5-base'), isFalse);
+          expect(cap.why['multilingual-e5-base'], startsWith('Not now'));
+          expect(cap.runsNow('no-such-model'), isNull);
         case 'get_settings':
           final s = Settings.fromJson(r);
           expect(s.text('theme'), anyOf('dark', 'light'));
