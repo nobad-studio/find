@@ -13,7 +13,7 @@ from collections import deque
 
 from . import embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
 from . import hardware as hw
-from .const import APP_VER
+from .const import APP_VER, COUNT_SHARE
 from .indexer import NAME_KINDS
 from .kinds import READABLE_EXT
 from .log import log
@@ -23,8 +23,8 @@ from .vlm.worker import GONE as VISION_GONE, MAX_IMAGES
 
 MAX_QUERY = 500
 TOTALS_TTL = 10                  # seconds: the phase counts are COUNT queries, too heavy for every 2 s poll
-STATS_TTL = 10                   # seconds the index counts (Store.stats) are reused by status()
-COUNT_SHARE = 20                 # and at least 20x as long as they took to count: <= 5% of a core on a big index
+STATS_TTL = 10                   # seconds the index counts (Store.stats) are reused by status(), and at least
+                                 # COUNT_SHARE (const) times as long as they took to count
 STATS_KEYS = ("files", "with_text", "chunks", "vectors", "name_vectors", "photo_vectors")     # Store.stats' counts
 RATE_WINDOW = 15                 # status polls a progress rate is measured over (about 30 s)
 MAX_PAUSE_S = 24 * 3600
