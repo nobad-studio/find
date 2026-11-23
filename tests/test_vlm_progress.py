@@ -454,3 +454,12 @@ def test_no_fallback_left():
     for gone in ("def talk_fits", "talk_fits(", "TALK_MARGIN", "TEMPORARY", "except ImportError"):
         assert gone not in src, gone
     assert not hasattr(api_mod, "talk_fits")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for top in ("nobadfind", "tools"):                  # no caller left either (tools/measure_talk.py used both)
+        for folder, _dirs, files in os.walk(os.path.join(root, top)):
+            for name in files:
+                if name.endswith(".py"):
+                    path = os.path.join(folder, name)
+                    text = open(path, encoding="utf-8").read()
+                    for gone in ("talk_fits", "TALK_MARGIN", "free-RAM fallback"):
+                        assert gone not in text, f"{gone} in {os.path.relpath(path, root)}"

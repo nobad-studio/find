@@ -30,8 +30,8 @@ wait there).
 
 --leave-free-mb: a memory hog (a child process, ended in a finally and with this script's process group) takes
 memory until about that much is free, and gives it back whenever free memory falls under --floor-mb (default
-1536), so the PC is never pushed below it. Then also: what the app says for the deeper model at that free memory
-(api.talk_assess for Qwen, api.talk_fits for the quick model), and the processes older than a minute that were
+1536), so the PC is never pushed below it. Then also: what the app says for both talk models at that free memory
+on the runtime measured (api.talk_assess, i.e. capability.assess), and the processes older than a minute that were
 gone at the end (nothing should be: Find only ever ends its own workers).
 
 --alloc-limit-mb: the low-memory failure itself: the worker group's memory limit is set that low and NOT raised
@@ -235,7 +235,7 @@ def main(argv=None):
         free0 = psutil.virtual_memory().available / 1048576
         if a.assess_only:
             res = {"model": a.model, "device": a.device, "level": a.level, "hog": bool(hogp),
-                   "floor_mb": a.floor_mb if hogp else None, "assess": assess(free0, api, hw, models)}
+                   "floor_mb": a.floor_mb if hogp else None, "assess": assess(free0, api, hw, models, rid)}
         elif free0 < need + a.margin_mb:
             sys.exit(f"only {free0:.0f} MB free; {a.model} on {a.device} needs {need} MB + {a.margin_mb} MB margin")
         else:
@@ -251,12 +251,15 @@ def main(argv=None):
     print(json.dumps({k: v for k, v in res.items() if k not in ("jobs", "stops")}), flush=True)
 
 
-def assess(free_mb, api, hw, models):
-    """What the app says now (Api._vision_model's checks) at this free memory: the deeper model's api.talk_assess
-    (the free-RAM fallback until PR #16) and the quick model's api.talk_fits."""
+def assess(free_mb, api, hw, models, runtime):
+    """What the app says now (Api._vision_model's check) at this free memory, on the runtime measured: api.talk_assess
+    (capability.assess with the model's measured need on that runtime) for the deeper model and the quick one."""
     sample = type("Sample", (), {"free_mb": free_mb})()
-    return {"free_mb": round(free_mb), "deeper": list(api.talk_assess(models.get("qwen3vl-2b"), sample, hw.scan())),
-            "quick": list(api.talk_fits(models.talk_models()[0], sample))}
+    pc = hw.scan()
+    talk = models.talk_models()
+    return {"free_mb": round(free_mb), "runtime": runtime,
+            "deeper": list(api.talk_assess(models.get("qwen3vl-2b"), sample, pc, runtime)),
+            "quick": list(api.talk_assess(talk[0], sample, pc, runtime))}
 
 
 def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi, worker, hogp):
@@ -266,7 +269,7 @@ def run(a, m, rid, need, cap, eco, free0, psutil, api, hw, jobs, models, winapi,
     settings = dict(m["talk"])
     settings["need_mb"] = need or None                    # as Api._vision_job
     events, trace, cond = [], [], threading.Condition()
-    verdict = assess(free0, api, hw, models)
+    verdict = assess(free0, api, hw, models, rid)
 
     def emit(ev):
         with cond:

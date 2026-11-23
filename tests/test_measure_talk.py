@@ -85,3 +85,20 @@ def test_refuses_to_start_without_free_memory_for_the_model(tmp_path):
         measure_talk.main(["--model", "qwen3vl-2b", "--model-dir", str(tmp_path), "--runtime-dir", str(tmp_path),
                            "--device", "vulkan", "--images", str(tmp_path), "--level", "full",
                            "--out", str(tmp_path / "x.json"), "--margin-mb", "100000000"])
+
+
+@pytest.mark.parametrize("runtime", ["llama-cpu", "llama-vulkan"])
+def test_assess_says_what_the_app_says_for_both_models(runtime):
+    """assess() runs in every measurement (and --assess-only): both talk models through api.talk_assess
+    (capability.assess) on the runtime measured. A fake hardware scan; no model is loaded."""
+    import types
+    from nobadfind import api, models
+    pc = {"ram_gb": 15.7, "cores": 12, "threads": 16, "avx2": True, "avx512_vnni": False, "gpu": "", "vram_gb": 0.0,
+          "directml": False, "disk_free_gb": 200.0, "ssd": True}
+    hw = types.SimpleNamespace(scan=lambda: dict(pc))
+    low = measure_talk.assess(3000, api, hw, models, runtime)
+    assert low["free_mb"] == 3000 and low["runtime"] == runtime
+    assert low["deeper"][0] is False and low["deeper"][1].startswith("Not now: it needs about 2.4 GB")
+    assert low["quick"][0] is False and low["quick"][1].startswith("Not now: it needs about 1.0 GB")
+    high = measure_talk.assess(6000, api, hw, models, runtime)
+    assert high["deeper"][0] is True and high["quick"][0] is True
