@@ -488,3 +488,173 @@ def test_login_data_is_never_copied_even_with_a_wal(tmp_path, monkeypatch):
     r = bd.read_profile(job_for(env, data, "Edge"))
     assert [i[1] for i in r["kinds"]["login"]] == ["alice@example.com"]   # the main file, in memory
     assert not any(n.startswith("Login Data") for n in made)
+
+
+# ---------- fix round 1 ----------
+@pytest.mark.parametrize("how", ["broken", "timeout"])
+def test_a_worker_killed_mid_read_leaves_no_copy(tmp_path, monkeypatch, how):
+    """The worker dies (watchdog, memory cap) or is stopped (stuck) while its copy is on disk: the engine wipes
+    <data>\tmp\browser-* itself, since only one browser reader ever runs."""
+    import concurrent.futures as cf
+    env = make_env(tmp_path)
+    real = bd.profiles
+    monkeypatch.setattr(bd, "profiles", lambda env_=None: real(env))
+    ix, store = _indexer(tmp_path, env)
+    data = os.path.dirname(store.db_path)
+
+    class DyingPool:
+        def __init__(self, *a, **kw):
+            pass
+
+        def submit(self, fn, job):
+            folder = os.path.join(job["data_dir"], "tmp", "browser-mid")    # snapshot had copied, then died
+            os.makedirs(folder, exist_ok=True)
+            for n in ("History", "History-wal"):
+                with open(os.path.join(folder, n), "wb") as f:
+                    f.write(b"copied")
+            f = cf.Future()
+            f.set_exception(cf.process.BrokenProcessPool("killed") if how == "broken" else cf.TimeoutError())
+            return f
+
+        def shutdown(self, **kw):
+            pass
+    monkeypatch.setattr(ix_mod.cf, "ProcessPoolExecutor", DyingPool)
+    try:
+        ix._read_browsers()
+        assert browser_tmp(data) == []
+    finally:
+        store.close()
+
+
+def test_a_profile_keeps_its_rows_while_its_folder_is_there(tmp_path, monkeypatch):
+    env = make_env(tmp_path)
+    real = bd.profiles
+    listed = {"miss": False}
+    monkeypatch.setattr(bd, "profiles", lambda env_=None: [] if listed["miss"] else real(env))
+    monkeypatch.setattr(ix_mod.cf, "ProcessPoolExecutor", _InlinePool)
+    ix, store = _indexer(tmp_path, env)
+    try:
+        ix._read_browsers()
+        n = store.one("SELECT count(*) FROM browser_items")
+        assert n > 0
+        listed["miss"] = True                    # a listdir that failed for a moment: the folders are still there
+        ix._read_browsers()
+        assert store.one("SELECT count(*) FROM browser_items") == n
+        import shutil
+        shutil.rmtree(os.path.join(env["APPDATA"], "Mozilla", "Firefox", "Profiles", "ab12.default-release"))
+        ix._read_browsers()                      # really gone: its rows go, Edge's stay
+        assert {b for (b,) in store.q("SELECT DISTINCT browser FROM browser_items")} == {"Edge"}
+    finally:
+        store.close()
+
+
+class _InlinePool:
+    def __init__(self, *a, **kw):
+        pass
+
+    def submit(self, fn, job):
+        import concurrent.futures as cf
+        f = cf.Future()
+        f.set_result(fn(job))
+        return f
+
+    def shutdown(self, **kw):
+        pass
+
+
+def test_clear_browser_data_deletes_the_rows_and_keeps_the_setting(tmp_path):
+    from nobadfind.rpc.handlers import settings as h
+    a, s = make_api(tmp_path)
+    a.set_settings({"browser_data": "history"}, consent=BROWSER_CONSENT)
+    s.put_browser_items("Edge", "Work", "history", [("history", "t", "https://e.example/", "e.example", T0, 1, "")])
+    assert h.methods(a)["browser_clear"]({})["ok"] is True
+    assert s.one("SELECT count(*) FROM browser_items") == 0 and a.get_settings()["browser_data"] == "history"
+    s.close()
+
+
+def test_browser_data_state_per_profile(tmp_path):
+    from nobadfind.rpc.handlers import settings as h
+    a, s = make_api(tmp_path)
+    assert h.methods(a)["browser_data_state"]({}) == {"setting": "off", "profiles": []}
+    sch = bd.Schedule()
+    a._indexer._browser_sched = sch
+    p = {"browser": "Edge", "profile": "Work", "mtime": 1.0, "dir": str(tmp_path)}
+    sch.done(p, T0, counts={"history": 1})
+    q = {"browser": "Firefox", "profile": "default", "mtime": 1.0, "dir": str(tmp_path)}
+    for _ in range(4):
+        sch.done(q, T0, locked=True)
+    s.put_browser_items("Edge", "Work", "history", [("history", "t", "https://e.example/", "e.example", T0, 1, "")])
+    r = h.methods(a)["browser_data_state"]({})
+    assert r["profiles"] == [
+        {"browser": "Edge", "profile": "Work", "last_read": T0, "error": "",
+         "counts": {"history": 1, "bookmark": 0, "download": 0, "login": 0}},
+        {"browser": "Firefox", "profile": "default", "last_read": None,
+         "error": "in use by the browser; tried 4 times, tries again when it changes",
+         "counts": {"history": 0, "bookmark": 0, "download": 0, "login": 0}}]
+    s.close()
+
+
+def test_deeply_nested_bookmarks_are_a_note_not_a_crash(tmp_path):
+    env = make_env(tmp_path)
+    data = tmp_path / "data"
+    bm = os.path.join(env["LOCALAPPDATA"], "Microsoft", "Edge", "User Data", "Profile 1", "Bookmarks")
+    with open(bm, "w") as f:
+        f.write("[" * 200000 + "]" * 200000)
+    r = bd.read_profile(job_for(env, data, "Edge"))
+    assert "bookmark" not in r["kinds"] and r["kinds"]["history"]
+    assert any("Bookmarks" in n for n in r["notes"])
+
+
+def test_the_plain_folder_fallback_is_logged(tmp_path, monkeypatch):
+    logged = []
+    monkeypatch.setattr(bd, "log", lambda m, level="info": logged.append((level, m)))
+    monkeypatch.setattr(bd, "_user_sid", lambda: (_ for _ in ()).throw(OSError("no token")))
+    d = bd._private_dir(str(tmp_path / "tmp"))
+    assert os.path.isdir(d) and any(level == "warn" for level, _m in logged)
+
+
+def test_turned_off_and_on_again_reads_everything_again(tmp_path, monkeypatch):
+    env = make_env(tmp_path)
+    real = bd.profiles
+    monkeypatch.setattr(bd, "profiles", lambda env_=None: real(env))
+    monkeypatch.setattr(ix_mod.cf, "ProcessPoolExecutor", _InlinePool)
+    from nobadfind import api as api_mod
+    from nobadfind.settings import Settings
+    store = Store(str(tmp_path / "i.db"), encrypt=False)
+    st = Settings(str(tmp_path / "s.json"))
+    ix = ix_mod.Indexer(store, st)
+    a = api_mod.Api(store, st, ix, None)
+    try:
+        a.set_settings({"browser_data": "history_logins"}, consent=BROWSER_CONSENT)
+        ix._read_browsers()
+        full = store.browser_counts()
+        a.set_settings({"browser_data": "history"})
+        ix._read_browsers()
+        assert "login" not in store.browser_counts()
+        a.set_settings({"browser_data": "history_logins"}, consent=BROWSER_CONSENT)
+        ix._read_browsers()                              # the files didn't change, but the logins come back
+        assert store.browser_counts() == full
+        a.set_settings({"browser_data": "off"})
+        assert store.browser_counts() == {} and a.browser_data_state()["profiles"] == []
+        a.set_settings({"browser_data": "history"}, consent=BROWSER_CONSENT)
+        ix._read_browsers()
+        assert store.browser_counts()["history"] == full["history"]
+    finally:
+        store.close()
+
+
+def test_a_renamed_profile_does_not_keep_its_old_rows(tmp_path, monkeypatch):
+    env = make_env(tmp_path)
+    real = bd.profiles
+    monkeypatch.setattr(bd, "profiles", lambda env_=None: real(env))
+    monkeypatch.setattr(ix_mod.cf, "ProcessPoolExecutor", _InlinePool)
+    ix, store = _indexer(tmp_path, env)
+    try:
+        ix._read_browsers()
+        state = os.path.join(env["LOCALAPPDATA"], "Microsoft", "Edge", "User Data", "Local State")
+        with open(state, "w") as f:
+            json.dump({"profile": {"info_cache": {"Profile 1": {"name": "Job"}}}}, f)
+        ix._read_browsers()
+        assert {p for (p,) in store.q("SELECT DISTINCT profile FROM browser_items WHERE browser = 'Edge'")} == {"Job"}
+    finally:
+        store.close()

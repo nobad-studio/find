@@ -693,6 +693,14 @@ class Store:
             self.db.commit()
             return len(gone)
 
+    def browser_counts_by_profile(self):
+        """{(browser, profile): {kind: rows}}."""
+        out = {}
+        for b, p, k, n in self.q("SELECT browser, profile, kind, count(*) FROM browser_items GROUP BY browser, profile, "
+                                 "kind"):
+            out.setdefault((b, p), {})[k] = n
+        return out
+
     def browser_counts(self):
         """{kind: rows} of what is indexed (kinds with none left out)."""
         return dict(self.q("SELECT kind, count(*) FROM browser_items GROUP BY kind"))

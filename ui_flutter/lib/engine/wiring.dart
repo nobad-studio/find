@@ -116,6 +116,11 @@ class PipeEngine implements EngineApi {
   Future<PerformanceState> performanceState() => _pipe.performanceState();
   @override
   Future<ResetResult> resetSafeDefaults() => _pipe.resetSafeDefaults();
+  @override
+  Future<BrowserDataState> browserDataState() async =>
+      _pipe.serves('browser_data_state') ? _pipe.browserDataState() : BrowserDataState.none;
+  @override
+  Future<ActionResult> browserClear() => _pipe.browserClear();
 
   // ---- settings and the index ----
   @override

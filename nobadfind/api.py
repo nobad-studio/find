@@ -881,11 +881,38 @@ class Api:
         return BROWSER_DATA.index(coerce("browser_data", value)) > BROWSER_DATA.index(
             cur if cur in BROWSER_DATA else "off")
 
+    def browser_clear(self):
+        """Settings > Privacy, "Clear browser data": every browser_items row goes (and any temporary copy). The
+        setting stays as it is: while it's on, a browser's data comes back when it is next read (its files changed)."""
+        from . import browserdata
+        n = self._store.browser_clear()
+        browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        log(f"browser data cleared ({n} rows)")
+        return {"ok": True}
+
+    def browser_data_state(self):
+        """Per browser profile: when it was last read, its rows per kind and its last problem (browserdata.Schedule
+        and the index). Never looks at the browsers' folders itself."""
+        from . import browserdata
+        sched = getattr(self._indexer, "_browser_sched", None)
+        states = sched.states() if isinstance(sched, browserdata.Schedule) else {}
+        counts = self._store.browser_counts_by_profile()
+        out = []
+        for key in sorted(set(states) | set(counts)):
+            st = states.get(key) or {}
+            c = counts.get(key) or {}
+            out.append({"browser": key[0], "profile": key[1], "last_read": st.get("read_at"),
+                        "error": str(st.get("error") or ""), "counts": {k: int(c.get(k, 0)) for k in browserdata.KINDS}})
+        return {"setting": self._settings.get("browser_data"), "profiles": out}
+
     def _browser_narrowed(self):
         """browser_data changed: the rows of the kinds it no longer reads go (all of them when off), and so do the
         temporary copies (browserdata.wipe_tmp). Returns how many rows went."""
         from . import browserdata
         mode = self._settings.get("browser_data")
+        sched = getattr(self._indexer, "_browser_sched", None)
+        if isinstance(sched, browserdata.Schedule):
+            sched.reset()                    # on again or wider: every profile is read again, not "unchanged"
         gone = [k for k in browserdata.KINDS if not browserdata.allowed(mode, k)]
         n = self._store.browser_clear(None if mode == "off" else gone) if gone else 0
         if mode == "off":

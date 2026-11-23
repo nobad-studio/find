@@ -122,6 +122,13 @@ abstract class EngineApi {
   /// "Reset to safe defaults" (1.2.0): the goal to balanced, every override to auto. Only after the user's yes.
   Future<ResetResult> resetSafeDefaults();
 
+  /// Settings > Privacy (1.2.0 engines): each browser profile read, its items and its last problem
+  /// (`browser_data_state`). An older engine answers -32601.
+  Future<BrowserDataState> browserDataState();
+
+  /// "Clear browser data" (`browser_clear`, 1.2.0): every browser item out of the index. Only after the user's yes.
+  Future<ActionResult> browserClear();
+
   // ---- settings and the index ----
   Future<Settings> getSettings();
 

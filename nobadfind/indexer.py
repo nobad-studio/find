@@ -792,7 +792,13 @@ class Indexer:
             return
         profs = browserdata.profiles()
         keep = {(p["browser"], p["profile"]) for p in profs}
-        self.store.browser_keep_profiles(keep)        # a profile (or browser) that's gone takes its rows
+        # a profile not listed this time keeps its rows while its folder is still there (a listdir that failed
+        # for a moment); one whose folder is gone (deleted, the browser removed) or now has another name takes its
+        # rows
+        listed = {os.path.normcase(p["dir"]) for p in profs}
+        keep |= {k for k, d in self._browser_sched.dirs().items()
+                 if k not in keep and os.path.normcase(d) not in listed and os.path.isdir(d)}
+        self.store.browser_keep_profiles(keep)
         self._browser_sched.forget(keep)
         todo = self._browser_sched.due(profs, time.time())
         if not todo:
@@ -822,12 +828,16 @@ class Indexer:
                     continue
                 if r is None or r is RECYCLE:
                     return
-                counts = {}
+                counts, dropped = {}, False
                 for kind, rows in r["kinds"].items():
                     if self.store.put_browser_items(p["browser"], p["profile"], kind, rows,
                                                     allow=lambda k=kind: browserdata.allowed(
                                                         self.settings.get("browser_data"), k)):
                         counts[kind] = len(rows)
+                    else:
+                        dropped = True
+                if dropped:
+                    continue                        # the setting changed while it read: not marked as read
                 for n in r["notes"]:
                     log(f"browser data: {p['browser']}: a file not read ({n.rsplit(': ', 1)[-1][:80]})", "warn")
                 self._browser_sched.done(p, time.time(), locked=bool(r["locked"]), counts=counts,
@@ -839,6 +849,9 @@ class Indexer:
                 _kill_pool(pool)
             pool.shutdown(wait=True, cancel_futures=True)
             self._browser_pool = None
+            # a reader killed mid-read (stuck, the watchdog, the memory cap) can't delete its copy: the only
+            # browser reader is done now, so whatever is in <data>/tmp/browser-* is left over
+            browserdata.wipe_tmp(data_dir)
 
     @staticmethod
     def make_embedder(mid, query=False):

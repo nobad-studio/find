@@ -18,7 +18,12 @@ How it is read safely:
 - Copy, don't lock (`snapshot`): the file and its -wal and -shm are opened with CreateFileW(GENERIC_READ,
   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE) and copied into <data>\\tmp\\browser-<random> (ACL: this
   user only); the copy's WAL is folded into it, then it is opened with sqlite3 `?mode=ro&immutable=1`, read, closed
-  and deleted at once, also on error (`wipe_tmp` clears what a crash left, at engine start and when turned off).
+  and deleted at once, also on error (`wipe_tmp` clears what a crash left, at engine start and when turned off;
+  the indexer wipes it after every round too, since a killed reader can't delete its own copy).
+- A database in rollback-journal mode (not WAL), copied while the browser writes it, can be a torn copy: pages from
+  before and after one transaction, and its -journal isn't copied (immutable=1 wouldn't roll it back anyway). That
+  shows up as an sqlite error ("malformed") and a note, tried again when the file next changes, or as a few rows
+  of one moment mixed with the next; nothing is written back, so the browser's own file is never affected.
 - A file the browser holds exclusively (sharing or lock violation) raises Locked; `Schedule` retries at 1, 5 and 30
   minutes, then gives up with a note until the file changes.
 - Only the expected tables and columns are read: an unknown layout is skipped with a note (UnknownSchema), never
@@ -237,8 +242,10 @@ def _private_dir(root):
                         return path
                 finally:
                     k.LocalFree(sd)
-        except (OSError, AttributeError):
-            pass
+        except (OSError, AttributeError) as e:
+            log(f"browser data: a private folder couldn't be made ({type(e).__name__}); a plain one is used", "warn")
+        else:
+            log("browser data: a private folder couldn't be made; a plain one is used", "warn")
     os.mkdir(path)                  # inside the data folder, which is this user's already
     return path
 
@@ -540,7 +547,7 @@ def _read_sources(job):
             out["locked"].append(name)                        # what it had stays; Schedule tries again
         except UnknownSchema:
             out["notes"].append(f"{what}: {name} has a layout this version doesn't know, so it was not read")
-        except (sqlite3.Error, OSError, ValueError, MemoryError) as e:
+        except (sqlite3.Error, OSError, ValueError, MemoryError, RecursionError) as e:
             out["notes"].append(f"{what}: {name} couldn't be read ({type(e).__name__})")
     return out
 
@@ -566,8 +573,10 @@ class Schedule:
         return (p["browser"], p["profile"])
 
     def _get(self, p):
-        return self._s.setdefault(self._key(p), {"mtime": None, "read_at": None, "fails": 0, "next_at": None,
-                                                 "error": "", "counts": {}})
+        st = self._s.setdefault(self._key(p), {"mtime": None, "read_at": None, "fails": 0, "next_at": None,
+                                               "error": "", "counts": {}, "dir": ""})
+        st["dir"] = p.get("dir") or st["dir"]
+        return st
 
     def due(self, profs, now):
         out = []
@@ -602,6 +611,18 @@ class Schedule:
 
     def state(self, p):
         return dict(self._get(p))
+
+    def reset(self):
+        """The setting changed: nothing counts as read any more."""
+        self._s.clear()
+
+    def states(self):
+        """{(browser, profile): state} of every profile known."""
+        return {k: dict(v) for k, v in list(self._s.items())}
+
+    def dirs(self):
+        """{(browser, profile): its folder} as last seen."""
+        return {k: v["dir"] for k, v in list(self._s.items()) if v.get("dir")}
 
     def forget(self, keep):
         for k in [k for k in self._s if k not in keep]:

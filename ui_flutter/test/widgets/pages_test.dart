@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' show TextField;
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/settings.dart' show BrowserDataState;
 import 'package:nobad_find/engine/models/status.dart';
 import 'package:nobad_find/widgets/controls.dart';
 
@@ -243,10 +244,61 @@ void main() {
       await tester.pumpAndSettle();
       expect(engine.settingsSet.last, {'browser_data': 'history_logins'});
       expect(engine.consents.last, 'READ_BROWSER_DATA');
+      expect(find.text('Edge (Work): 131 items, read 5 min ago'), findsOneWidget); // browser_data_state
       await pick('History, bookmarks and downloads'); // narrowing: no question, no word
       expect(find.text('Read your browsers?'), findsNothing);
       expect(engine.settingsSet.last, {'browser_data': 'history'});
       expect(engine.consents.last, isNull);
+      // Clear browser data: asks first, then the engine clears and the line says so
+      final clear = find.widgetWithText(NbButton, 'Clear browser data');
+      await tester.ensureVisible(clear);
+      await tester.pumpAndSettle();
+      await tester.tap(clear);
+      await tester.pumpAndSettle();
+      expect(find.text('Clear browser data?'), findsOneWidget);
+      expect(find.textContaining('Your browsers keep their own history'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(engine.calls, isNot(contains('browser_clear')));
+      await tester.tap(clear);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Clear'));
+      await tester.pumpAndSettle();
+      expect(engine.calls, contains('browser_clear'));
+      expect(find.text('Browser data cleared.'), findsOneWidget);
+      expect(find.text('Edge (Work): 0 items, read 5 min ago'), findsOneWidget);
+    });
+
+    test('browser_data_state: one plain line, the problem instead of the counts', () {
+      final now = DateTime.fromMillisecondsSinceEpoch(1700000600 * 1000);
+      final st = BrowserDataState.fromJson({
+        'setting': 'history',
+        'profiles': [
+          {
+            'browser': 'Edge',
+            'profile': 'Work',
+            'last_read': 1700000000.0,
+            'error': '',
+            'counts': {'history': 120, 'bookmark': 8, 'download': 3, 'login': 0},
+          },
+          {
+            'browser': 'Firefox',
+            'profile': 'default',
+            'last_read': null,
+            'error': 'in use by the browser; trying again in 5 min',
+            'counts': {},
+          },
+        ],
+      });
+      expect(
+        st.summary(now),
+        'Edge (Work): 131 items, read 10 min ago · Firefox (default): in use by the browser; trying again in 5 min',
+      );
+      expect(BrowserDataState.fromJson({'setting': 'off', 'profiles': []}).summary(now), '');
+      expect(
+        BrowserDataState.fromJson({'setting': 'history', 'profiles': []}).summary(now),
+        startsWith('Not read yet'),
+      );
     });
 
     testWidgets('Windows Search: one click, and the words say what happens', (tester) async {

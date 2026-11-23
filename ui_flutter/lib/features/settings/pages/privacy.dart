@@ -9,7 +9,7 @@ import 'package:flutter/widgets.dart';
 import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
-import '../../../engine/models/settings.dart' show appFilesConsent, browserConsent, browserDataLevels;
+import '../../../engine/models/settings.dart' show BrowserDataState, appFilesConsent, browserConsent, browserDataLevels;
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
 import '../../../widgets/icons.dart';
@@ -59,8 +59,8 @@ class AppFilesSetting extends StatelessWidget {
 
 /// Browser data (setting `browser_data`, 1.2.0, off by default; browserdata.py in the engine): the browsers'
 /// history, bookmarks and downloads, and saved logins' site and user name. Reading more asks once.
-class BrowserDataSetting extends StatelessWidget {
-  const BrowserDataSetting({super.key});
+class BrowserDataGroup extends StatefulWidget {
+  const BrowserDataGroup({super.key});
 
   static const label = 'Search my browsers';
   static const help =
@@ -81,27 +81,97 @@ class BrowserDataSetting extends StatelessWidget {
       "logins the site and user name of each one. Passwords are never read. It all stays in NOBAD Find's "
       'encrypted index on this PC and can appear in search results. Turn this off to remove it again.';
 
+  static const clearAsk =
+      'Removes everything NOBAD Find read from your browsers from its index. Your browsers keep their own history. '
+      'While "Search my browsers" is on, NOBAD Find reads them again the next time they change.';
+
+  @override
+  State<BrowserDataGroup> createState() => _BrowserDataGroupState();
+}
+
+class _BrowserDataGroupState extends State<BrowserDataGroup> {
+  BrowserDataState _state = BrowserDataState.none;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_load()));
+  }
+
+  Future<void> _load() async {
+    try {
+      final st = await AppScope.of(context).engine.browserDataState();
+      if (mounted) setState(() => _state = st);
+    } on Object {
+      // an older engine, or none: no line
+    }
+  }
+
   @override
   Widget build(BuildContext context) =>
       ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
 
   Widget _build(BuildContext context) {
-    final s = AppScope.of(context).settings;
+    final app = AppScope.of(context);
+    final s = app.settings;
+    final c = NbColors.of(context);
     final now = s.settings.text('browser_data');
-    return SettingRow(
-      label: label,
-      help: help,
-      control: NbSelect(
-        label: label,
-        value: now,
-        options: options,
-        maxWidth: 260,
-        onChanged: (v) async {
-          final more = browserDataLevels.indexOf(v) > browserDataLevels.indexOf(now);
-          if (more && !await confirmDialog(context, title: askTitle, question: ask, yes: 'Read them')) return;
-          await s.set('browser_data', v, consent: more ? browserConsent : null);
-        },
-      ),
+    final line = _state.summary(DateTime.now());
+    return SettingsGroup(
+      'Browsers',
+      icon: NbGlyph.external,
+      rows: [
+        SettingRow(
+          label: BrowserDataGroup.label,
+          help: BrowserDataGroup.help,
+          control: NbSelect(
+            label: BrowserDataGroup.label,
+            value: now,
+            options: BrowserDataGroup.options,
+            maxWidth: 260,
+            onChanged: (v) async {
+              final more = browserDataLevels.indexOf(v) > browserDataLevels.indexOf(now);
+              if (more &&
+                  !await confirmDialog(
+                    context,
+                    title: BrowserDataGroup.askTitle,
+                    question: BrowserDataGroup.ask,
+                    yes: 'Read them',
+                  )) {
+                return;
+              }
+              await s.set('browser_data', v, consent: more ? browserConsent : null);
+              await _load();
+            },
+          ),
+          below: line.isEmpty ? null : Text(line, style: NbType.text(NbSize.small, c.dim, height: 1.4)),
+        ),
+        SettingRow(
+          label: 'Clear browser data',
+          help: 'Forgets everything read from your browsers. Turning "Search my browsers" off does this too.',
+          control: NbButton(
+            'Clear browser data',
+            kind: NbButtonKind.ghost,
+            onPressed: () async {
+              if (!await confirmDialog(
+                context,
+                title: 'Clear browser data?',
+                question: BrowserDataGroup.clearAsk,
+                yes: 'Clear',
+              )) {
+                return;
+              }
+              try {
+                final r = await app.engine.browserClear();
+                app.toasts.show(r.ok ? 'Browser data cleared.' : "Couldn't clear the browser data.");
+              } on Object {
+                app.toasts.show("NOBAD Find's engine isn't running.");
+              }
+              await _load();
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -188,7 +258,7 @@ class PrivacyPage extends StatelessWidget {
           ],
         ),
         const SettingsGroup('Files other programs keep', icon: NbGlyph.archive, rows: [AppFilesSetting()]),
-        const SettingsGroup('Browsers', icon: NbGlyph.external, rows: [BrowserDataSetting()]),
+        const BrowserDataGroup(),
         const SettingsGroup(
           'Notifications',
           icon: NbGlyph.bell,

@@ -219,6 +219,97 @@
         "$ref": "#/$defs/ok"
       }
     },
+    "browser_clear": {
+      "description": "Settings > Privacy: \"Clear browser data\". Deletes every browser item NOBAD Find read (history, bookmarks, downloads, saved logins' site and user name) and any temporary copy. browser_data stays as it is: while it's on, a browser's data is read again when its files next change.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
+    "browser_data_state": {
+      "description": "Settings > Privacy, under browser_data: each browser profile NOBAD Find has read or tried to read since the engine started, or still has rows of. last_read: unix seconds of the last read, null if none since the engine started. counts: rows in the index per kind. error: \"\" or the last problem in plain words (\"in use by the browser; trying again in 5 min\", an unknown file layout). It never looks at the browsers' folders itself.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "setting": {
+            "enum": [
+              "off",
+              "history",
+              "history_logins"
+            ]
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "browser": {
+                  "type": "string"
+                },
+                "profile": {
+                  "type": "string"
+                },
+                "last_read": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "error": {
+                  "type": "string"
+                },
+                "counts": {
+                  "type": "object",
+                  "properties": {
+                    "history": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "bookmark": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "download": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "login": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "history",
+                    "bookmark",
+                    "download",
+                    "login"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "browser",
+                "profile",
+                "last_read",
+                "error",
+                "counts"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "setting",
+          "profiles"
+        ],
+        "additionalProperties": false
+      }
+    },
     "open": {
       "description": "Open a result with its default program (outside NOBAD Find's process group).",
       "params": {

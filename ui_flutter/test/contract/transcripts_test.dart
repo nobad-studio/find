@@ -128,7 +128,11 @@ void main() {
           expect(((r as Map)['unread']) as int, greaterThanOrEqualTo(0));
         case 'notifications_clear':
           expect(ActionResult.fromJson(r).ok, isTrue);
-        case 'history_forget' || 'history_clear':
+        case 'browser_data_state':
+          final st = BrowserDataState.fromJson(r);
+          expect(st.profiles.length, (((r as Map)['profiles']) as List).length); // every profile is read
+          expect(st.summary(DateTime.now()), isNotEmpty);
+        case 'history_forget' || 'history_clear' || 'browser_clear':
           expect(ActionResult.fromJson(r).error, isA<String>());
         case 'status':
           expect(EngineStatus.fromJson(r).levelLabel, isNotEmpty);
