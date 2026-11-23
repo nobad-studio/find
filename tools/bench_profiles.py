@@ -590,6 +590,8 @@ def report(results):
         if s["workload"] == "photo_talk":
             row.update(first_word_s=r.get("first_word_p95_s"), load_s=r.get("load_s"),
                        shared_mb=r.get("gpu_shared_mb") or 0)
+            if s["backend"] != "cpu":       # a GPU row applies only to the kind of graphics it ran on
+                row["gpu"] = "discrete" if r.get("gpu_dedicated_mb") else "integrated"
         print(f"    {(s['model'], s['variant'], s['backend'], s['profile'])!r}: {json.dumps(row)},")
     print("\nruns: " + ", ".join(f"{x['key']} {x['seconds']} s" for x, _v in rows))
     print(f"total PC time: {sum(x['seconds'] for x, _v in rows) / 60:.1f} min")

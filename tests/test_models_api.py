@@ -257,6 +257,7 @@ def test_auto_configure_and_models_take_the_photo_suggestion(a, monkeypatch):
     assert {s["feature"] for s in r["steps"]} == {"text", "photo", "ocr"}
     assert seen["goal"] == a._settings.get("performance_goal") and seen["live"]["runtime"] == {
         "photo_talk": "vulkan"} and "gpu" in seen["classes"]
+    assert seen["live"]["settings"] == {"gpu_reserve_min_mb": a._settings.get("gpu_reserve_min_mb")}
     by = {m["id"]: m for m in a.models()["models"]}
     assert by["siglip-base"]["recommended"] and not by["siglip2-base"]["recommended"]
     assert not by["smolvlm2-500m"]["recommended"]
@@ -268,6 +269,15 @@ def test_auto_configure_turns_photo_off_when_no_measured_model_fits(a, monkeypat
     r = a.auto_configure()
     assert a._settings.get("photo_meaning") is False
     assert next(s for s in r["steps"] if s["feature"] == "photo")["id"] == ""
+
+
+def test_suggestions_use_the_goal_and_the_users_gpu_reserve(a, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(api_mod.modelsuggest, "for_pc", lambda f, c, live, goal, focus, **k: seen.update(
+        live=live, goal=goal) or {"text": [], "photo_talk": [], "photo_search": []})
+    a._settings.update({"power": "boost", "performance_goal": "fast", "gpu_reserve_min_mb": 2048})
+    a.auto_configure()
+    assert seen["goal"] == "fast" and seen["live"]["settings"]["gpu_reserve_min_mb"] == 2048
 
 
 def test_real_suggestion_on_the_reference_pc_keeps_siglip2(a):

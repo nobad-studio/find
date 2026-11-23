@@ -246,7 +246,8 @@ def variants(mid):
 # ram_mb = the worker's whole-process peak private bytes; ws_mb its peak working set. On Vulkan (Iris Xe: shared
 # memory) shared_mb is the graphics memory it held, which is system RAM: never capacity of its own. The counters
 # overlap on shared-memory graphics, so they are never summed: need_mb, the memory the floor and the budget read, is
-# the biggest single figure, max(ram_mb, ws_mb, shared_mb) (ruling 2026-11-23, as models.talk_need_mb).
+# the biggest single figure, max(ram_mb, ws_mb, shared_mb) (ruling 2026-11-23, as models.talk_need_mb). A GPU row
+# says which graphics it was measured on ("gpu": integrated | discrete); it applies only to that kind.
 # Usefulness (photo_search) is the recorded evaluation's by_channel.find figures (pm-s2-tq-v16.json), V and C.
 # Measured 2026-11-23 on mid only (8 threads by job affinity, Gentle): the low and high runs were stopped by memory
 # pressure on the PC and are not measured; degradation needs them, so it is "not measured" everywhere.
@@ -267,7 +268,7 @@ MEASURED = {
                       availability="pass"), "source": _BENCH},
     ("smolvlm2-500m", "q8_0", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 5.77, "cold_first_word_s": 5.14,
-        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "need_mb": 1033,
+        "load_s": 1.27, "ram_mb": 1033, "ws_mb": 786, "vram_mb": 0, "shared_mb": 663, "gpu": "integrated", "need_mb": 1033,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},
@@ -279,7 +280,7 @@ MEASURED = {
                       availability="pass"), "source": _BENCH},
     ("qwen3vl-2b", "q4_k_m", "vulkan", "mid"): {
         "workload": "photo_talk", "items_s": None, "query_ms": None, "first_word_s": 12.08, "cold_first_word_s": 12.08,
-        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "need_mb": 2491,
+        "load_s": 6.21, "ram_mb": 2491, "ws_mb": 2247, "vram_mb": 0, "shared_mb": 2058, "gpu": "integrated", "need_mb": 2491,
         "runs": 10, "crashes": 0, "hang_kills": 0, "kills": 0, "checks_passed": 3,
         "floor": dict(_NOT_DEGR, usefulness="pass", reliability="pass", responsiveness="pass", memory="pass",
                       availability="pass"), "source": _BENCH},

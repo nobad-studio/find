@@ -7,10 +7,15 @@ are usable). Each model's MEASURED cost, from the nearest reference profile ("li
 this PC, is checked against that budget and against FLOORS. Per workload (text, photo_search, photo_talk), each
 model gets one outcome:
   suggested        the most useful model that meets every required floor (ties: the lighter);
-  upgrade          fits the safety limits but misses the suggested experience (slower, more memory, finds less);
-  not_recommended  its measured needs exceed what this PC can give, or it failed Reliability or Usefulness;
+  upgrade          a stronger model (as useful or more, heavier) that fits the safety limits but costs more than
+                   the suggestion or misses its experience (slower answers, more memory than the floor allows);
+  lighter          meets the floors too, but is weaker or lighter than the suggestion (finds less, less memory);
+  not_recommended  its measured needs exceed what this PC can give, or it failed Reliability or Usefulness, or
+                   it misses the floor while finding less than the suggestion;
   not_measured     no measurement for a PC like this one (or no floor for the workload): never suggested.
 Shared GPU memory (built-in graphics) is system RAM: counted against the RAM need once, never as GPU capacity.
+A GPU-backend row applies only to the kind of graphics it was measured on (built-in or a card with its own memory):
+on the other kind it is not measured. Processor rows apply everywhere.
 """
 from . import jobs, models
 from .governor import LIMITS, gpu_reserve_mb
@@ -39,7 +44,8 @@ FLOORS = {
                    "required": _REQUIRED},
 }
 _RANK = {"meets": 0, "upgrade": 1, "not_measured": 2, "not_recommended": 3}
-_ORDER = {"suggested": 0, "upgrade": 1, "not_recommended": 2, "not_measured": 3}
+_ORDER = {"suggested": 0, "upgrade": 1, "lighter": 2, "not_recommended": 3, "not_measured": 4}
+_KIND = {"integrated": "built-in graphics", "discrete": "a graphics card with its own memory"}
 
 
 def _mb(x):
@@ -165,14 +171,21 @@ def _evaluate(w, cand, variant, backend, facts, classes, live, rows, lk):
         # a discrete card's own memory is GPU capacity, unless its family has no usable backend on it
         fam_class = ((classes or {}).get("gpu") or {}).get(_FAMILY[w])
         own = ad is not None and not ad.get("integrated") and fam_class != "compatibility"
+        pc_kind = "discrete" if own else "integrated"
+        row_kind = r.get("gpu") or ("discrete" if vram else "integrated" if r.get("shared_mb") else None)
+        if row_kind != pc_kind:
+            e.update(status="not_measured", row=None, reasons=[
+                f"measured on {_KIND.get(row_kind, 'unknown graphics')} only; this PC has {_KIND[pc_kind]}"])
+            return e
         if own:
             gpu_need = vram
             v_free = (live or {}).get("gpu_free_mb")
             v_free = int(ad.get("dedicated_mb") or 0) if v_free is None else int(v_free)
             gpu_usable = max(0, v_free - gpu_reserve_mb(v_free, (live or {}).get("settings")))
-        else:                                 # built-in graphics: its memory is system RAM, counted once
-            need += vram
-            shared = int(r.get("shared_mb") or 0) + vram
+        else:
+            # built-in graphics: its memory is system RAM, already in need_mb (the biggest single figure); only
+            # rows from built-in graphics apply here, so nothing is added a second time (spec 6.1)
+            shared = int(r.get("shared_mb") or 0)
     e["ram_need"], e["gpu_need"] = need, gpu_need
     cap = installed - LIMITS["LOW_FREE_MB"]
     floor_mb = f["ram_share"] * installed
@@ -304,12 +317,25 @@ def _suggested_why(w, e):
             f"{_n(c['items_s'])} photos a second, {_mb(c['ram_mb'])} of memory{tail}")
 
 
+def _finds_less(w, e, top):
+    return (f"finds less than {top['name']} (nDCG@10 {e['score']:.2f} against {top['score']:.2f})"
+            if w == "photo_search" else f"answers fewer checks than {top['name']}")
+
+
+def _is_lighter(e, top):
+    """A floor-meeting model that is weaker, or as useful and lighter, than the suggestion."""
+    return e["score"] < top["score"] or (e["ram_need"], e["gpu_need"]) < (top["ram_need"], top["gpu_need"])
+
+
+def _lighter_why(w, e, top):
+    parts = [_finds_less(w, e, top)] if e["score"] < top["score"] else []
+    if e["ram_need"] < top["ram_need"]:
+        parts.append(f"uses less memory ({_mb(e['ram_need'])} {_place(e)})")
+    return f"Lighter option: {e['name']}: " + " and ".join(parts)
+
+
 def _heavier_why(w, e, top):
-    """Why a model that also meets the floor isn't the suggestion: it finds less, or costs more."""
-    if e["score"] < top["score"]:
-        what = (f"finds less than {top['name']} (nDCG@10 {e['score']:.2f} against {top['score']:.2f})"
-                if w == "photo_search" else f"answers fewer checks than {top['name']}")
-        return f"Upgrade: {e['name']}: {what}"
+    """Why a stronger model that also meets the floor isn't the suggestion: it costs more."""
     a, b, parts = e["cost_here"], top["cost_here"], []
     if e["ram_need"] > top["ram_need"]:
         parts.append(f"more memory ({_mb(e['ram_need'])})")
@@ -331,7 +357,8 @@ def _heavier_why(w, e, top):
             parts.append(f"slower searches ({round(a['query_ms'])} ms {place})")
         if (a.get("items_s") or 0) < (b.get("items_s") or 0):
             parts.append(f"slower indexing ({_n(a['items_s'])} photos a second {place})")
-    return f"Upgrade: {e['name']}: " + (", ".join(parts) or f"as good as {top['name']} here, which is lighter")
+    return f"Upgrade: {e['name']}: " + (", ".join(parts) or
+                                        f"as good as {top['name']} {place}, and {top['name']} is suggested")
 
 
 def _now_note(e, live):
@@ -345,7 +372,8 @@ def _now_note(e, live):
 
 
 def for_pc(facts, classes, live, goal="balanced", focus="multilingual", *, rows=None, catalog=None):
-    """{workload: [{"model", "variant", "backend", "outcome", "why", "cost_here", "floors", "name", ...}]} for
+    """{workload: [{"model", "variant", "backend", "outcome", "why", "cost_here", "floors", "name", ...}]}
+    (outcome: suggested | upgrade | lighter | not_recommended | not_measured, see the module docstring) for
     text, photo_search and photo_talk on this PC and the selected runtime (live["runtime"][workload], else
     llama.cpp's Vulkan when installed for talk, else the processor). facts: hardware.scan(); classes:
     profile.classify / effective; live: {"free_ram_mb", "gpu_free_mb", "runtime", "measured": {(model, variant,
@@ -370,8 +398,14 @@ def for_pc(facts, classes, live, goal="balanced", focus="multilingual", *, rows=
         for e in entries:
             if e is top:
                 outcome, why = "suggested", _suggested_why(w, e)
+            elif e["status"] == "meets" and _is_lighter(e, top):
+                outcome, why = "lighter", _lighter_why(w, e, top)
             elif e["status"] == "meets":
                 outcome, why = "upgrade", _heavier_why(w, e, top)
+            elif e["status"] == "upgrade" and top is not None and e["score"] < top["score"]:
+                # misses the floor and finds less than the suggestion: not an upgrade
+                outcome = "not_recommended"
+                why = f"Not recommended: {e['name']}: {_finds_less(w, e, top)}; " + "; ".join(e["reasons"])
             elif e["status"] == "upgrade":
                 outcome = "upgrade"
                 why = f"Upgrade: {e['name']}: " + "; ".join(e["reasons"])

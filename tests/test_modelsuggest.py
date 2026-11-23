@@ -90,17 +90,42 @@ def test_8_cores_8_gb_is_memory_limited_not_high():
 
 
 def test_shared_gpu_memory_counts_against_ram():
-    # a row whose graphics memory was its own (vram_mb) lands on system RAM on built-in graphics: added to the RAM
-    # need, never counted as capacity of the GPU
-    rows = _talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=0, vram_mb=3500, need_mb=1000)
+    """Built-in graphics (Iris Xe-like): the graphics memory is system RAM, counted in the RAM need once."""
     cat = _cat(("photo_talk", "m", [("v", ())]))
-    e = run(MID_PC, rows, cat)["photo_talk"][0]
-    assert e["cost_here"]["ram_mb"] == 4500                       # 1,000 + 3,500 on shared memory
-    assert e["outcome"] == "upgrade" and e["floors"]["memory"] is False       # 4,500 > 25 % of 15.7 GB
     # a measured shared figure overlaps private memory: the biggest single figure, never a sum
     rows = _talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=1500, need_mb=1500)
     e = run(MID_PC, rows, cat)["photo_talk"][0]
     assert e["cost_here"]["ram_mb"] == 1500 and e["outcome"] == "suggested"
+    # shared memory over the floor makes it miss Memory, though it is not GPU capacity
+    rows = _talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=4500, need_mb=4500)
+    e = run(MID_PC, rows, cat)["photo_talk"][0]
+    assert e["outcome"] == "upgrade" and e["floors"]["memory"] is False       # 4,500 > 25 % of 15.7 GB
+
+
+def test_builtin_graphics_memory_is_not_added_a_second_time():
+    # a row measured on built-in graphics whose adapter also reported a little "dedicated" memory: need_mb already
+    # holds its graphics memory (spec 6.1: never added a second time)
+    rows = _talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=1500, vram_mb=128, need_mb=1500, gpu="integrated")
+    e = run(MID_PC, rows, _cat(("photo_talk", "m", [("v", ())])))["photo_talk"][0]
+    assert e["cost_here"]["ram_mb"] == 1500 and "gpu_mb" not in e["cost_here"]
+
+
+def test_gpu_rows_apply_only_to_the_same_kind_of_graphics():
+    """A GPU-backend row measured on built-in graphics says nothing about a discrete card, and the reverse: not
+    measured. Processor rows still apply."""
+    rtx = dict(GPU_PC, threads=12, gpus=[{"vendor": "nvidia", "name": "RTX", "dedicated_mb": 6144,
+                                          "shared_mb": 8000, "integrated": False}])
+    assert suggest.like(rtx, profile.classify(rtx))["profile"] == "mid"
+    out = by_model(suggest.for_pc(rtx, profile.classify(rtx), {}, "balanced", "multilingual")["photo_talk"])
+    assert {e["outcome"] for e in out.values()} == {"not_measured"}
+    assert "built-in graphics" in out["qwen3vl-2b"]["why"]
+    out = by_model(suggest.for_pc(rtx, profile.classify(rtx), {"runtime": {"photo_talk": "cpu"}}, "balanced",
+                                  "multilingual")["photo_talk"])
+    assert out["smolvlm2-500m"]["outcome"] == "suggested"
+    # the reverse: a row from a discrete card on built-in graphics
+    rows = _talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=0, vram_mb=2000, need_mb=1000)
+    e = run(MID_PC, rows, _cat(("photo_talk", "m", [("v", ())])))["photo_talk"][0]
+    assert e["outcome"] == "not_measured" and "its own memory" in e["why"]
 
 
 def test_dedicated_vram_is_gpu_capacity():
@@ -114,10 +139,16 @@ def test_dedicated_vram_is_gpu_capacity():
     rows.update(_talk_rows("m", ram_mb=1000, ws_mb=900, shared_mb=0, vram_mb=2700, need_mb=1000))
     e = run(GPU_PC, rows, cat, live={"gpu_free_mb": 3072})["photo_talk"][0]
     assert e["outcome"] == "not_recommended" and "2,560 MB" in e["why"]
-    # the shared memory a card may borrow is never its capacity: built-in graphics with 8 GB shared still counts
-    # a 2,700 MB graphics need against RAM
-    e = run(MID_PC, rows, cat)["photo_talk"][0]
-    assert e["cost_here"]["ram_mb"] == 3700 and "gpu_mb" not in e["cost_here"]
+
+
+def test_the_users_gpu_reserve_minimum_is_a_safety_limit():
+    cat = _cat(("photo_talk", "m", [("v", ())]))
+    rows = _talk_rows("m", "high", ram_mb=1000, ws_mb=900, shared_mb=0, vram_mb=2000, need_mb=1000)
+    live = {"gpu_free_mb": 3072}
+    assert run(GPU_PC, rows, cat, live=live)["photo_talk"][0]["outcome"] == "suggested"
+    live["settings"] = {"gpu_reserve_min_mb": 1536}                  # 3,072 - 1,536 = 1,536 MB usable
+    e = run(GPU_PC, rows, cat, live=live)["photo_talk"][0]
+    assert e["outcome"] == "not_recommended" and "1,536 MB" in e["why"]
 
 
 def test_unmeasured_model_is_never_suggested():
@@ -159,7 +190,10 @@ def test_best_usefulness_among_those_meeting_floors():
     out = by_model(run(MID_PC, rows, cat)["photo_search"])
     assert out["better"]["outcome"] == "suggested"
     assert out["best_slow"]["outcome"] == "upgrade" and "500 ms" in out["best_slow"]["why"]
-    assert out["ok"]["outcome"] == "upgrade" and "finds less" in out["ok"]["why"]
+    assert out["ok"]["outcome"] == "lighter"
+    assert out["ok"]["why"].startswith("Lighter option: OK: finds less than BETTER")
+    assert "uses less memory (300 MB on a similar PC)" in out["ok"]["why"]
+    assert not [e for e in out.values() if e["outcome"] == "upgrade" and "finds less" in e["why"]]
     assert out["useless"]["outcome"] == "not_recommended"
     assert out["better"]["cost_here"]["query_ms"] == 200.0 and out["better"]["cost_here"]["items_s"] == 1.5
 

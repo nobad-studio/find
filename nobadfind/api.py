@@ -14,6 +14,7 @@ from collections import deque
 from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
 from . import modelsuggest
 from . import profile as profile_mod
+from .settings import goal as settings_goal
 from . import governor as governor_mod
 from . import hardware as hw
 from .const import APP_VER, COUNT_SHARE, DEFAULTS, SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
@@ -1231,8 +1232,9 @@ class Api:
             live["free_ram_mb"] = b["free_mb"]
         if b["gpu_kind"] == "dedicated" and b["gpu_free_mb"] is not None:
             live["gpu_free_mb"] = b["gpu_free_mb"]
+        live["settings"] = {"gpu_reserve_min_mb": self._settings.get("gpu_reserve_min_mb")}    # a safety limit
         classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
-        return modelsuggest.for_pc(pc, classes, live, self._settings.get("performance_goal") or "balanced", focus)
+        return modelsuggest.for_pc(pc, classes, live, settings_goal(self._settings), focus)
 
     def models(self):
         pc = hw.scan()
