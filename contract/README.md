@@ -31,6 +31,10 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 - At most 8 connections. Requests run on a pool of 4 threads, so a slow call doesn't hold up a search; the calls
   that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`, `turbo_helper`) run on threads of their own
   and only one of each waits at a time, so search, status and quit always get an answer.
+- State reports (`status`, `status_full`, `hardware`, `capability_state`, `models`, `scope_info`, `turbo_state`,
+  `wsearch_state`, `performance_state`) run on a small pool of 2 threads of their own, so a slow one never makes a search
+  wait. One client may have 2 running and 4 waiting there; the next gets the JSON-RPC error `-32603` "busy: try again"
+  at once (poll again later; no schema change, any method may answer an error).
 
 ### Start-up order for a UI
 

@@ -170,6 +170,23 @@ void main() {
   });
 
   group('StatusController', () {
+    test('a status_full that times out never reaches the search box', () async {
+      final e = FakeEngine()..failStatusFull = const RpcException(-32000, 'The engine took too long to answer.');
+      final f = FindController(e, debounce: Duration.zero);
+      final s = StatusController(e);
+      f.setText('tax');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final notice = f.notice;
+      final count = f.answer.results.length;
+      await s.watch(true);
+      expect(e.calls, contains('status_full'));
+      expect(f.notice, notice);
+      expect(f.notice, isNot(contains('too long')));
+      expect(f.answer.results.length, count);
+      s.dispose();
+      f.dispose();
+    });
+
     test('losing the engine drops the details: nothing old is shown as current', () async {
       final e = FakeEngine();
       final s = StatusController(e);

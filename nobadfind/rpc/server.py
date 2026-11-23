@@ -19,6 +19,7 @@ Methods in `slow` (they wait for the user: a folder dialog, a permission prompt)
 they can never use up the pool; each of them lets only one call wait at a time (the handlers say "busy").
 """
 import ctypes
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,11 @@ MAX_CLIENTS = 8
 # stops reading from that client until some are answered, so a client writing as fast as it can doesn't queue
 # without bound. The UI has a handful in flight (a search, previews of the rows on screen, a status).
 MAX_INFLIGHT = 32
+# The status lane (1.2.0 S2): state reports (handlers.STATUS_LANE) run on STATUS_WORKERS threads of their own. One
+# client may have STATUS_WORKERS running + STATUS_WAITING waiting there; the next gets a "busy: try again" error at
+# once (the UI's status poll retries on its own schedule), so the lane's queue is bounded.
+STATUS_WORKERS = 2
+STATUS_WAITING = 4
 BUF = 64 * 1024
 WRITE_TIMEOUT_MS = 5000
 
@@ -152,6 +158,7 @@ class Conn:
         self.pid = pid.value if k.GetNamedPipeClientProcessId(handle, ctypes.byref(pid)) else 0
         self._closed = False
         self.inflight = threading.BoundedSemaphore(MAX_INFLIGHT)
+        self.lane_pending = 0                # status-lane calls running or waiting (Server._lane_take / _lane_done)
 
     def send(self, obj):
         data = encode(obj)
@@ -230,6 +237,15 @@ def client_problem(pid):
         k.CloseHandle(hp)
 
 
+def _request_id(line):
+    """The id of a request line, or None (a notification, or not JSON: nobody waits for an answer)."""
+    try:
+        rid = json.loads(line).get("id")
+    except Exception:
+        return None
+    return rid if isinstance(rid, (int, str)) and not isinstance(rid, bool) else None
+
+
 class Server:
     """Serves `methods` (name -> fn(params, conn)) on the user's pipe. start() is False if the pipe can't be made.
     check_client(pid) -> a reason or None: a connected client with a reason is dropped before it is read."""
@@ -240,6 +256,7 @@ class Server:
         self.methods = methods or {}
         self.on_drop = None                  # fn(conn) after a client is gone (pipe liveness: Rpc._dropped)
         self.slow = set()                    # method names answered on a thread of their own
+        self.status_lane = set()             # state reports, answered on the small status pool
         self.sid = user_sid()
         self.name = name or pipe_name(self.sid)
         self._stop = threading.Event()
@@ -247,6 +264,8 @@ class Server:
         self._conns = set()
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="rpc")
+        self._status_pool = ThreadPoolExecutor(max_workers=STATUS_WORKERS, thread_name_prefix="rpc-status")
+        self._lane_lock = threading.Lock()
         self._sd = ctypes.c_void_p()
         if not self._a.ConvertStringSecurityDescriptorToSecurityDescriptorW(
                 sddl_for(self.sid), 1, ctypes.byref(self._sd), None):          # SDDL_REVISION_1
@@ -278,6 +297,7 @@ class Server:
         for c in conns:
             c.close(linger=True)             # a client still reads what was written (quit's reply, quitting)
         self._pool.shutdown(wait=False, cancel_futures=True)
+        self._status_pool.shutdown(wait=False, cancel_futures=True)
         self._k.LocalFree(self._sd)
         self._sd = None
 
@@ -406,10 +426,19 @@ class Server:
                         threading.Thread(target=self._answer, args=(conn, line), daemon=True,
                                          name="rpc-slow").start()
                         continue
+                    lane = method_of(line) in self.status_lane
+                    if lane and not self._lane_take(conn):
+                        conn.inflight.release()
+                        rid = _request_id(line)
+                        if rid is not None and not conn.send(error(rid, INTERNAL_ERROR, "busy: try again")):
+                            return
+                        continue
                     try:
-                        self._pool.submit(self._answer, conn, line)
+                        (self._status_pool if lane else self._pool).submit(self._answer, conn, line, lane)
                     except RuntimeError:                       # the pool is shut down: stopping
                         conn.inflight.release()
+                        if lane:
+                            self._lane_done(conn)
                         break
         except Exception as e:
             log(f"rpc connection ended: {type(e).__name__}", "warn")
@@ -417,12 +446,25 @@ class Server:
             k.CloseHandle(ov.hEvent)
             self.drop(conn, linger or self._stop.is_set())    # stopping: what was written stays readable
 
-    def _answer(self, conn, line):
+    def _lane_take(self, conn):
+        with self._lane_lock:
+            if conn.lane_pending >= STATUS_WORKERS + STATUS_WAITING:
+                return False
+            conn.lane_pending += 1
+            return True
+
+    def _lane_done(self, conn):
+        with self._lane_lock:
+            conn.lane_pending = max(0, conn.lane_pending - 1)
+
+    def _answer(self, conn, line, lane=False):
         try:
             self._answer1(conn, line)
         except Exception as e:                                 # in a pool thread nobody would see it
             log(f"rpc answer failed: {type(e).__name__}", "warn")
         finally:
+            if lane:
+                self._lane_done(conn)
             try:
                 conn.inflight.release()
             except (AttributeError, ValueError):               # a test's Conn without one

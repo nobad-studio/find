@@ -8,6 +8,13 @@ from . import launch, models, notifications, search, settings, status, system, u
 # They wait for the user (a folder dialog, a permission prompt): the server answers them on threads of their own.
 SLOW = {"pick_folder", "wsearch_set", "use_instead_of_windows_search", "turbo_set", "turbo_helper"}
 
+# Methods that only report state: the server answers them on a small lane of their own, so a slow one can never
+# make a search wait. STATUS_READ_ONLY is the list of state reports with no side effects; the lane must stay inside it.
+STATUS_READ_ONLY = {"status", "status_full", "hardware", "capability_state", "models", "scope_info", "turbo_state",
+                    "wsearch_state", "performance_state", "update_state", "hotkey_state"}
+STATUS_LANE = {"status", "status_full", "hardware", "capability_state", "models", "scope_info", "turbo_state",
+               "wsearch_state", "performance_state"}
+
 
 def methods(api, events=None, about=system.about):
     """name -> fn(params, conn) for every method in the contract. `about` gives hello's app, version and pid."""

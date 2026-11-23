@@ -1,4 +1,5 @@
 """The engine's pipe for the Flutter UI: protocol, handlers, and a real named pipe (Windows only)."""
+import os
 import json
 import sys
 import threading
@@ -574,3 +575,60 @@ def test_a_refused_client_is_dropped_before_anything_is_read():
         assert asked and asked[0] > 0 and s.clients() == []
     finally:
         s.stop()
+
+
+# ---------- the status lane (1.2.0 S2) ----------
+def test_methods_in_status_lane_have_no_side_effects():
+    """The lane's names are a subset of a read-only list (state reports only) and are real contract methods."""
+    contract = json.load(open(os.path.join(os.path.dirname(__file__), "..", "contract", "methods.schema.json"),
+                              encoding="utf-8"))
+    names = set(contract["methods"]) if "methods" in contract else set(contract)
+    assert handlers.STATUS_LANE <= handlers.STATUS_READ_ONLY
+    assert handlers.STATUS_LANE <= names
+    assert "status_full" in handlers.STATUS_LANE and "search" not in handlers.STATUS_LANE
+    assert not handlers.STATUS_LANE & handlers.SLOW
+
+
+@win_only
+def test_search_answers_while_status_is_slow(served):
+    rpc, name, api = served
+    gate = threading.Event()
+    api.status = lambda: (gate.wait(10), {"files": 1})[1]
+    c = Client(name)
+    try:
+        for i in range(6):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "status_full", "params": {}})
+        time.sleep(0.2)
+        t0 = time.time()
+        c.send({"jsonrpc": "2.0", "id": 99, "method": "search", "params": {"text": "x"}})
+        assert "result" in c.reply(99)
+        assert time.time() - t0 < 0.5
+    finally:
+        gate.set()
+        c.close()
+
+
+@win_only
+def test_status_lane_is_bounded(served):
+    """One client may have 2 running + 4 waiting status-lane calls; the next ones get a "busy" error at once and
+    the ones accepted are all answered."""
+    rpc, name, api = served
+    gate = threading.Event()
+    api.status = lambda: (gate.wait(10), {"files": 1})[1]
+    c = Client(name)
+    try:
+        for i in range(9):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "status_full", "params": {}})
+        busy = {}
+        t0 = time.time()
+        while len(busy) < 3:
+            m = c.line()
+            assert "error" in m
+            busy[m["id"]] = m["error"]["message"]
+        assert time.time() - t0 < 2
+        assert set(busy) == {6, 7, 8} and all(v.startswith("busy") for v in busy.values())
+        gate.set()
+        assert {c.line()["id"] for _ in range(6)} == set(range(6))
+    finally:
+        gate.set()
+        c.close()

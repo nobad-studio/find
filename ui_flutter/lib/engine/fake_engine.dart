@@ -394,7 +394,14 @@ class FakeEngine implements EngineApi {
   Future<EngineStatus> status() => _answer('status', () => _brief);
 
   @override
-  Future<EngineStatus> statusFull() => _answer('status_full', _full);
+  Future<EngineStatus> statusFull() => _answer('status_full', () {
+        final fail = failStatusFull;
+        if (fail != null) throw fail;
+        return _full();
+      });
+
+  /// `status_full` fails with this (tests: the engine was too slow for it).
+  RpcException? failStatusFull;
 
   @override
   Future<void> watchDetails(bool on) => _answer('watch_details', () => _watching = on);
