@@ -7,8 +7,8 @@ import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/controls.dart';
-import '../hotkey_setting.dart';
 import '../../../widgets/icons.dart';
+import '../hotkey_setting.dart';
 import '../settings_parts.dart';
 
 const _keys = [

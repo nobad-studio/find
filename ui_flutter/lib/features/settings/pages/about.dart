@@ -12,8 +12,8 @@ import '../../../app/theme/tokens.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/common.dart';
 import '../../../widgets/controls.dart';
-import '../../../widgets/motion.dart';
 import '../../../widgets/icons.dart';
+import '../../../widgets/motion.dart';
 import '../settings_parts.dart';
 import '../update_progress.dart';
 

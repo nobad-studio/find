@@ -70,9 +70,6 @@ void main() {
       test('$name glass: text on $layer is readable over any backdrop', () {
         for (final (role, fg, need) in [('text', c.text, 7.0), ('muted', c.muted, 4.5), ('dim', c.dim, 4.5)]) {
           final (r, where) = worst(c, fill, fg);
-          // printed so the numbers can be reported (task D1)
-          // ignore: avoid_print
-          print('$name $layer $role ${r.toStringAsFixed(2)}:1 (worst: $where)');
           expect(r, greaterThanOrEqualTo(need), reason: '$name $role on $layer: ${r.toStringAsFixed(2)}:1 at $where');
         }
       });

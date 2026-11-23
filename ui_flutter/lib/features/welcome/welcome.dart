@@ -55,18 +55,18 @@ class Welcome extends StatelessWidget {
             builder: (context, box) => SmoothScroll(
               builder: (sc) => SingleChildScrollView(
                 controller: sc,
-                padding: const EdgeInsets.fromLTRB(40, 20, 40, 20),
+                padding: const EdgeInsets.fromLTRB(40, 16, 40, 16),
                 child: ConstrainedBox(
                   // centred in the window when it fits, scrolls when it doesn't
-                  constraints: BoxConstraints(minHeight: (box.maxHeight - 40).clamp(0, double.infinity)),
+                  constraints: BoxConstraints(minHeight: (box.maxHeight - 32).clamp(0, double.infinity)),
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 720),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const NbMark(size: 40),
-                          const SizedBox(height: NbSpace.x4),
+                          const NbMark(size: 36),
+                          const SizedBox(height: NbSpace.x3),
                           Semantics(
                             header: true,
                             child: Text(
@@ -75,9 +75,9 @@ class Welcome extends StatelessWidget {
                               style: NbType.display(24, c.text),
                             ),
                           ),
-                          const SizedBox(height: NbSpace.x4),
+                          const SizedBox(height: NbSpace.x3),
                           const SignalRule(),
-                          const SizedBox(height: NbSpace.x4),
+                          const SizedBox(height: NbSpace.x3),
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 580),
                             child: Text(
@@ -88,7 +88,7 @@ class Welcome extends StatelessWidget {
                               style: NbType.text(14, c.muted, height: 1.55),
                             ),
                           ),
-                          const SizedBox(height: NbSpace.x6),
+                          const SizedBox(height: NbSpace.x5),
                           LayoutBuilder(
                             builder: (context, row) => row.maxWidth < 560 || facts.length < 2
                                 // narrow (or only one): stacked, full width
@@ -165,7 +165,7 @@ class Welcome extends StatelessWidget {
                               ],
                             ),
                           ),
-                          const SizedBox(height: NbSpace.x6),
+                          const SizedBox(height: NbSpace.x5),
                           NbButton(
                             'Start searching',
                             autofocus: true,
@@ -197,11 +197,11 @@ class _Fact extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     return NbPanel(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
       child: Column(
         children: [
           SizedBox(
-            height: 24,
+            height: 22,
             child: keys == null
                 ? Center(child: Container(width: 22, height: 2, color: c.orange))
                 : Wrap(
@@ -211,8 +211,8 @@ class _Fact extends StatelessWidget {
                     children: [for (final k in keys!.split('+')) Kbd(k)],
                   ),
           ),
-          const SizedBox(height: NbSpace.x2),
-          Text(text, textAlign: TextAlign.center, style: NbType.text(13.5, c.text, height: 1.5)),
+          const SizedBox(height: 6),
+          Text(text, textAlign: TextAlign.center, style: NbType.text(13.5, c.text, height: 1.45)),
         ],
       ),
     );
@@ -265,31 +265,36 @@ class _YourPcState extends State<_YourPc> {
           HardwareTiles(info.pc),
           if (info.tierRecommended.isNotEmpty) ...[
             const SizedBox(height: NbSpace.x3),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 600),
-              child: Text.rich(
-                TextSpan(
-                  children: [
+            // the recommendation and its action on one centred line
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text.rich(
                     TextSpan(
-                      text: 'Recommended models for this PC: ${tierLabel(info.tierRecommended)}. ',
-                      style: NbType.text(13, c.text, weight: FontWeight.w600),
+                      children: [
+                        TextSpan(
+                          text: 'Recommended models for this PC: ${tierLabel(info.tierRecommended)}. ',
+                          style: NbType.text(13, c.text, weight: FontWeight.w600),
+                        ),
+                        TextSpan(text: tierWhy(info.tierRecommended)),
+                      ],
                     ),
-                    TextSpan(text: tierWhy(info.tierRecommended)),
-                  ],
+                    textAlign: TextAlign.center,
+                    style: NbType.text(12, c.dim, height: 1.45),
+                  ),
                 ),
-                textAlign: TextAlign.center,
-                style: NbType.text(12, c.dim, height: 1.45),
-              ),
-            ),
-            const SizedBox(height: NbSpace.x2),
-            NbButton(
-              'See models',
-              small: true,
-              kind: NbButtonKind.ghost,
-              onPressed: () {
-                unawaited(s.settings.set('welcome_seen', true));
-                s.nav.openSettings(SettingsPage.models);
-              },
+                const SizedBox(width: NbSpace.x3),
+                NbButton(
+                  'See models',
+                  small: true,
+                  kind: NbButtonKind.ghost,
+                  onPressed: () {
+                    unawaited(s.settings.set('welcome_seen', true));
+                    s.nav.openSettings(SettingsPage.models);
+                  },
+                ),
+              ],
             ),
           ],
         ],

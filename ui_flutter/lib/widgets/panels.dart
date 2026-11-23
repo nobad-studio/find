@@ -323,9 +323,7 @@ class _NbSweepState extends State<NbSweep> with SingleTickerProviderStateMixin {
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       borderRadius: NbRadius.pillAll,
-                      gradient: LinearGradient(
-                        colors: [c.orange.withValues(alpha: 0), c.orange, c.orange.withValues(alpha: 0)],
-                      ),
+                      gradient: LinearGradient(colors: [c.orange.withValues(alpha: 0), c.orange, c.orange.withValues(alpha: 0)]),
                     ),
                   ),
                 );
