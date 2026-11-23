@@ -22,6 +22,17 @@
   (Qwen3-VL waits on battery) and other apps' use of the processor. On a graphics card the model's graphics need
   counts against system memory too, if it is the bigger one.
 
+### Privacy and security
+- The turbo helper's service checks more before it serves anyone. The program that connects must still be running
+  and must have started before it connected, so a program that connects and quits can't pass its process number on
+  to a new NobadFind.exe. The one-time setup step refuses a parent process that started after it for the same
+  reason.
+- The service checks itself every time it starts: all of its code must come from its protected folder in Program
+  Files (never unpacked into a temp folder), and it ends if its token still holds a powerful privilege (SeDebug,
+  SeImpersonate, SeBackup, SeTcb and the like) that its setup took away.
+- Setup reads the service back after creating it and fails unless its privilege list is exactly the two it needs.
+  A setup that fails part way no longer leaves a half copy (`bin.new`) in Program Files.
+
 ## 1.1.0 · 2026-11-22
 
 ### Talk about a photo
