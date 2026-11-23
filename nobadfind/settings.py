@@ -129,6 +129,8 @@ def coerce(key, value):
         return value if value in WSEARCH_STARTS else d
     if key == "theme":
         return value if value in ("dark", "light") else d
+    if key == "setup_offer":
+        return value if value in ("pending", "later", "accepted", "done") else d
     if key == "theme_style":
         return value if value in ("classic", "ice") else d
     if key == "scope":
@@ -209,6 +211,8 @@ class Settings:
                     self.data["games_mode"] = "off"
                 if "scope" not in raw:          # before scopes: a folder list meant exactly those folders
                     self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
+                if "setup_offer" not in raw and (raw.get("semantic") is True or raw.get("photo_meaning") is True):
+                    self.data["setup_offer"] = "done"   # set up before 1.2.0: the first-run window isn't asked for
                 if "performance_goal" not in raw:   # older settings: the goal from power, saved once (_migrate_goal)
                     self.data["performance_goal"] = goal_from_power(self.data["power"])
                     self.goal_pending = True

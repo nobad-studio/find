@@ -953,6 +953,33 @@
         "additionalProperties": false
       }
     },
+    "setup_offer": {
+      "description": "1.2.0 first-run window: after the first scan, the models suggested for this PC with sizes, measured cost, why and the time to index what the scan counted. Nothing is downloaded.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/setup_offer"
+      }
+    },
+    "setup_accept": {
+      "description": "The first-run window's Download: the consent (consent \"DOWNLOAD\"; any other word: ok false, nothing changes) for exactly the listed models given. Sets what auto_configure sets for them, then downloads those not on disk (a talk model with its runtime) through model_download; progress comes as download events.",
+      "params": {
+        "$ref": "#/$defs/setup_accept_params"
+      },
+      "result": {
+        "$ref": "#/$defs/setup_accept"
+      }
+    },
+    "setup_later": {
+      "description": "The first-run window's Later: not shown again by itself; one reminder notification points to Settings > Models.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/ok"
+      }
+    },
     "model_language": {
       "description": "\"English first\", \"Many languages\" or \"Hindi\" (Settings -> Models): changes the recommendation; nothing is downloaded or switched by itself.",
       "params": {
@@ -3272,6 +3299,15 @@
           "minimum": 512,
           "maximum": 4096,
           "description": "1.2.0: the GPU reserve is max(this, 15% of free graphics memory)."
+        },
+        "setup_offer": {
+          "enum": [
+            "pending",
+            "later",
+            "accepted",
+            "done"
+          ],
+          "description": "1.2.0: the first-run models window: pending (not answered yet), later (a reminder was left), accepted (its downloads started), done. Settings from before 1.2.0 with meaning or photo search on count as done."
         }
       },
       "required": [
@@ -3337,7 +3373,8 @@
         "profile_override_cpu",
         "profile_override_storage",
         "profile_override_memory",
-        "gpu_reserve_min_mb"
+        "gpu_reserve_min_mb",
+        "setup_offer"
       ],
       "additionalProperties": false
     },
@@ -3620,6 +3657,14 @@
           "type": "integer",
           "minimum": 512,
           "maximum": 4096
+        },
+        "setup_offer": {
+          "enum": [
+            "pending",
+            "later",
+            "accepted",
+            "done"
+          ]
         }
       },
       "additionalProperties": false
@@ -4750,6 +4795,362 @@
         "ok",
         "reset",
         "kept"
+      ],
+      "additionalProperties": false
+    },
+    "setup_cost": {
+      "type": "object",
+      "description": "What it costs, as measured (modelsuggest cost_here): measured_on says where (\"this PC\"; \"similar PC\": the nearest reference profile; \"reference PC\": the text models' measurement). Only the figures that were measured are sent.",
+      "properties": {
+        "load_s": {
+          "type": "number"
+        },
+        "items_s": {
+          "type": "number"
+        },
+        "ram_mb": {
+          "type": "number"
+        },
+        "query_ms": {
+          "type": "number"
+        },
+        "answer_s": {
+          "type": "number"
+        },
+        "gpu_mb": {
+          "type": "number"
+        },
+        "shared_mb": {
+          "type": "number"
+        },
+        "index_h": {
+          "type": "number"
+        },
+        "measured_on": {
+          "enum": [
+            "this PC",
+            "similar PC",
+            "reference PC"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "setup_item": {
+      "type": "object",
+      "description": "One model the first-run window lists.",
+      "properties": {
+        "workload": {
+          "enum": [
+            "text",
+            "photo_search",
+            "photo_talk"
+          ]
+        },
+        "model": {
+          "$ref": "#/$defs/model_id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "suggested",
+            "upgrade",
+            "lighter",
+            "not_measured"
+          ],
+          "description": "modelsuggest's outcome. not_measured: the tier's pick for this PC's memory and cores, listed because nothing measured can be suggested (text has no floor yet); never ticked."
+        },
+        "group": {
+          "enum": [
+            "suggested",
+            "more"
+          ],
+          "description": "more = \"More for this PC\": upgrades and lighter options, never ticked"
+        },
+        "size_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "MB still to download (a talk model: with its runtime); 0 when on disk"
+        },
+        "cost_here": {
+          "$ref": "#/$defs/setup_cost"
+        },
+        "why": {
+          "type": "string"
+        },
+        "est_index": {
+          "type": "string",
+          "description": "how long the first pass over what the first scan counted takes, from the measured items a second (\"\" for talk or before the first scan)"
+        },
+        "checked": {
+          "type": "boolean",
+          "description": "ticked by default: suggested only, never photo_talk"
+        },
+        "on_disk": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "not_downloaded",
+            "downloading",
+            "ready",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": "string",
+          "description": "why its last download failed (\"\" if it didn't)"
+        },
+        "licence": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "description": "the host it downloads from"
+        },
+        "runtime": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "description": "a talk model's llama.cpp runtime for this PC, downloaded in the same consent",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/model_id"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "size_mb": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "size_mb",
+                "source"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "workload",
+        "model",
+        "name",
+        "outcome",
+        "group",
+        "size_mb",
+        "cost_here",
+        "why",
+        "est_index",
+        "checked",
+        "on_disk",
+        "state",
+        "error",
+        "licence",
+        "source",
+        "runtime"
+      ],
+      "additionalProperties": false
+    },
+    "setup_offer": {
+      "type": "object",
+      "properties": {
+        "show": {
+          "type": "boolean",
+          "description": "show the window now: after the first scan, until it is answered (and again after a download it started failed)"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "later",
+            "accepted",
+            "done"
+          ]
+        },
+        "walked": {
+          "type": "boolean",
+          "description": "the first scan is done (est_index needs its counts)"
+        },
+        "pc": {
+          "type": "object",
+          "properties": {
+            "like": {
+              "enum": [
+                "low",
+                "mid",
+                "high"
+              ]
+            },
+            "similar": {
+              "type": "boolean",
+              "description": "false below Low: its speed isn't measured"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "classes": {
+              "type": "object",
+              "properties": {
+                "gpu": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "enum": [
+                      "performance",
+                      "balanced",
+                      "efficiency",
+                      "compatibility",
+                      null
+                    ]
+                  }
+                },
+                "cpu": {
+                  "enum": [
+                    "performance",
+                    "balanced",
+                    "efficiency",
+                    "compatibility",
+                    null
+                  ]
+                },
+                "storage": {
+                  "enum": [
+                    "performance",
+                    "balanced",
+                    "efficiency",
+                    "compatibility",
+                    null
+                  ]
+                },
+                "memory": {
+                  "enum": [
+                    "performance",
+                    "balanced",
+                    "efficiency",
+                    "compatibility",
+                    null
+                  ]
+                }
+              },
+              "required": [
+                "gpu",
+                "cpu",
+                "storage",
+                "memory"
+              ],
+              "additionalProperties": false
+            },
+            "hardware": {
+              "$ref": "#/$defs/hardware"
+            }
+          },
+          "required": [
+            "like",
+            "similar",
+            "summary",
+            "classes",
+            "hardware"
+          ],
+          "additionalProperties": false
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/setup_item"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "plain reasons where nothing is suggested"
+        },
+        "total_mb": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "the ticked items' size_mb"
+        },
+        "est_download": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "null until a download measured this PC's speed; then the time left (running downloads) or for the total"
+        }
+      },
+      "required": [
+        "show",
+        "state",
+        "walked",
+        "pc",
+        "items",
+        "notes",
+        "total_mb",
+        "est_download"
+      ],
+      "additionalProperties": false
+    },
+    "setup_accept_params": {
+      "type": "object",
+      "properties": {
+        "models": {
+          "type": "array",
+          "description": "at most 8",
+          "items": {
+            "$ref": "#/$defs/model_id"
+          }
+        },
+        "consent": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "models",
+        "consent"
+      ],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "models": [
+            "siglip2-base"
+          ],
+          "consent": "DOWNLOAD"
+        }
+      ]
+    },
+    "setup_accept": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "started": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/model_id"
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "started"
       ],
       "additionalProperties": false
     }

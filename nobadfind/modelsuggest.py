@@ -310,7 +310,8 @@ def _place(e):
 def _suggested_why(w, e):
     c, tail = e["cost_here"], "" if _here(e) else " (measured on a similar PC)"
     if w == "photo_talk":
-        mem = (f"{_mb(e['shared'])} on the graphics card's shared memory" if e.get("shared") else
+        # only built-in graphics rows have shared memory: it is the PC's memory, never a card's (task D2 wording)
+        mem = (f"{_mb(e['shared'])} of memory, shared with the built-in graphics" if e.get("shared") else
                f"{_mb(c['ram_mb'])} of memory")
         return f"Suggested: {e['name']}: first word about {round(c['answer_s'])} s, {mem}{tail}"
     return (f"Suggested: {e['name']}: a search takes about {round(c['query_ms'])} ms, it indexes "

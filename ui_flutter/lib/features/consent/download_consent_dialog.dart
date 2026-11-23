@@ -181,13 +181,69 @@ Future<bool> askDownloadConsent(BuildContext context, String model) async {
   return r ?? false;
 }
 
+/// A consent's facts, (label, value) rows in one box (the consent dialogs, the first-run window).
+class ConsentFacts extends StatelessWidget {
+  const ConsentFacts(this.facts, {super.key});
+  final List<(String, String)> facts;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: c.raised,
+        borderRadius: NbRadius.rowAll,
+        border: Border.all(color: c.line),
+      ),
+      child: Column(
+        children: [
+          for (final (k, v) in facts)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(width: 86, child: Text(k, style: NbType.text(NbSize.small, c.dim))),
+                  Expanded(child: Text(v, style: NbType.data(12, c.text, height: 1.45))),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "This is NOBAD Find's only internet connection", with the orange edge.
+class OnlyConnectionNote extends StatelessWidget {
+  const OnlyConnectionNote({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(width: 3, height: 38, margin: const EdgeInsets.only(right: 12, top: 2), color: c.orange),
+        Expanded(
+          child: Text(
+            "This is NOBAD Find's only internet connection. Your files, your index and your searches stay on "
+            'this PC.',
+            style: NbType.text(13, c.text, height: 1.5),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class ConsentDialog extends StatelessWidget {
   const ConsentDialog({super.key, required this.offer});
   final ModelOffer offer;
 
   @override
   Widget build(BuildContext context) {
-    final c = NbColors.of(context);
     return NbDialog(
       title: offer.title,
       width: 500,
@@ -197,43 +253,9 @@ class ConsentDialog extends StatelessWidget {
         children: [
           Text(offer.what),
           const SizedBox(height: NbSpace.x4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: c.raised,
-              borderRadius: NbRadius.rowAll,
-              border: Border.all(color: c.line),
-            ),
-            child: Column(
-              children: [
-                for (final (k, v) in offer.facts)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(width: 86, child: Text(k, style: NbType.text(NbSize.small, c.dim))),
-                        Expanded(child: Text(v, style: NbType.data(12, c.text, height: 1.45))),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          ConsentFacts(offer.facts),
           const SizedBox(height: NbSpace.x4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(width: 3, height: 38, margin: const EdgeInsets.only(right: 12, top: 2), color: c.orange),
-              Expanded(
-                child: Text(
-                  "This is NOBAD Find's only internet connection. Your files, your index and your searches stay on "
-                  'this PC.',
-                  style: NbType.text(13, c.text, height: 1.5),
-                ),
-              ),
-            ],
-          ),
+          const OnlyConnectionNote(),
         ],
       ),
       actions: [

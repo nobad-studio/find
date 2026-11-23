@@ -195,6 +195,12 @@ class PipeEngine implements EngineApi {
   @override
   Future<AutoConfig> autoConfigure() => _pipe.autoConfigure();
   @override
+  Future<SetupOffer> setupOffer() => _pipe.setupOffer();
+  @override
+  Future<SetupAccept> setupAccept(List<String> models) => _pipe.setupAccept(models);
+  @override
+  Future<ActionResult> setupLater() => _pipe.setupLater();
+  @override
   Future<ActionResult> modelLanguage(String focus) => _pipe.modelLanguage(focus);
   @override
   Future<ScopeInfo> scopeInfo() => _pipe.scopeInfo();

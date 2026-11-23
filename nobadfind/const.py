@@ -181,6 +181,10 @@ DEFAULTS = {
     "theme_style": "classic",       # the window's look: "classic" (Mica, warm glows) or "ice" (Acrylic, cold frost)
     "bg_notice_seen": False,        # the one-time "closing keeps NOBAD Find ready" notice was dismissed
     "welcome_seen": False,          # the Flutter UI's first-run welcome was dismissed (Start searching)
+    # 1.2.0 (plan Task 6): the first-run models window after the first scan (firstrun.py): pending (not answered)
+    # | later (a reminder was left; it is on Settings > Models) | accepted (downloads started) | done. Settings that
+    # predate it with meaning or photo search on count as done (Settings)
+    "setup_offer": "pending",
     "update_check": True,           # look for a newer NOBAD Find once a day (GitHub, nobad-studio/find; update.py)
     "models_stay_loaded": False,    # on: models stay in memory (instant searches, more memory); off: freed when idle
     "tray": True,                   # NOBAD Find's icon in the notification area (the engine's, works with the UI closed)

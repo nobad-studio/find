@@ -250,4 +250,17 @@ void main() {
       gridsAreEven(tester, page.label);
     });
   }
+
+  testWidgets('the first-run models window: every card one width, every icon tile with room', (tester) async {
+    final engine = FakeEngine(settings: seen)..setupShow = true;
+    // tall enough for the whole list (at 760 px it scrolls inside the window)
+    await pumpApp(tester, engine, size: const Size(1180, 1300));
+    await tester.pumpAndSettle();
+    final cards = [for (final e in find.byType(NbCard).evaluate()) tester.getRect(find.byWidget(e.widget))];
+    expect(cards, hasLength(5), reason: 'this PC and four models');
+    for (final r in cards.skip(1)) {
+      edges(r, cards.first, 'first-run card');
+    }
+    tilesHaveRoom(tester, 'First-run window');
+  });
 }

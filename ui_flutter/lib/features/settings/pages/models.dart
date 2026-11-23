@@ -11,6 +11,7 @@ import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../app/theme/typography.dart';
+import '../../../engine/engine_api.dart' show RpcException;
 import '../../../engine/models/format.dart';
 import '../../../engine/models/graphics.dart';
 import '../../../engine/models/models_info.dart';
@@ -23,6 +24,7 @@ import '../../../widgets/glass.dart';
 import '../../../widgets/icons.dart';
 import '../../../widgets/panels.dart';
 import '../../consent/download_consent_dialog.dart';
+import '../../setup/setup_dialog.dart';
 import '../settings_parts.dart';
 
 class ModelsPage extends StatefulWidget {
@@ -224,7 +226,64 @@ class _PcAndTier extends StatelessWidget {
               onPressed: m.autoBusy ? null : () => unawaited(m.autoConfigure(consent: (x) => _consent(context, x))),
             ),
           ),
+        const _SuggestedRow(),
       ],
+    );
+  }
+}
+
+/// 1.2.0: the first-run models window again (setting `setup_offer`: what was answered), any time.
+class _SuggestedRow extends StatefulWidget {
+  const _SuggestedRow();
+
+  @override
+  State<_SuggestedRow> createState() => _SuggestedRowState();
+}
+
+class _SuggestedRowState extends State<_SuggestedRow> {
+  bool _busy = false;
+  String _error = '';
+
+  static String help(String state) => switch (state) {
+    'later' => 'You chose Later in the first-run window; nothing was downloaded.',
+    'accepted' => 'Downloading what you chose in the first-run window.',
+    'done' => 'Answered in the first-run window.',
+    _ => 'Comes up once after the first scan.',
+  };
+
+  Future<void> _show() async {
+    final s = AppScope.of(context);
+    setState(() {
+      _busy = true;
+      _error = '';
+    });
+    try {
+      final offer = await s.engine.setupOffer();
+      if (!mounted) return;
+      setState(() => _busy = false);
+      await showSetupDialog(context, offer);
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e is RpcException && e.code == -32601 ? 'This needs a newer engine.' : "The engine didn't answer.";
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppScope.of(context);
+    final state = s.settings.settings.text('setup_offer');
+    return SettingRow(
+      label: 'Suggested for this PC',
+      help: [
+        'The models measured to suit this PC, with sizes, memory and why; each download asks first.',
+        help(state),
+        if (_error.isNotEmpty) _error,
+      ].join(' '),
+      control: NbButton(_busy ? 'Opening…' : 'Show', small: true, kind: NbButtonKind.ghost, onPressed: _busy ? null : _show),
     );
   }
 }
@@ -320,8 +379,13 @@ bool _builtInVulkan(ModelInfo x, Hardware? pc) =>
     pc != null && x.feature == 'runtime' && x.id.endsWith('-vulkan') && graphicsOf(pc).kind == GraphicsKind.integrated;
 
 /// [x]'s name as this PC has it.
-String modelName(ModelInfo x, Hardware? pc) =>
-    _builtInVulkan(x, pc) ? 'llama.cpp runtime (built-in graphics, Vulkan)' : x.name;
+String modelName(ModelInfo x, Hardware? pc) => _builtInVulkan(x, pc) ? builtInVulkanName : x.name;
+
+const builtInVulkanName = 'llama.cpp runtime (built-in graphics, Vulkan)';
+
+/// A runtime's name ([id], the engine's [name]) as this PC has it: the same mapping as [modelName].
+String runtimeName(String id, String name, Hardware? pc) =>
+    pc != null && id.endsWith('-vulkan') && graphicsOf(pc).kind == GraphicsKind.integrated ? builtInVulkanName : name;
 
 /// What [x] does, as this PC has it.
 String modelImproves(ModelInfo x, Hardware? pc) =>
@@ -370,8 +434,8 @@ class _ModelRow extends StatelessWidget {
                             modelName(x, m.info.pc),
                             style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3),
                           ),
-                          if (x.tier.isNotEmpty) _Tag(tierLabel(x.tier)),
-                          if (x.recommended) const _Tag('Recommended', strong: true),
+                          if (x.tier.isNotEmpty) ModelTag(tierLabel(x.tier)),
+                          if (x.recommended) const ModelTag('Recommended', strong: true),
                         ],
                       ),
                       if (x.improves.isNotEmpty)
@@ -608,8 +672,8 @@ class _Actions extends StatelessWidget {
   }
 }
 
-class _Tag extends StatelessWidget {
-  const _Tag(this.text, {this.strong = false});
+class ModelTag extends StatelessWidget {
+  const ModelTag(this.text, {super.key, this.strong = false});
   final String text;
   final bool strong;
 

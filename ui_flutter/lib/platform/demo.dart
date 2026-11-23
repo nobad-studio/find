@@ -3,7 +3,7 @@
 ///   120 ms, writes how long each answer took (never the words) to NOBAD_FIND_UI_TIMING, and saves pictures of itself
 ///   to NOBAD_FIND_UI_SHOT_DIR. Used because the reference PC may be locked during a run (no keyboard or capture).
 /// - NOBAD_FIND_UI_DEMO=tour: goes through every main screen in dark and then light (welcome, Home, results,
-///   Index, Settings pages, the consent dialog) and saves a picture of each. Meant for NOBAD_FIND_FAKE_ENGINE=1.
+///   Index, Settings pages, the consent dialog, the first-run models window) and saves a picture of each. Meant for NOBAD_FIND_FAKE_ENGINE=1.
 library;
 
 import 'dart:async';
@@ -17,6 +17,7 @@ import '../app/scope.dart';
 import '../app/theme/colors.dart';
 import '../engine/engine_api.dart';
 import '../features/consent/download_consent_dialog.dart';
+import '../features/setup/setup_dialog.dart';
 import '../state/search_controller.dart';
 import 'timing.dart';
 
@@ -148,6 +149,26 @@ class Demo {
         await _shot('tour-consent-$theme.png');
         appNavigator.currentState?.pop(false);
         await _wait(400);
+        // the first-run models window, as the engine offers it (shown as is: no answer is sent from the tour)
+        try {
+          final offer = await s.engine.setupOffer();
+          final c2 = appNavigator.currentContext;
+          if (c2 != null && c2.mounted) {
+            unawaited(previewSetupDialog(c2, offer, s.engine));
+            await _wait(800);
+            await _shot('tour-setup-$theme.png');
+            final pos = _pageScroll();
+            if (theme == 'dark' && pos != null && pos.maxScrollExtent > 0) {
+              pos.jumpTo(pos.maxScrollExtent);
+              await _wait(500);
+              await _shot('tour-setup-$theme-2.png');
+            }
+            appNavigator.currentState?.pop();
+            await _wait(400);
+          }
+        } on Object {
+          // an engine without the first-run window
+        }
       }
     }
     s.nav.go(AppTab.search);

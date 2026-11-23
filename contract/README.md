@@ -273,6 +273,27 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
   and language focus. Everything that needs no download is applied at once; for each step with `needs_download`, the
   UI asks for consent and calls `model_download`. A step's `id` is `""` when the tier turns that feature off.
+- **`setup_offer`** `{}` → `{show, state: pending|later|accepted|done, walked, pc: {like: low|mid|high, similar,
+  summary, classes, hardware}, items: [SetupItem], notes: [str], total_mb, est_download: str|null}` (1.2.0): the
+  first-run models window. `show` is true once the first scan is done until the window is answered (and again when a
+  download it started failed, to try again); the UI shows it then, and Settings → Models ("Suggested for this PC")
+  any time. `SetupItem` = `{workload: text|photo_search|photo_talk, model, name, outcome:
+  suggested|upgrade|lighter|not_measured, group: suggested|more, size_mb, cost_here, why, est_index, checked,
+  on_disk, state: not_downloaded|downloading|ready|failed, error, licence, source, runtime: null|{id, name, size_mb,
+  source}}`. Only `suggested` models are ticked, never `photo_talk`; `more` ("More for this PC") lists upgrades and
+  lighter options with their measured cost; not-recommended models aren't listed (they are on the Models page). Text
+  has no measured floor yet: the model the tier picks for this PC's memory and cores is listed as `not_measured`,
+  unticked. `cost_here.measured_on` says where the figures were measured (`this PC`, `similar PC`, `reference PC`).
+  `est_index` is the measured items a second against what the first scan counted (photos; documents, "or more");
+  `est_download` is null until a download has measured this PC's speed. A talk model's `size_mb` includes its
+  `runtime`; `total_mb` counts a shared runtime once. Nothing is downloaded.
+- **`setup_accept`** `{models: [id], consent}` → `{ok, error, started: [id]}`: the window's Download, which is the
+  consent: with `consent: "DOWNLOAD"` only (any other word: ok false, nothing changes), for exactly the listed models
+  given (at most 8; one the offer doesn't list: ok false, nothing changes). It sets what `auto_configure` sets for
+  them (meaning search and the text model, photo meaning and the photo model, OCR on) and starts `model_download` for
+  each not on disk (a talk model with its runtime); `started` lists them. Progress comes as `download` events.
+- **`setup_later`** `{}` → `Ok`: the window's Later. Not shown again by itself; one `suggestion` notification
+  ("Open Models") says where the suggestions are.
 - **`model_language`** `{focus: english|multilingual|hindi}` → `Ok`: "English first", "Many languages" or "Hindi" in
   Settings → Models. It changes the recommendation only; nothing is downloaded or switched by itself. Until it is
   set, the focus comes from Windows' display and keyboard languages (read from Windows, no network).
@@ -454,4 +475,5 @@ lines, rewrites the `recv` lines), then review the diff.
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
 | `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |
+| `11-first-run-setup.jsonl` | setup_offer after the first scan, setup_accept with a wrong consent word, a bad list and a model the offer doesn't list, then a photo and a talk model (with its runtime) and their download events (one failing), the offer after it, setup_later and its reminder notification |
 | `09-notifications.jsonl` | notifications_list (empty, three), notification events, a duplicate key not posted, a path kept out of the text, notifications_read (some ids, all, and bad ones), notifications_clear |

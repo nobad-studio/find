@@ -70,7 +70,7 @@ def test_outcomes_suggested_upgrade_not_recommended():
     assert out["heavy"]["outcome"] == "upgrade" and out["slow"]["outcome"] == "upgrade"
     assert out["crashy"]["outcome"] == "not_recommended" and out["huge"]["outcome"] == "not_recommended"
     assert out["light"]["why"].startswith("Suggested: LIGHT: first word about 5 s")
-    assert "shared memory" in out["light"]["why"] and "similar PC" in out["light"]["why"]
+    assert "shared with the built-in graphics" in out["light"]["why"] and "similar PC" in out["light"]["why"]
     assert out["heavy"]["why"].startswith("Upgrade: HEAVY: more memory (2,500 MB), longer loading and answers")
     assert "20 s" in out["slow"]["why"] and "15 s" in out["slow"]["why"]
     assert "crash" in out["crashy"]["why"] and "20,000 MB" in out["huge"]["why"]
@@ -242,8 +242,8 @@ def test_reference_pc_from_the_measured_table():
     t = by_model(out["photo_talk"])
     smol, qwen = models.get("smolvlm2-500m")["name"], models.get("qwen3vl-2b")["name"]
     assert t["smolvlm2-500m"]["outcome"] == "suggested"
-    assert t["smolvlm2-500m"]["why"].startswith(f"Suggested: {smol}: first word about 6 s, 663 MB on the graphics "
-                                                "card's shared memory")
+    assert t["smolvlm2-500m"]["why"].startswith(f"Suggested: {smol}: first word about 6 s, 663 MB of memory, "
+                                                "shared with the built-in graphics")
     assert t["qwen3vl-2b"]["outcome"] == "upgrade"
     assert t["qwen3vl-2b"]["why"].startswith(f"Upgrade: {qwen}: more memory (2,491 MB), longer loading and answers")
     s = by_model(out["photo_search"])

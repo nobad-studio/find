@@ -367,6 +367,66 @@ class FakeApi:
                                          "needs_download": bool(choice[f]) and f != "ocr" and choice[f] not in self.ready}
                                         for f in ("text", "photo", "ocr")]}
 
+    # first-run setup (Api.setup_offer / setup_accept / setup_later, the real firstrun and modelsuggest on the fixed PC)
+    scanned = {"photos": 1240, "documents": 3180}           # what the fake's first scan counted
+
+    def _setup_items(self):
+        from nobadfind import firstrun, models as cat, modelsuggest, profile
+        pc = self.hardware()
+        focus = self.settings.get("language_focus") or "english"
+        classes = profile.effective(profile.classify(pc), self.settings)
+        sugg = modelsuggest.for_pc(pc, classes, {"runtime": {"photo_talk": "vulkan"}}, "balanced", focus)
+        choice = cat.recommend_choice(pc, focus, sugg)
+        states = {mid: ("downloading", "") if d["state"] == "downloading" else ("failed", d["error"])
+                  for mid, d in self.dl.items() if cat.get(mid) and (d["state"] == "downloading" or d["error"])}
+        items = firstrun.items(sugg, choice, pc, self.scanned, "C:\\nobad-contract-no-models", "llama-vulkan", states)
+        for i in items:
+            rt = i["runtime"]
+            if rt and rt["id"] in self.ready:
+                rt["size_mb"] = 0
+            mine = 0 if i["model"] in self.ready else cat.missing_mb(i["model"], "C:\\nobad-contract-no-models")
+            i["size_mb"] = mine + (rt["size_mb"] if rt else 0)
+            i["on_disk"] = i["size_mb"] == 0
+            if i["on_disk"] and i["state"] == "not_downloaded":
+                i["state"] = "ready"
+        return pc, classes, choice, items, firstrun.notes(sugg)
+
+    def setup_offer(self):
+        from nobadfind import firstrun, modelsuggest
+        pc, classes, _choice, items, notes = self._setup_items()
+        state = self.settings["setup_offer"]
+        lk = modelsuggest.like(pc, classes)
+        busy = any(i["state"] == "downloading" for i in items)
+        retry = state == "accepted" and any(i["state"] == "failed" for i in items)
+        for i in items:
+            i["checked"] = i["checked"] or i["state"] == "failed"       # what failed stays ticked, to try again
+        return {"show": not busy and (state == "pending" or retry), "state": state, "walked": True,
+                "pc": {"like": lk["profile"], "similar": lk["similar"], "summary": f"{lk['text']}: {lk['why']}",
+                       "classes": {k: classes.get(k) for k in ("gpu", "cpu", "storage", "memory")}, "hardware": pc},
+                "items": items, "notes": notes, "total_mb": firstrun.total_mb(items),
+                "est_download": None}
+
+    def setup_accept(self, ids, consent):
+        if consent != "DOWNLOAD":
+            return {"ok": False, "error": "Nothing is downloaded until you choose Download.", "started": []}
+        by = {i["model"]: i for i in self._setup_items()[3]}
+        if any(mid not in by for mid in ids):
+            return {"ok": False, "error": "That model isn't one suggested for this PC.", "started": []}
+        started = []
+        for mid in ids:
+            for x in [mid] + ([by[mid]["runtime"]["id"]] if by[mid]["runtime"] else []):
+                if x not in self.ready and self.model_download(x, "DOWNLOAD").get("ok"):
+                    started.append(x)
+        self.settings["setup_offer"] = "accepted" if started else "done"
+        return {"ok": True, "error": "", "started": started}
+
+    def setup_later(self):
+        self.settings["setup_offer"] = "later"
+        self.notify.post("suggestion", "Suggested models for this PC",
+                         "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
+                         action="open_models", key="setup_later", once=True)
+        return {"ok": True, "error": ""}
+
     def model_language(self, focus):
         if focus not in ("english", "multilingual", "hindi"):
             return {"ok": False, "error": "Choose English, many languages or Hindi."}

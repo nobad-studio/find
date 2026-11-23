@@ -462,6 +462,10 @@ class EngineClient {
   Future<ActionResult> updateCheck() => _ok('update_check');
   Future<ActionResult> updateInstall() => _ok('update_install', {'consent': 'INSTALL'});
   Future<AutoConfig> autoConfigure() async => AutoConfig.fromJson(await call('auto_configure'));
+  Future<SetupOffer> setupOffer() async => SetupOffer.fromJson(await call('setup_offer'));
+  Future<SetupAccept> setupAccept(List<String> models) async =>
+      SetupAccept.fromJson(await call('setup_accept', {'models': models, 'consent': 'DOWNLOAD'}));
+  Future<ActionResult> setupLater() => _ok('setup_later');
   Future<ActionResult> modelLanguage(String focus) => _ok('model_language', {'focus': focus});
   Future<ActionResult> openWith(int id) => _ok('open_with', {'id': id}, false);
   Future<ScopeInfo> scopeInfo() async => ScopeInfo.fromJson(await call('scope_info'));

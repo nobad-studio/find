@@ -16,6 +16,7 @@ import 'events.dart';
 import 'models/models_info.dart';
 import 'models/notification.dart';
 import 'models/scope_info.dart';
+import 'models/setup_offer.dart';
 import 'models/result.dart';
 import 'models/settings.dart';
 import 'models/status.dart';
@@ -23,6 +24,7 @@ import 'models/update.dart';
 import 'models/vision.dart';
 
 export 'models/notification.dart';
+export 'models/setup_offer.dart';
 export 'models/settings.dart' show ActionResult, FolderPick, maxTextLength;
 export 'models/vision.dart';
 
@@ -195,6 +197,16 @@ abstract class EngineApi {
   /// Download, check and install the newer version (the consent word goes with the call).
   Future<ActionResult> updateInstall();
   Future<AutoConfig> autoConfigure();
+
+  // ---- the first-run models window (1.2.0; an older engine: -32601) ----
+  /// What to offer this PC after the first scan, and whether to show it now (`setup_offer`).
+  Future<SetupOffer> setupOffer();
+
+  /// The window's Download, which is the consent: the consent word goes with exactly [models] (`setup_accept`).
+  Future<SetupAccept> setupAccept(List<String> models);
+
+  /// The window's Later: one reminder, then it is on Settings > Models (`setup_later`).
+  Future<ActionResult> setupLater();
 
   /// "English first", "Many languages" or "Hindi + English": changes the recommendation only.
   Future<ActionResult> modelLanguage(String focus);

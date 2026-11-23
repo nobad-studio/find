@@ -21,6 +21,72 @@ import 'models/settings.dart';
 import 'models/status.dart';
 import 'models/update.dart';
 
+/// The first-run offer on the reference PC (contract transcript 11): GTE small (the tier's pick, not measured),
+/// SigLIP 2 suggested and ticked, SmolVLM2 suggested but unticked, Qwen3-VL under More for this PC.
+SetupOffer demoSetupOffer(Hardware pc) {
+  const rt = SetupRuntime(id: 'llama-vulkan', name: 'llama.cpp runtime (graphics card)', sizeMb: 37, source: 'github.com');
+  return SetupOffer(
+    walked: true,
+    like: 'mid',
+    summary: 'This PC is like: Mid: 16 processor threads and 15.7 GB; High needs a graphics card with 4 GB or more of '
+        'its own',
+    hardware: pc,
+    items: const [
+      SetupItem(
+        model: 'gte-small',
+        name: 'GTE small (English)',
+        outcome: 'not_measured',
+        sizeMb: 33,
+        cost: SetupCost(ramMb: 56, itemsS: 54.3, measuredOn: 'reference PC'),
+        why: "For this PC's 15.7 GB of memory and 8 cores: GTE small (English). Not a measured suggestion: text "
+            'models have no measured floor yet.',
+        estIndex: 'under a minute for 3,180 documents (on the reference PC)',
+        licence: 'MIT',
+        source: 'huggingface.co',
+      ),
+      SetupItem(
+        model: 'siglip2-base',
+        workload: 'photo_search',
+        name: 'SigLIP 2 base',
+        sizeMb: 481,
+        cost: SetupCost(ramMb: 621, itemsS: 1.416, queryMs: 196.5, measuredOn: 'similar PC'),
+        why: 'Suggested: SigLIP 2 base: a search takes about 196 ms, it indexes 1.42 photos a second, 621 MB of '
+            'memory (measured on a similar PC)',
+        estIndex: 'about 15 min for 1,240 photos (on a similar PC)',
+        checked: true,
+        licence: 'Apache-2.0',
+        source: 'huggingface.co',
+      ),
+      SetupItem(
+        model: 'smolvlm2-500m',
+        workload: 'photo_talk',
+        name: 'SmolVLM2 500M',
+        sizeMb: 557,
+        cost: SetupCost(ramMb: 1033, answerS: 5.77, loadS: 1.27, sharedMb: 663, measuredOn: 'similar PC'),
+        why: 'Suggested: SmolVLM2 500M: first word about 6 s, 663 MB of memory, shared with the built-in graphics '
+            '(measured on a similar PC)',
+        licence: 'Apache-2.0',
+        source: 'huggingface.co',
+        runtime: rt,
+      ),
+      SetupItem(
+        model: 'qwen3vl-2b',
+        workload: 'photo_talk',
+        name: 'Qwen3-VL 2B',
+        outcome: 'upgrade',
+        group: 'more',
+        sizeMb: 1518,
+        cost: SetupCost(ramMb: 2491, answerS: 12.08, loadS: 6.21, sharedMb: 2058, measuredOn: 'similar PC'),
+        why: 'Upgrade: Qwen3-VL 2B: more memory (2,491 MB), longer loading and answers (12 s on a similar PC)',
+        licence: 'Apache-2.0',
+        source: 'huggingface.co',
+        runtime: rt,
+      ),
+    ],
+    totalMb: 481,
+  );
+}
+
 class FakeEngine implements EngineApi {
   FakeEngine({
     List<FileResult>? files,
@@ -900,6 +966,55 @@ class FakeEngine implements EngineApi {
         if (m.recommended) AutoStep(feature: m.feature, id: m.id, needsDownload: !m.onDisk),
     ];
     return AutoConfig(tier: modelsInfo.tierRecommended, steps: steps);
+  });
+
+  // ---------- the first-run models window (1.2.0) ----------
+  /// The offer: the reference PC's (mid, Iris Xe) as the contract transcript has it. [setupShow] false by default,
+  /// so the window doesn't come up in tests that aren't about it.
+  late SetupOffer setup = demoSetupOffer(pc);
+  bool setupShow = false;
+
+  /// What setup_accept was asked for, each call.
+  final setupAccepted = <List<String>>[];
+
+  @override
+  Future<SetupOffer> setupOffer() => _new('setup_offer', () {
+    final s = setup;
+    return SetupOffer(
+      show: setupShow,
+      state: s.state,
+      walked: s.walked,
+      like: s.like,
+      summary: s.summary,
+      hardware: s.hardware,
+      items: s.items,
+      notes: s.notes,
+      totalMb: s.totalMb,
+      estDownload: s.estDownload,
+    );
+  });
+
+  @override
+  Future<SetupAccept> setupAccept(List<String> models) => _new('setup_accept', () {
+    setupAccepted.add([...models]);
+    setupShow = false;
+    final started = <String>[];
+    for (final id in models) {
+      final i = setup.items.where((x) => x.model == id).firstOrNull;
+      if (i == null) return const SetupAccept(false, error: "That model isn't one suggested for this PC.");
+      for (final x in [id, ?i.runtime?.id]) {
+        if (modelsInfo.byId(x)?.onDisk ?? false) continue;
+        unawaited(modelDownload(x));
+        started.add(x);
+      }
+    }
+    return SetupAccept(true, started: started);
+  });
+
+  @override
+  Future<ActionResult> setupLater() => _new('setup_later', () {
+    setupShow = false;
+    return _ok;
   });
 
   // ---------- what is indexed, and the turbo index ----------

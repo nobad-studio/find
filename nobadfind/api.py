@@ -12,7 +12,7 @@ import time
 from collections import deque
 
 from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
-from . import modelsuggest
+from . import firstrun, modelsuggest
 from . import profile as profile_mod
 from .settings import goal as settings_goal
 from . import governor as governor_mod
@@ -1291,6 +1291,13 @@ class Api:
         st = self._mdl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()),
                                "error": ""}
         d = models.model_dir(mid, self._mdir())
+        t0 = time.monotonic()
+
+        def measure():
+            """This PC's download speed (first-run setup's est_download), once a download ran for a while."""
+            took = time.monotonic() - t0
+            if took >= 2 and st["got"] >= 1048576:
+                self._dl_bps = st["got"] / took
 
         def run():
             done = {}
@@ -1298,6 +1305,7 @@ class Api:
                 if m["feature"] == "runtime":                   # the pinned zip, then only its pinned DLLs
                     def zprogress(_n, got, _size):
                         st["got"] = got
+                        measure()
                     # the folder is swapped by rename: the talk worker must not hold its DLLs (it refuses new
                     # questions while this runtime downloads, _vision_not_now)
                     self.vision_stop("Stopped: the picture runtime is being updated.")
@@ -1308,10 +1316,12 @@ class Api:
                         def progress(_n, got, _size, name=name):
                             done[name] = got
                             st["got"] = sum(done.values())
+                            measure()
                         embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
                                               part=".dl.part")      # not the 0.7.0 download's file names
                         done[name] = size
                         st["got"] = sum(done.values())
+                measure()
                 st["state"] = "ready"
                 log(f"model {mid} downloaded and verified")
                 wake = getattr(self._indexer, "wake", None)
@@ -1641,6 +1651,131 @@ class Api:
                   "needs_download": bool(choice[f]) and not models.ready(choice[f], self._mdir())}
                  for f in ("text", "photo", "ocr")]
         return {"tier": tier, "steps": steps}
+
+    # ---------- first-run setup (plan Task 6, firstrun.py; contract: setup_offer, setup_accept, setup_later) ----------
+    _dl_bps = None                      # this PC's download speed, bytes a second, once a download measured it
+    _setup_ids = ()                     # what setup_accept was asked for this run
+    _scan_counts = None
+
+    def _first_scan_counts(self):
+        """{"photos", "documents"} the first walk counted (one GROUP BY on the kind index, kept for the run), or None
+        before the first walk is done."""
+        if not self._indexer.status.get("last_scan"):
+            return None
+        if self._scan_counts is None:
+            try:
+                rows = self._store.q("SELECT kind, count(*) FROM files GROUP BY kind")
+            except Exception as e:
+                log(f"setup counts failed: {type(e).__name__}", "warn")
+                return None
+            by = {k: n for k, n in rows}
+            self._scan_counts = {"photos": int(by.get("image") or 0),
+                                 "documents": sum(int(by.get(k) or 0) for k in firstrun.TEXT_KINDS)}
+        return self._scan_counts
+
+    def _setup_states(self):
+        """{model id: (downloading | failed, error)} of this run's downloads."""
+        out = {}
+        for mid, st in list(getattr(self, "_mdl", {}).items()):
+            if st.get("state") == "downloading":
+                out[mid] = ("downloading", "")
+            elif st.get("error"):
+                out[mid] = ("failed", str(st["error"]))
+        return out
+
+    def _setup_items(self):
+        pc, focus = hw.scan(), self._focus()
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        counts = self._first_scan_counts()
+        items = firstrun.items(sugg, choice, pc, counts, self._mdir(), models.talk_runtime(pc, self._mdir()),
+                               self._setup_states())
+        return pc, choice, counts, items, firstrun.notes(sugg)
+
+    def setup_offer(self):
+        """The first-run window's offer (firstrun.py): whether to show it now (once, after the first scan, until it
+        is answered; again after a failed download), this PC, the listed models, the total of the ticked ones and,
+        once a download measured this PC's speed, how long they take to download."""
+        pc, _choice, counts, items, notes = self._setup_items()
+        state = self._settings.get("setup_offer")
+        if state == "accepted":
+            ids = set(self._setup_ids) or {i["model"] for i in items if i["checked"]}
+            mine = [i for i in items if i["model"] in ids]
+            if all(i["on_disk"] for i in mine):
+                self._settings.update({"setup_offer": "done"})
+                state = "done"
+            else:
+                for i in mine:                          # what was asked for stays ticked, to try again
+                    i["checked"] = not i["on_disk"] or i["checked"]
+        walked = counts is not None
+        busy = any(i["state"] == "downloading" for i in items)
+        retry = state == "accepted" and any(i["checked"] and not i["on_disk"] for i in items)
+        show = walked and not busy and (state == "pending" or retry)
+        total = firstrun.total_mb(items)
+        est = None
+        left = sum(max(0, st.get("size", 0) - st.get("got", 0)) for st in getattr(self, "_mdl", {}).values()
+                   if st.get("state") == "downloading")
+        if self._dl_bps and (left or total):
+            est = firstrun.duration((left or total * 1048576) / self._dl_bps)
+        classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
+        lk = modelsuggest.like(pc, classes)
+        return {"show": bool(show), "state": state, "walked": walked,
+                "pc": {"like": lk["profile"], "similar": bool(lk["similar"]), "summary": f"{lk['text']}: {lk['why']}",
+                       "classes": {k: classes.get(k) for k in ("gpu", "cpu", "storage", "memory")},
+                       "hardware": pc},
+                "items": items, "notes": notes, "total_mb": int(total), "est_download": est}
+
+    def setup_accept(self, ids, consent):
+        """Download in the first-run window: the consent itself (consent "DOWNLOAD"; nothing happens without it),
+        for exactly the models in `ids`, each one the offer lists. Sets what auto_configure sets for them (meaning
+        search and the text model, photo meaning and the photo model, OCR on), then downloads the ones not on disk
+        (a talk model with the runtime this PC needs, in the same consent)."""
+        if consent != "DOWNLOAD":
+            return {"ok": False, "error": "Nothing is downloaded until you choose Download.", "started": []}
+        _pc, choice, _counts, items, _notes = self._setup_items()
+        by = {i["model"]: i for i in items}
+        ids = list(dict.fromkeys(ids or []))
+        if any(mid not in by for mid in ids):
+            return {"ok": False, "error": "That model isn't one suggested for this PC.", "started": []}
+        changes = {"ocr": True}
+        for mid in ids:
+            w = by[mid]["workload"]
+            if w == "text":
+                changes.update(text_model=mid, semantic=True)
+            elif w == "photo_search":
+                changes.update(photo_model=mid, photo_meaning=True)
+        if not choice.get("photo") and not any(i["workload"] == "photo_search" for i in items):
+            changes["photo_meaning"] = False            # as auto_configure: no photo model for this PC
+        self.set_settings(changes)
+        todo = []
+        for mid in ids:
+            todo.append(mid)
+            if by[mid]["runtime"]:
+                todo.append(by[mid]["runtime"]["id"])
+        started, error = [], ""
+        for mid in todo:
+            if models.ready(mid, self._mdir()):
+                continue
+            r = self.model_download(mid, "DOWNLOAD")
+            if r.get("ok"):
+                started.append(mid)
+            elif not error:
+                error = r.get("error") or "The download did not start."
+        self._setup_ids = tuple(ids)
+        self._settings.update({"setup_offer": "accepted" if started else "done"})
+        return {"ok": not error, "error": error, "started": started}
+
+    def setup_later(self):
+        """Later in the first-run window: not shown again by itself; one reminder says where the suggestions are.
+        Once it was answered with Download (opened again from Settings > Models), Later changes nothing."""
+        if self._settings.get("setup_offer") not in ("pending", "later"):
+            return {"ok": True, "error": ""}
+        self._settings.update({"setup_offer": "later"})
+        if self._notify is not None:
+            self._notify.post("suggestion", "Suggested models for this PC",
+                              "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
+                              action="open_models", key="setup_later", once=True)
+        return {"ok": True, "error": ""}
 
     def model_language(self, focus):
         if focus not in models.FOCUSES:
