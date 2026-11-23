@@ -20,6 +20,14 @@ T0 = 1_700_000_000                  # a visit time (unix)
 MARKER = "PW-MARKER-7f3a9c"         # the password value: it must appear nowhere
 
 
+@pytest.fixture(autouse=True)
+def _this_pc_never_pauses(monkeypatch):
+    """The indexer's own pause checks read this PC (a full-screen game, a call, the battery): with a game in front,
+    every read waited 15 s per check and then gave up, so a test took minutes and read nothing (fix round 2). Here
+    nothing pauses unless a test says so."""
+    monkeypatch.setattr(ix_mod.Indexer, "_check_pause", lambda self: "")
+
+
 def webkit(t):
     return int((t + 11644473600) * 1_000_000)
 
@@ -656,5 +664,39 @@ def test_a_renamed_profile_does_not_keep_its_old_rows(tmp_path, monkeypatch):
             json.dump({"profile": {"info_cache": {"Profile 1": {"name": "Job"}}}}, f)
         ix._read_browsers()
         assert {p for (p,) in store.q("SELECT DISTINCT profile FROM browser_items WHERE browser = 'Edge'")} == {"Job"}
+    finally:
+        store.close()
+
+
+def test_a_pause_waits_without_reading_and_reads_after_it(tmp_path, monkeypatch):
+    """Paused (a game in front): nothing is read and nothing is marked read; after the pause the profiles are read.
+    A fake clock: no real waiting."""
+    env = make_env(tmp_path)
+    real = bd.profiles
+    monkeypatch.setattr(bd, "profiles", lambda env_=None: real(env))
+    monkeypatch.setattr(ix_mod.cf, "ProcessPoolExecutor", _InlinePool)
+    why = {"now": "full-screen app"}
+    monkeypatch.setattr(ix_mod.Indexer, "_check_pause", lambda self: why["now"])
+    ix, store = _indexer(tmp_path, env)
+    clock = {"t": 0.0}
+
+    class Ev:
+        def is_set(self):
+            return False
+
+        def wait(self, s=None):
+            clock["t"] += s or 0
+            ix._pause = (-1e9, "")                    # the next check looks again
+            return False
+    ix._clock = lambda: clock["t"]
+    ix.stop_ev = Ev()
+    try:
+        ix._read_browsers()
+        assert store.browser_counts() == {} and clock["t"] >= ix_mod.RECYCLE_AFTER
+        assert browser_tmp(os.path.dirname(store.db_path)) == []
+        why["now"] = ""
+        ix._pause = (-1e9, "")
+        ix._read_browsers()
+        assert store.browser_counts()["history"] == 3
     finally:
         store.close()
