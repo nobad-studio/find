@@ -1117,7 +1117,10 @@ class Indexer:
             if had and had != tag:
                 old = had.split("#")[0]
                 spec_old = models.get(old) or {}
-                if spec_old.get("feature") == "photo" and models.ready(old) and \
+                # a re-pin that changed the text half too ("vectors_text"): the text file on disk now isn't the one
+                # the old vectors were asked with, so nothing can ask them (treated as an old model gone)
+                askable = not (old == pid and spec_old.get("vectors_text"))
+                if spec_old.get("feature") == "photo" and models.ready(old) and askable and \
                         self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"):
                     if building != tag:
                         self.store.drop_next_photo_vectors()     # another rebuild was half done: start over
@@ -1166,13 +1169,11 @@ class Indexer:
         if next is None:
             self.photo_text_next = None
             self.pindex_next.reset(photo.PHOTO_DIM, None)
-            self.status.pop("photo_rebuild", None)
             return
         # a re-pin keeps the model id and its text half: one question encoder in memory for both sets
         self.photo_text_next = self.photo_text if next == pid else self._photo_encoder(next)
         self.pindex_next.reset(models.get(next)["dim"], next)
         self.pindex_next.load(self.store)
-        self.status["photo_rebuild"] = {"from": pid, "to": next}
 
     def _finish_photo_rebuild(self, pid):
         """pvecs_next covers every photo: it replaces pvecs in one transaction, and search moves to it."""
@@ -1185,10 +1186,14 @@ class Indexer:
         idx, text = self.pindex_next, self.photo_text_next
         idx.queries = PHOTO_QUERIES
         idx.load(self.store)                        # now pvecs (the same vectors, what's on disk)
+        # Searches read these attributes without a lock. The rebuild channel goes first (an empty pindex_next
+        # isn't searched: api._photo_next), then model, encoder and index one by one. A search in between pairs at
+        # worst the new encoder with the old index (or the other way round): different model ids are refused by
+        # search._photo_hits; the same id (a re-pin) shares one text half, which is only kept when the re-pin left
+        # the text side alone ("vectors_text"), so either pairing asks vectors with the encoder they belong to.
         self.pindex_next = embed.VectorIndex(photo.PHOTO_DIM, PHOTO_NEXT_QUERIES)
         self.photo_model_next, self.photo_text_next = None, None
         self.photo_model, self.photo_text, self.pindex = pid, text, idx
-        self.status.pop("photo_rebuild", None)
         self._note(f"Photo search now uses {models.get(pid)['name']}")
 
     _photos_logged = False
@@ -1253,7 +1258,8 @@ class Indexer:
                         # one of these photos hangs or crashes the reader: read them one by one next time
                         one = len(batch) == 1
                         if one:
-                            self.store.set_photo_vector(batch[0][0], batch[0][2], b"", "unreadable")
+                            self.store.set_photo_vector(batch[0][0], batch[0][2], b"", "unreadable",
+                                                        next=bool(nxt))     # the set being built, never the old
                         else:
                             self._photo_one_by_one = True
                         what = (f"was stuck for {JOB_TIMEOUT // 60} minutes" if isinstance(e, cf.TimeoutError)

@@ -470,6 +470,18 @@ def _drop_loose_photo_text(store, meaning, best):
     return [fid for fid in meaning if fid not in images]
 
 
+def _one_photo_list(a, b):
+    """The searched photo set's list and the rebuilt set's (indexer._load_photo) as one photo channel: each photo at
+    its best rank in either, ties to the searched set. Ranks only: the two identities' scores are never compared,
+    and a photo both sets found counts once, as much as it would in one set at that rank."""
+    best = {}
+    for ch, ids in enumerate((a, b)):
+        for r, fid in enumerate(ids):
+            if fid not in best or (r, ch) < best[fid]:
+                best[fid] = (r, ch)
+    return sorted(best, key=best.get)
+
+
 def _photo_question(q):
     """What the photo model is asked. v1: the meaning words ("a screenshot of a phone" -> "phone"). v2: the clean
     visual description query.parse made (q.visual): the typed description when it is a plain one, never filter
@@ -777,15 +789,14 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         photos = _admit_photos(q, photos, pbest, set(names) | set(texts) | set(meaning))
     # asking for photos ("beach photos", the Images filter): what's in the picture counts most
     w_photo = W_PHOTO_ASKED if "image" in q.kinds else W_PHOTO
-    lists.append((w_photo, photos))
-    # a photo identity rebuilt beside the searched one (indexer._load_photo): its partial set is its own channel,
-    # with its own scores, "sure" rule and admission; fused by rank only, never compared with the other's scores
+    # a photo identity rebuilt beside the searched one (indexer._load_photo): its partial set is searched with its
+    # own model, scores, "sure" rule and admission, then joined with the searched set's list by rank only
     nphotos, nbest = [], {}
     if photo_next is not None:
         nphotos, nbest = _photo_hits(store, q, photo_next[0], photo_next[1], 100, table="pvecs_next")
         if nphotos and photo_admission():
             nphotos = _admit_photos(q, nphotos, nbest, set(names) | set(texts) | set(meaning))
-        lists.append((w_photo, nphotos))
+    lists.append((w_photo, _one_photo_list(photos, nphotos) if nphotos else photos))
     if "photo_only" in VARIANTS and photos:         # measurement: the photo channel alone where it has answers
         lists = [(1.0, photos)]
     # a file named exactly what was typed wins, even when part of it read as a filter ("invoices 2023" is a name,

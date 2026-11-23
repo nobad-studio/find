@@ -294,7 +294,10 @@ def measured(mid, variant, backend, profile):
 
 def vector_tag(mid):
     """What photo vectors are stored under (meta pvec_model): the model id, plus "#<n>" once the catalog changed a
-    file that alters the vectors. A different tag means the photos are looked at again."""
+    file that alters the vectors. A different tag means the photos are looked at again, beside the old vectors,
+    which answer meanwhile with the model's text half (indexer._load_photo). That is only right while a re-pin
+    changes the vision file alone: a re-pin that changes the text side too sets "vectors_text": True on the entry,
+    and the old vectors of that id are then not asked at all (the new set answers as it is built)."""
     m = get(mid) or {}
     return f"{mid}#{m['vectors']}" if m.get("vectors") else mid
 

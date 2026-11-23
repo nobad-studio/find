@@ -315,3 +315,88 @@ def test_upgrade_path_from_1_0_1_index(tmp_path, monkeypatch, encrypt):
     assert {v for (v,) in s.q("SELECT v FROM pvecs")} == {NEW} and ix.pindex.n == 5
     s.close()
 
+
+
+# ---------- review fix round 1 ----------
+class CrashingPool(SyncPhotoPool):
+    def submit(self, fn, *args):
+        f = cf.Future()
+        try:
+            f.set_result(fn(*args))
+        except Exception as e:
+            f.set_exception(e)
+        return f
+
+
+def test_a_photo_that_crashes_the_reader_during_a_rebuild_is_marked_in_the_new_set(tmp_path, monkeypatch):
+    """Review: the "unreadable" mark went to pvecs: a working old vector was blanked, the new set never got a row,
+    so the photo crashed the reader every pass and the set never swapped."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ids = _photos(s, 3)
+    for fid in ids:
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip-base")
+    _patch(monkeypatch, [])
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", CrashingPool)
+    bad = ids[1]
+
+    def embed_photos(jobs, fast=False):
+        if any(j[0] == bad for j in jobs):
+            raise cf.BrokenExecutor("the reader died on this photo")
+        return [(fid, mtime, NEW, None) for fid, _p, mtime, _d in jobs]
+    monkeypatch.setattr(indexer.photo, "embed_photos", embed_photos)
+    monkeypatch.setattr(indexer, "PHOTO_BATCH", 1)
+    ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
+    ix._load_photo()
+    ix._photo_one_by_one = True
+    for _ in range(6):
+        if s.meta("pvec_model") != "siglip-base":
+            break
+        assert s.one("SELECT v FROM pvecs WHERE file_id = ?", (bad,)) == OLD      # untouched until the swap
+        ix._photo_vectors()
+    assert s.meta("pvec_model") == "siglip2-base#2" and not s.meta("pvec_next_model")
+    assert s.q("SELECT v, err FROM pvecs WHERE file_id = ?", (bad,)) == [(b"", "unreadable")]
+    assert _count(s, "pvecs") == 2 and ix.pindex.n == 2
+    s.close()
+
+
+def test_one_photo_list_takes_each_photos_best_rank():
+    assert search._one_photo_list([1, 2, 3], [4, 2]) == [1, 4, 2, 3]
+    assert search._one_photo_list([1, 2], []) == [1, 2]
+
+
+def test_a_photo_in_both_sets_counts_no_more_than_in_one(tmp_path, monkeypatch):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ids = _photos(s, 3)
+    enc_old, enc_new = _Enc("siglip-base", 8, 0), _Enc("siglip2-base", 6, 0)
+    on = lambda dim, i: _unit(np.r_[np.eye(dim)[i][:-1], 0.2])          # noqa: E731
+    old_idx, new_idx = _Idx(8, "siglip-base"), _Idx(6, "siglip2-base")
+    old_idx.add(ids, np.stack([on(8, 0), on(8, 1), on(8, 2)]))
+    new_idx.add([ids[0]], np.stack([on(6, 0)]))                          # photo 1: first in both sets
+    scores = []
+    real = search.best_guess
+    monkeypatch.setattr(search, "best_guess", lambda q, out, score, *a, **k: (scores.append(dict(score)),
+                                                                              real(q, out, score, *a, **k))[1])
+    ask = "a red car on a road"
+    search.search(s, ask, photo_text=enc_old, pindex=old_idx)
+    search.search(s, ask, photo_text=enc_old, pindex=old_idx, photo_next=(enc_new, new_idx))
+    one, both = scores
+    assert both[ids[0]] <= one[ids[0]]
+    s.close()
+
+
+def test_a_repin_that_changed_the_text_side_does_not_ask_the_old_vectors(tmp_path, monkeypatch):
+    """"vectors_text": the old vectors were asked with a text file that isn't on disk any more: not kept as a
+    channel (they would be asked with the wrong text half); the new set answers as it is built."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    for fid in _photos(s, 2):
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip2-base#2")
+    _patch(monkeypatch, [])
+    monkeypatch.setitem(models._BY_ID, "siglip2-base", dict(models.get("siglip2-base"), vectors=3,
+                                                            vectors_text=True))
+    ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
+    ix._load_photo()
+    assert s.meta("pvec_model") == "siglip2-base#3" and not s.meta("pvec_next_model")
+    assert ix.photo_model_next is None and ix.pindex.n == 0
+    s.close()
