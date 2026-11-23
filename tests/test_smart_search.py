@@ -344,3 +344,18 @@ def test_eval_search_corpus_meets_its_thresholds():
     assert ev.failures(rep) == [], rep["keywords"]
     bad = [x["q"] for x in rep["rows"] if not x["parts_ok"]]
     assert not bad
+
+
+def test_eval_search_last_week_doc_is_in_last_week_every_weekday():
+    """The corpus's "last week" PDF must fall inside query.parse's previous Monday-to-Sunday week whatever day the
+    tests run (a fixed 8 days back failed every Monday and blocked the 1.1.0 release build)."""
+    spec = importlib.util.spec_from_file_location("eval_search", os.path.join(APP, "tools", "eval_search.py"))
+    ev = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ev)
+    for day in range(7):                                       # 2026-11-23 is a Monday
+        for hour in (0, 12, 23):
+            now = dt.datetime(2026, 11, 23, hour, 30) + dt.timedelta(days=day)
+            age = next(d["age"] for d in ev.docs(now) if d["id"] == "ticket")
+            ts = (now - dt.timedelta(days=age)).timestamp()
+            q = parse("pdf from last week in downloads", now=now)
+            assert q.when == "last week" and q.t0 <= ts < q.t1, (now, age)

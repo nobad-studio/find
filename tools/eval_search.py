@@ -40,6 +40,12 @@ def _march_age(now):
     return max(1, (now - dt.datetime(now.year, 3, 15)).days)
 
 
+def _last_week_age(now):
+    """Days back to last week's Thursday. query.parse reads "last week" as the previous Monday-to-Sunday week, so a
+    fixed age fails on some weekdays (8 days falls outside it every Monday)."""
+    return now.weekday() + 4
+
+
 def docs(now):
     m = _march_age(now)
     return [
@@ -97,7 +103,7 @@ def docs(now):
         dict(id="manual", folder="Downloads", name="washing machine manual.pdf", body="User manual. Select the "
              "programme, press start. Clean the filter monthly.", age=25),
         dict(id="ticket", folder="Downloads", name="boarding pass lisbon.pdf", body="Boarding pass. Flight TP1337 "
-             "to Lisbon, gate 22, seat 14C.", age=8),
+             "to Lisbon, gate 22, seat 14C.", age=_last_week_age(now)),
         dict(id="old_pdf", folder="Downloads", name="brochure.pdf", body="Holiday brochure with hotels.", age=800),
         # noise: look-alike names elsewhere
         dict(id="noise1", folder="Documents\\Projects\\archive", name="budget backup.txt", body="backup", age=700),
