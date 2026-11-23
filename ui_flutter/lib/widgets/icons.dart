@@ -239,8 +239,8 @@ class GlyphTile extends StatelessWidget {
         tint.withValues(alpha: (tint.a * 1.5).clamp(0, 1)),
         tint.withValues(alpha: tint.a * .7),
         tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)),
-        // the accent glyph: the orange step that reads on its orange tile (the raw orange doesn't)
-        accent ? c.tint(NbTint.orange) : c.iceGlyph,
+        // the accent glyph: Minimal ice's ice-blue accent (no orange in this style)
+        accent ? c.orange : c.iceGlyph,
       );
     }
     final t = accent ? NbTint.orange : hue ?? tints[glyph] ?? NbTint.neutral;

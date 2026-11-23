@@ -9,6 +9,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show Color;
 
+import 'package:flutter/painting.dart' show HSVColor;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/app/theme/colors.dart';
 import 'package:nobad_find/widgets/icons.dart';
@@ -37,9 +38,12 @@ List<(String, Color)> grounds(NbColors c, Color layer) {
   ];
   final glows = <(String, Color?)>[
     ('no glow', null),
-    if (c.ice)
-      ('cold tint', c.glowGlacier)
-    else ...[
+    if (c.ice) ...[
+      ('glacier', c.glowGlacier),
+      ('deep ice', c.glowCool),
+      ('haze', c.glowHaze),
+      ('ember', c.glowWarm),
+    ] else ...[
       ('warm', c.glowWarm),
       ('indigo', c.glowCool),
       ('magenta', c.glowMagenta),
@@ -106,7 +110,7 @@ void main() {
       final icons = c.ice
           ? [
               ('ice', c.iceGlyph, c.iceTile.withValues(alpha: (c.iceTile.a * 1.5).clamp(0, 1))),
-              ('ice accent', c.tint(NbTint.orange), c.iceAccentTile.withValues(alpha: c.iceAccentTile.a * 1.5)),
+              ('ice accent', c.orange, c.iceAccentTile.withValues(alpha: c.iceAccentTile.a * 1.5)),
             ]
           : [for (final t in NbTint.values) (t.name, c.tint(t), c.tileTop(t))];
       for (final (tn, glyph, tile) in icons) {
@@ -117,6 +121,50 @@ void main() {
       }
     });
   }
+
+  for (final (name, c) in looks()) {
+    if (!c.ice) continue;
+    test('$name: the ice-blue accent reads as text on every layer, and its label reads on it', () {
+      for (final (ln, layer) in [('panel', c.panel), ('card', c.card), ('rail', c.rail), ('dialog', c.dialog)]) {
+        final (r, where) = worst(c, layer, c.orange);
+        expect(r, greaterThanOrEqualTo(4.5), reason: '$name accent on a $ln: ${r.toStringAsFixed(2)}:1 at $where');
+      }
+      // a primary button: its label on the accent
+      expect(contrast(c.onOrange, c.orange), greaterThanOrEqualTo(4.5));
+    });
+  }
+
+  test('Minimal ice has no orange or red anywhere: no token is near the NOBAD orange hue', () {
+    final orangeHue = HSVColor.fromColor(NbColors.dark.orange).hue; // about 18°
+    for (final base in [NbColors.dark, NbColors.light]) {
+      for (final glass in [true, false]) {
+        final c = base.withGlass(glass, iceStyle: true);
+        final tokens = {
+          'accent': c.orange,
+          'accent tint': c.orangeA(.12),
+          'ember glow': c.glowWarm,
+          'accent tile': c.iceAccentTile,
+          'ice tile': c.iceTile,
+          'ice glyph': c.iceGlyph,
+          'panel': c.panel,
+          'card': c.card,
+          'rail': c.rail,
+          'dialog': c.dialog,
+          'rim': c.rimLight,
+          'sheen': c.sheen,
+          'canvas': c.canvas,
+        };
+        for (final MapEntry(key: n, value: col) in tokens.entries) {
+          final hsv = HSVColor.fromColor(col.withValues(alpha: 1));
+          if (hsv.saturation < .15) continue; // greys have no hue to speak of
+          final d = (hsv.hue - orangeHue).abs() % 360;
+          expect(math.min(d, 360 - d), greaterThan(45), reason: '${base.isDark ? 'dark' : 'light'} ice $n is orange-ish');
+        }
+      }
+    }
+    // Classic keeps the NOBAD orange
+    expect(NbColors.dark.withGlass(true).orange, const Color(0xFFFF4D00));
+  });
 
   test('every Classic tile colour is used, and one meaning keeps one colour', () {
     expect(GlyphTile.tints.values.toSet(), NbTint.values.toSet());

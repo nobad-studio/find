@@ -159,7 +159,7 @@ class NbColors extends ThemeExtension<NbColors> {
   /// cool white; the orange only for the selected or suggested one.
   Color get iceTile => isDark ? const Color(0x1F9FD8FF) : const Color(0x1A3B6CFF);
   Color get iceGlyph => isDark ? const Color(0xFFDCEFFF) : const Color(0xFF1E3A66);
-  Color get iceAccentTile => orangeA(isDark ? .10 : .09);
+  Color get iceAccentTile => orangeA(isDark ? .06 : .09);
 
   /// Classic's icon tiles: each meaning its own hue. The tile: a soft gradient of the hue ([tileTop] → [tileBottom])
   /// with a 1 px rim of it ([tileRim]); the glyph: the hue's light step on a dark card (dark), its deep step on
@@ -239,6 +239,11 @@ class NbColors extends ThemeExtension<NbColors> {
     (true, false): (Color(0xB816181C), Color(0x9B16181C)), // Minimal ice light (as in 18a4f7b)
   };
 
+  /// Minimal ice's one accent, in place of the orange (which reads as red against the cold frost): the glacier
+  /// cyan #6FD3FF itself on dark, a deep glacier blue on light, each passing contrast with the text on it and on
+  /// the surfaces (test/theme/glass_contrast_test.dart). Classic keeps the NOBAD orange.
+  static const _iceAccentDark = Color(0xFFA8E6FF), _iceAccentLight = Color(0xFF0A6690);
+
   /// This palette over glass ([on]) or solid, in the Classic or the Minimal ice ([iceStyle]) style.
   NbColors withGlass(bool on, {bool iceStyle = false}) {
     if (on == glass && iceStyle == ice) return this;
@@ -246,8 +251,10 @@ class NbColors extends ThemeExtension<NbColors> {
     final (m, d) = on ? _glassText[(iceStyle, isDark)]! : (base.muted, base.dim);
     return NbColors(
       brightness: brightness,
-      orange: orange,
-      onOrange: onOrange,
+      // every accent (primary buttons, selection, the Suggested mark, focus, the active sidebar item, progress)
+      // is drawn from this one colour
+      orange: iceStyle ? (isDark ? _iceAccentDark : _iceAccentLight) : base.orange,
+      onOrange: base.onOrange,
       bg: bg,
       surface: surface,
       raised: raised,
