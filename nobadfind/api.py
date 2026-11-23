@@ -400,7 +400,13 @@ class Api:
         else:
             st.update(counted)
         t = self._stats_thread
-        totals = self._snapshot_fields(st, "totals", bool(t and t.is_alive()), self._stats_info, counted is not None)
+        running = bool(t and t.is_alive())
+        if counted is None and not running:
+            # the first count may have landed between the cache read and the thread check: one consistent view
+            counted = self._stats_cache[2]
+            if counted is not None:
+                st.update(counted)
+        totals = self._snapshot_fields(st, "totals", running, self._stats_info, counted is not None)
         st["counting_totals"] = totals == "counting"
         st["encrypted"] = bool(getattr(self._store, "encrypted", False))
         st["db_bytes"] = self._db_bytes()                   # two getsize calls: always current
@@ -444,9 +450,9 @@ class Api:
         so searches timed out. One count runs at a time, in its own thread; a poll returns what is known at once."""
         at, ttl, cached = self._stats_cache
         now = self._clock()
-        # stale (a phase ended, a rescan or wipe): counted again once the TTL floor has passed, not only after the
-        # longer share-of-a-core wait
-        if at is None or now - at >= ttl or (self._stats_stale and now - at >= STATS_TTL):
+        # a stale mark (a phase ended, a rescan or wipe) never brings a count forward: the full ttl (the floor or
+        # COUNT_SHARE times the last count, whichever is longer) always holds, so the 5 %-of-a-core rule does too
+        if at is None or now - at >= ttl:
             with self._stats_lock:
                 if not (self._stats_thread and self._stats_thread.is_alive()):
                     self._stats_stale = False
@@ -467,8 +473,9 @@ class Api:
         self._stats_cache = (t0, max(STATS_TTL, COUNT_SHARE * took), cached)
 
     def mark_counts_stale(self):
-        """A phase ended, or a rescan or wipe happened: both snapshots are counted again at the next poll, once the
-        TTL floor (STATS_TTL / TOTALS_TTL) since the last count has passed."""
+        """A phase ended, or a rescan or wipe happened: both snapshots are counted again at the next poll that finds
+        them due, i.e. once the full ttl (max of the floor and COUNT_SHARE times the last count) has passed. The mark
+        never brings a refresh forward."""
         self._stats_stale = self._counts_stale = True
 
     def _snapshot_fields(self, st, prefix, running, info, have):
@@ -574,7 +581,7 @@ class Api:
         # Never inline, not even the first time (0.9.0): on a million-entry index the counts take seconds, and every
         # status poll that waited for them held one of the pipe's few request threads, so the Index page and then
         # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
-        due = not counts or k != key or now - at >= ttl or (self._counts_stale and now - at >= TOTALS_TTL)
+        due = not counts or k != key or now - at >= ttl
         if due and not (self._refresher and self._refresher.is_alive()):
             self._counts_stale = False
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")

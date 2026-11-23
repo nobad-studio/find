@@ -633,28 +633,76 @@ def test_a_failed_counts_refresh_keeps_the_old_snapshot(tmp_path):
     s.close()
 
 
-def test_a_phase_ending_marks_both_stale_but_the_ttl_floor_holds(tmp_path):
+def test_a_phase_ending_marks_stats_stale_but_the_full_ttl_holds(tmp_path):
     a, s = make(tmp_path, "text")
     now = [100.0]
     a._clock = lambda: now[0]
     s.stats = slow = SlowStats()
     a.status()
     stats_counted(a)
-    counted(a)
     calls = slow.calls
+    a._stats_cache = (a._stats_cache[0], 1000.0, a._stats_cache[2])    # a slow index: the share-of-a-core wait
     a._indexer.status["phase"] = "meaning"                      # a phase ended
     now[0] += 1
     a.status()
+    assert a._stats_stale
+    now[0] += api_mod.STATS_TTL                                 # past the 10 s floor, not past the full ttl
+    a.status()
     stats_counted(a)
-    assert slow.calls == calls                                  # inside the floor: no new count
-    now[0] += api_mod.STATS_TTL                                 # past the floor, though not past a long TTL
-    a._stats_cache = (a._stats_cache[0], 1000.0, a._stats_cache[2])
+    assert slow.calls == calls                                  # the mark never brings a refresh forward
+    now[0] = a._stats_cache[0] + 1000.0                         # the full ttl has passed
     a.status()
     stats_counted(a)
     assert slow.calls == calls + 1
     a.status()
     stats_counted(a)
     assert slow.calls == calls + 1                              # one count for one event
+    assert not a._stats_stale
+
+
+def test_a_phase_ending_marks_counts_stale_but_the_full_ttl_holds(tmp_path):
+    a, s = make(tmp_path, "text")
+    now = [100.0]
+    a._clock = lambda: now[0]
+    calls = []
+    real = a._refresh
+
+    def refresh(at, key):
+        calls.append(at)
+        real(at, key)
+
+    a._refresh = refresh
+    counted(a)
+    assert len(calls) == 1
+    a._totals_took = 1000.0 / api_mod.COUNT_SHARE               # a slow index: ttl = 1000 s
+    a.mark_counts_stale()
+    now[0] += api_mod.TOTALS_TTL + 1                            # past the 10 s floor, not past the full ttl
+    counted(a)
+    assert len(calls) == 1
+    now[0] = a._totals[0] + 1000.0                              # the full ttl has passed
+    counted(a)
+    assert len(calls) == 2
+    counted(a)
+    assert len(calls) == 2
+    assert not a._counts_stale
+
+
+def test_a_count_finishing_between_the_two_reads_is_not_reported_ready_and_empty(tmp_path):
+    a, s = make(tmp_path)
+    s.stats = SlowStats()
+    real = a._stats
+
+    def stats_then_the_count_lands():
+        got = real()                                            # None: the first count has just been started
+        assert got is None
+        stats_counted(a)                                        # ...and it finishes before status() looks at it
+        return got
+
+    a._stats = stats_then_the_count_lands
+    st = a.status()
+    assert st["totals_state"] == "ready" and st["totals_at"] is not None
+    assert st["with_text"] == 100 and st["chunks"] == 9         # the real totals, not zeros
+    assert st["counting_totals"] is False
 
 
 def test_rescan_and_wipe_mark_the_snapshots_stale(tmp_path):

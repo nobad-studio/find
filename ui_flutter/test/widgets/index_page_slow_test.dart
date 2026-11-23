@@ -116,7 +116,7 @@ void main() {
     expect(find.text('Counted 2 min ago'), findsOneWidget);
   });
 
-  testWidgets('a first count says Counting…, a newer one says Counting again…', (tester) async {
+  testWidgets('a first count says Counting…', (tester) async {
     await shows(tester, {'totals_state': 'counting', 'totals_at': null, 'counting_totals': true}, findsNWidgets(4));
     expect(find.text('Counting…'), findsNWidgets(4)); // three totals and the line
   });
