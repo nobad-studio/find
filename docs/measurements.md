@@ -4,6 +4,71 @@ Numbers decide (ROADMAP §3). Every performance claim points at a row here. Newe
 now; private = committed memory only this process can use (`Get-Process` `WorkingSet64` / `PrivateMemorySize64`,
 summed over the process tree).
 
+## 2026-11-23: photo admission policy D on by default (rollback flag)
+
+Policy D from Experiment A (below) is now the default in `nobadfind/search.py` (`photo_admission`, `_keywordish`,
+`_admit_photos`): on a keyword-style search (one content word, no picture words) a photo found only by its look
+must score at least `PHOTO_SURE` (0.85) of the best photo; weaker ones stay only when a name, text or meaning
+channel found them too. Visual descriptions are unchanged. Rollback to the earlier behaviour:
+`NOBAD_FIND_PHOTO_ADMIT=off`, or the `admit_all` search variant in the eval tools (`admit_query` forces D on).
+B's and C's measurement variants (`admit_conf:<t>`, `admit_evidence`) were not ported.
+
+Re-run on the fresh set's **training split only** (53 searches; a copy of `%USERPROFILE%\vbench\search2` with the
+held-out searches removed, so they never ran), SigLIP base, OCR on, `--variants ";admit_all"`, scored with
+the Experiment A scoring script (`admission_report.py --split train`, kept outside the repo with the set):
+
+| Policy | nDCG@10 | R@10 | keyword: grade-0 photos in top 10 | keyword: weak results | negatives: results in top 10 | named docs | OCR-only docs |
+|---|---|---|---|---|---|---|---|
+| A (`admit_all`, rollback) | 0.714 | 0.788 | 6.7 | 56.3 | 10.0 | 5/5 | 4/5 |
+| **D (default)** | 0.714 | 0.788 | **0.7** | **0.3** | 7.0 | 5/5 | 4/5 |
+
+- Same numbers as Experiment A's training run for A and D. Rankings changed on 4 of 53 searches, all one word:
+  the keyword searches "lease", "passport", "tax" and the negative "a kangaroo". No described search changed (0 of 47).
+  Negatives: results claimed sure 0.3 -> 0.3.
+- Held-out: not run again. Its one scoring (Experiment A) stands.
+- Mixed-file regression (`tools/eval_search.py`, MiniLM + SigLIP base), flag off vs on, two runs each: keywords
+  1.0 / 1.0 and photo 1.0 / 1.0 (recall@1 / recall@5) in every run; recall unchanged everywhere. Some lines change
+  between two runs of the same setting: the best guess on "what did i save today" (keywords guesses 33 vs 32,
+  once) and the meaning MRR on "job application letter" and "plane ticket" (0.495 vs 0.529). D can't touch these
+  searches (no content word, or two or more), so this is run-to-run noise in the eval, not D.
+- The eval now uses the set's display names (`manifest.json`) and writes each variant's weak/sure counts and
+  ranked photos to its JSON (ported from Experiment A). Sets without a manifest are unchanged.
+
+## 2026-11-22: Experiment A, photo admission policies on the fresh set (SigLIP base, the default)
+
+Fresh set (`%USERPROFILE%\vbench\search2`): 319 new Wikimedia Commons photos (15 duplicates of the old set
+removed), 110 new searches (people, relations, mood, attributes, scenes, English/German/Hindi text, screenshots,
+Hindi and Hinglish twins, very wide/tall images, 6 document keywords, 6 negatives), graded by 10 agents against
+every search. Split fixed before grading: 53 training / 57 held-out (Hindi/Hinglish twins on their English
+search's side). 20 document photos: 10 with true descriptive file names (filename evidence), 10 neutral; the
+eval keeps those display names (`manifest.json`). Decision rule written before the results
+(`results/admission-rule.md`): choose on training, score held-out once.
+
+Training (47 described searches, 3 keyword, 3 negative):
+
+| Policy | nDCG@10 | R@10 | keyword: grade-0 photos in top 10 | keyword: weak results | named docs | OCR-only docs |
+|---|---|---|---|---|---|---|
+| A today | 0.714 | 0.788 | 6.7 | 56.3 | 5/5 | 4/5 |
+| B score >= 0.03 | 0.714 | 0.788 | 6.7 | 12.7 | 5/5 | 4/5 |
+| B score >= 0.04 | 0.708 | 0.774 (-0.014, not eligible) | 4.7 | 6.0 | 5/5 | 4/5 |
+| B score >= 0.05 | 0.699 | 0.768 | 2.7 | 2.3 | 5/5 | 4/5 |
+| C evidence-aware, every search | **0.506** | 0.511 | 0.7 | 0.3 | 5/5 | 4/5 |
+| **D query-aware** (C for keyword-style searches only) | 0.714 | 0.788 | **0.7** | **0.3** | 5/5 | 4/5 |
+
+- **Chosen by the rule: D.** Applied to every search, C costs most of v2's gain (0.714 -> 0.506): global
+  admission floors hurt, as expected.
+- **Held-out, scored once (51 described, 3 keyword, 3 negative):** D vs A on described searches identical
+  (0 of 51 changed); keyword grade-0 photos in the top 10: 5.0 -> 1.0; weak results on keyword searches:
+  55.3 -> 0; negatives: results in top 10 10 -> 7, claimed sure 0 -> 0; named documents 3/3 -> 3/3;
+  neutral-named documents 3/3 -> 2/3. The one lost is a handwritten receipt Windows OCR can't read: it ranked
+  only as "the picture may show it", the look-only match D filters on keyword searches.
+- `_keywordish`: one content word and no picture words. Search variants `admit_conf:<t>`, `admit_evidence`,
+  `admit_query`; off by default (measurement only) until the maintainer decides.
+
+Fresh-set baseline (all 110 searches, nothing tuned on it): SigLIP base v1 0.686 / 0.739, **v2 0.727 / 0.813**
+(nDCG@10 / recall@10), SigLIP alone 0.752 / 0.812; SigLIP 2 (fp16 vision) v2 **0.767 / 0.890**, v1 0.764 / 0.846,
+alone 0.804 / 0.892. This independently confirms v2 over v1 and SigLIP 2 over SigLIP base.
+
 ## 2026-11-23: reference-profile benchmark (mid measured)
 
 `tools/bench_profiles.py` (dev only). It measures each model, variant and runtime against every dimension of the
