@@ -979,7 +979,8 @@ class Api:
         """Delete the whole index and start over. Security review 2026-11-22 (L10): nothing of the old index stays
         in plain text either: the Never index entries Forget added (noted in the index; from before that, the ones
         that are files) leave settings.json, the log is emptied, the index copies set aside after a key problem
-        (*.unreadable-*) and the previews in memory go. What the app needs to start stays: the settings, the
+        (*.unreadable-*), the settings.json.unreadable-* copies (they hold folder paths) and the previews in memory
+        go. What the app needs to start stays: the settings, the
         user's own Never index folders, the index key, downloaded models."""
         if confirm != "DELETE":
             return {"ok": False}
@@ -990,6 +991,8 @@ class Api:
         if keep != exclude:                     # of exclude with the old index still there (review N7)
             self._settings.update({"exclude": keep})
         self._store.remove_aside_copies()
+        if hasattr(self._settings, "remove_aside_copies"):      # S0: settings.json.unreadable-* hold folder paths
+            self._settings.remove_aside_copies()
         thumbs.clear()
         from . import log as log_mod
         log_mod.clear()

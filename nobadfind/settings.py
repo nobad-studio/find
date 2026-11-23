@@ -3,6 +3,7 @@ import json
 import os
 import re
 import threading
+import time
 
 from .const import (DEFAULTS, FEATURE_BACKENDS, GOALS, GPU_BACKGROUND, GPU_RESERVE_MAX_MB,
                     GPU_RESERVE_MIN_MB, PROFILE_CLASSES, VARIANTS)
@@ -155,6 +156,11 @@ FORGOT_NOTE = ("Forgotten for now, but NOBAD Find couldn't save its protected li
                "may come back after a restart. It tries again at the next change.")
 
 
+# Said once when an unreadable settings file was moved aside (the name is added)
+UNREADABLE_NOTE = ("NOBAD Find couldn't read its settings file, so it started from the defaults and kept the old "
+                   "file as ")
+
+
 class Settings:
     """The settings file, plus the files and folders Forget added to `exclude` (fix round 1, I5): those are kept
     apart in FORGOTTEN_FILE next to it, protected with DPAPI for this Windows account, never in settings.json.
@@ -180,7 +186,10 @@ class Settings:
         self._retry_now = threading.Event()             # set: the waiting retry tries at once (tests, quit)
         self._fpath = os.path.join(os.path.dirname(path), FORGOTTEN_FILE)
         self.goal_pending = False                       # the file was read and has no performance_goal (settle_goal)
-        self.read_failed = False                        # settings.json is there but couldn't be read or isn't settings
+        self.read_failed = False                        # settings.json is there but couldn't be read or isn't settings:
+        #   _save then re-reads it (merging) or sets it aside first, never writes the defaults over it (S0)
+        self.notice = ""                                # said once: the file was set aside (UNREADABLE_NOTE)
+        self._changed = set()                           # keys this session changed while read_failed (the merge)
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
@@ -404,17 +413,97 @@ class Settings:
             power_compat(new, self.data)
             changed = [k for k, v in new.items() if v != self.data.get(k)]
             if changed:
-                old = dict(self.data)
+                old, old_changed = dict(self.data), set(self._changed)
                 self.data.update({k: new[k] for k in changed})
+                self._changed.update(changed)
                 try:
                     self._save()
                 except Exception:
-                    self.data = old                      # not saved: not changed
+                    self.data, self._changed = old, old_changed     # not saved: not changed
                     raise
         return changed
 
+    def remove_aside_copies(self):
+        """Delete the settings copies set aside when the file couldn't be read (settings.json.unreadable-<stamp>): they
+        hold folder paths (Wipe: nothing of the old index's surroundings stays). Returns how many went."""
+        folder, base = os.path.split(self.path)
+        n = 0
+        try:
+            names = os.listdir(folder or ".")
+        except OSError:
+            return 0
+        for name in names:
+            if name.startswith(base + ".unreadable-"):
+                try:
+                    os.remove(os.path.join(folder, name))
+                    n += 1
+                except OSError as e:
+                    from .log import log
+                    log(f"couldn't delete an old settings copy (error {e.errno})", "warn")
+        return n
+
+    def _settle_unreadable(self):
+        """The file couldn't be read at start. Before the first write: read it again (a lock is usually gone); if it
+        parses, its values are the base and only the keys changed in this session are applied on top. If it still
+        can't be read, it is moved aside (never deleted) and the defaults plus this session's changes are written.
+        False when even the move failed: nothing is written, the change stays in memory and the next save tries
+        again (like forgotten.dat)."""
+        from .log import log
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                raw = json.load(f)
+        except FileNotFoundError:
+            raw = None
+            self._changed.clear()
+            self.read_failed = False                    # gone meanwhile: a new install
+            return True
+        except (OSError, ValueError):
+            raw = None
+        if isinstance(raw, dict):
+            self._merge_raw(raw)
+            self.read_failed = False
+            self._changed.clear()
+            log("settings file read on the second try; the changes were added to it")
+            return True
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        aside = f"{self.path}.unreadable-{stamp}"
+        n = 1
+        while os.path.exists(aside):
+            n += 1
+            aside = f"{self.path}.unreadable-{stamp}-{n}"
+        try:
+            os.replace(self.path, aside)
+        except OSError as e:
+            log(f"settings file can't be read or moved aside (error {e.errno}); not saved, tried again at the next "
+                "change", "warn")
+            return False
+        log(f"settings file couldn't be read; kept as {os.path.basename(aside)} and started from the defaults", "warn")
+        self.notice = UNREADABLE_NOTE + os.path.basename(aside)
+        self.read_failed = False
+        self._changed.clear()
+        return True
+
+    def _merge_raw(self, raw):
+        """The file's values are the base; only the keys changed in this session stay as they are now."""
+        ch = self._changed
+        mine_list = list(self.data.get("exclude") or [])
+        for k in DEFAULTS:
+            if k in raw and k not in ch:
+                self.data[k] = coerce(k, raw[k])
+        if "scope" not in raw and "scope" not in ch:
+            self.data["scope"] = "custom" if self.data["roots"] else "whole_pc"
+        if "performance_goal" in raw and "performance_goal" not in ch and "power" not in ch:
+            self.data["power"] = power_from_goal(self.data["performance_goal"])
+        rev = raw.get("settings_rev") if isinstance(raw.get("settings_rev"), int) else 0
+        self.data["settings_rev"] = rev
+        if "exclude" not in ch:                         # Forget's entries (kept apart) are added to the file's list
+            file_ex = list(self.data["exclude"])
+            self._plain = set(file_ex)
+            self.data["exclude"] = _paths(file_ex + [e for e in mine_list if e in self._forgot and e not in file_ex])
+
     def _save(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        blocked = self.read_failed and not self._settle_unreadable()
         if not self._forgot_read:
             self._load_forgotten()                      # unreadable before: maybe it can be read now (never overwritten)
         ex = list(self.data.get("exclude") or [])
@@ -435,6 +524,8 @@ class Settings:
                 log("the forgotten list couldn't be saved protected; new entries are kept in memory", "warn")
             self.note = FORGOT_NOTE
             self._retry_later()
+        if blocked:
+            return                                      # the unreadable file is still there: kept in memory only
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(plain, f, indent=1)

@@ -309,6 +309,7 @@ def test_wipe_removes_forgotten_paths_logs_and_aside_copies_but_keeps_what_start
     assert secret in a._settings.get("exclude")
     for name in ("i.db.unreadable-20261122-101010", "i.db.key.unreadable-20261122-101010"):
         (tmp_path / name).write_bytes(b"old index")
+    (tmp_path / "s.json.unreadable-20261123-101010").write_bytes(b'{"roots": ["C:\\\\Private"]}')   # S0: settings copy
     logf = tmp_path / "find.log"
     monkeypatch.setattr(log_mod, "_path", str(logf))
     log_mod.log("something about the old index")

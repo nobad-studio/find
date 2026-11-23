@@ -57,6 +57,11 @@
 - Notifications never name a file or show a path, unless "Show file names in notifications" (Settings > Privacy &
   data, off) is on. The last 100 are kept encrypted inside the index.
 
+### Fixed
+- A settings file that couldn't be read (locked by an antivirus or backup tool, or damaged) was replaced by the
+  defaults at the next change, losing your folders, exclusions and scope. Now the file is read again first and your
+  change is added to it; if it still can't be read it is kept as settings.json.unreadable-<date> (Wipe deletes it).
+
 ## 1.1.1 · (in development)
 
 ### Fixed
