@@ -1,4 +1,4 @@
 # Vision benchmark only (tools/vision_bench, dev only, never shipped). One venv per ONNX Runtime build:
 #   CPU: onnxruntime==1.27.0 | DirectML: onnxruntime-directml (same minor) | CUDA: onnxruntime-gpu (same minor)
 -r ../../requirements.txt
-pillow==12.3.0
+pillow==13.0.0
