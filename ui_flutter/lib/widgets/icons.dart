@@ -54,6 +54,7 @@ enum NbGlyph {
   graphics,
   scan,
   chat,
+  globe,
   textDoc,
   translate,
   moon,
@@ -123,6 +124,7 @@ class NbIcon extends StatelessWidget {
     NbGlyph.graphics: 0xF211, // a graphics card
     NbGlyph.scan: 0xEE6F, // a scan frame: words read from pictures
     NbGlyph.chat: 0xE8BD, // Message
+    NbGlyph.globe: 0xE774, // Globe
     NbGlyph.textDoc: 0xF000, // a page of text
     NbGlyph.translate: 0xF2B7, // Translate
     NbGlyph.moon: 0xE708, // QuietHours
@@ -183,6 +185,7 @@ class GlyphTile extends StatelessWidget {
     NbGlyph.window: NbTint.violet,
     NbGlyph.moon: NbTint.violet,
     NbGlyph.chat: NbTint.violet,
+    NbGlyph.globe: NbTint.teal,
     // search and meaning
     NbGlyph.search: NbTint.blue,
     NbGlyph.openFile: NbTint.blue,

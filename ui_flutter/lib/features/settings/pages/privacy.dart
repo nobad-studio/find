@@ -119,7 +119,7 @@ class _BrowserDataGroupState extends State<BrowserDataGroup> {
     final line = _state.summary(DateTime.now());
     return SettingsGroup(
       'Browsers',
-      icon: NbGlyph.external,
+      icon: NbGlyph.globe,
       rows: [
         SettingRow(
           label: BrowserDataGroup.label,
