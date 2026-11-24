@@ -557,12 +557,6 @@ class Store:
                             "v=excluded.v")
             self.db.commit()
 
-    def drop_photo_vectors(self):
-        """Every photo vector out (another photo model): every photo is looked at again."""
-        with self.wlock:
-            self.db.execute("DELETE FROM pvecs")
-            self.db.commit()
-
     def drop_vectors(self):
         """Forget every meaning vector (the way they're made changed): they're computed again."""
         with self.wlock:

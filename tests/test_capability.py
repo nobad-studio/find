@@ -90,7 +90,7 @@ def test_device_follows_free_graphics_memory():
     shared = {"kind": "shared", "free_mb": 7000, "used_mb": 1000, "budget_mb": 8000}       # Intel iGPU
     r = run(smp(free_mb=12000, gpu_mem=shared), pc=PC_GPU)
     assert r["device"]["big4g"] == "gpu" and r["budget"]["gpu_kind"] == "shared"
-    tight = dict(shared, free_mb=1500)
+    tight = dict(shared, free_mb=2000)              # mid: 1381 MB fits in 2000 - 512; big4g: 5376 doesn't
     r = run(smp(free_mb=12000, gpu_mem=tight), pc=PC_GPU)
     assert r["device"]["mid"] == "gpu" and r["device"]["big4g"] == "cpu" and r["can_run"]["big4g"] is True
     assert run(smp(free_mb=12000, gpu=95.0), pc=PC_GPU)["device"]["mid"] == "cpu"          # the GPU is busy

@@ -278,6 +278,37 @@ def test_a_download_opens_its_file_or_else_its_folder(tmp_path, monkeypatch):
         s.close()
 
 
+def test_a_download_on_a_mapped_network_drive_is_never_looked_up(tmp_path, monkeypatch):
+    """Final review: Z: mapped to \\\\server\\share is a drive letter too; asking whether its file is there would make
+    Windows contact the server. The drive's type is asked first (GetDriveTypeW: no server contact), and a network
+    drive is refused before any isfile / isdir."""
+    monkeypatch.setattr(browsersearch.winapi, "drive_type", lambda root: "network" if root == "Z:\\" else "fixed")
+    assert browsersearch.download_path("Z:\\setups\\a.zip") is None
+    assert browsersearch.download_path("z:/setups/a.zip") is None
+    assert browsersearch.download_path("C:\\setups\\a.zip") == "C:\\setups\\a.zip"
+    a, s, _ran = _api(tmp_path)
+    looked = []
+    real_isfile, real_isdir = os.path.isfile, os.path.isdir
+    monkeypatch.setattr(api_mod.os.path, "isfile", lambda p: looked.append(p) or real_isfile(p))
+    monkeypatch.setattr(api_mod.os.path, "isdir", lambda p: looked.append(p) or real_isdir(p))
+    try:
+        r = a.search("", {"kind": "browser", "browser": "download"})["results"][0]
+        with s.wlock:
+            s.db.execute("UPDATE browser_items SET url = ? WHERE id = ?", ("Z:\\setups\\setup.zip", -r["id"]))
+            s.db.commit()
+        looked.clear()
+        assert a.open(r["id"])["ok"] is False and a.reveal(r["id"])["ok"] is False
+        assert not [p for p in looked if p.upper().startswith("Z:")]
+    finally:
+        s.close()
+
+
+def test_drive_type_names_a_network_drive():
+    assert winapi.DRIVE_TYPES[4] == "network"
+    assert winapi.drive_type("C:\\") in ("fixed", "removable", "network", "cd", "ram", None)
+    assert winapi.drive_type("not a root") is None
+
+
 def test_a_web_page_has_no_folder_and_other_file_actions_refuse(tmp_path):
     a, s, _ran = _api(tmp_path)
     try:

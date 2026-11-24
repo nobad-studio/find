@@ -8,10 +8,13 @@ from .const import DEFAULTS, FEATURE_BACKENDS, VARIANTS
 from .settings import goal as goal_of
 
 
-def state(st, pc, plan, talk_rid):
+def state(st, pc, plan, talk_rid, gpu_now=None):
     """Settings > Performance: for every override, its value, what auto would pick on this PC right now and
     why, the values it may take here, and a note when the value isn't used now (spec 8b rule 5). Read from
-    the cached hardware scan and the plan: nothing is measured for it."""
+    the cached hardware scan and the plan: nothing is measured for it. gpu_now: {"text", "talk"}: why that work
+    runs on the processor right now though the graphics card was chosen (the graphics reserve and fit check,
+    indexer.text_gpu_choice / Api._talk_gpu_fits); shown as the row's note."""
+    now = gpu_now or {}
     goal = goal_of(st)
     pc = pc or {}
     backs = pc.get("backends") or {}
@@ -54,11 +57,11 @@ def state(st, pc, plan, talk_rid):
         text_why = "Meaning for documents runs on the processor: " + why[0].lower() + why[1:]
     backend("backend_text", onnx, text_auto, text_why, "meaning runs on the processor",
             "The graphics card for background work is Off, and Off wins: meaning runs on the processor."
-            if off and st.get("backend_text") not in ("auto", "cpu", None) else "")
+            if off and st.get("backend_text") not in ("auto", "cpu", None) else now.get("text") or "")
     talk = "vulkan" if talk_rid == "llama-vulkan" and "vulkan" in llama else "cpu"
     backend("backend_talk", llama, talk, "Talk about a photo uses the Vulkan runtime installed here."
             if talk == "vulkan" else "Talk about a photo uses the processor runtime.",
-            "talk about a photo uses the processor")
+            "talk about a photo uses the processor", now.get("talk") or "")
     for mid, variants in VARIANTS.items():
         pick = variants[-1] if goal == "fast" else variants[0]
         row(f"variant_{mid}", pick,
@@ -82,15 +85,17 @@ def state(st, pc, plan, talk_rid):
     classes = profile.classify(pc)
     cw = classes["why"]
     g = classes["gpu"]
-    unused = "Not used yet: the model suggestions that plan by these classes come in a later update."
+    used_by = ("Used by the model suggestions (Settings > Models and the first-run setup); it doesn't change how "
+              "hard NOBAD Find works.")
     row("profile_override_gpu", g.get("onnx"),
         f"Background work: {cw.get('gpu_onnx')}. Talk about a photo: {cw.get('gpu_llamacpp')}.",
-        ["auto"] + list(profile._ORDER[::-1]), unused)
+        ["auto"] + list(profile._ORDER[::-1]), used_by)
     for axis in ("cpu", "storage", "memory"):
         row(f"profile_override_{axis}", classes[axis], cw[axis][:1].upper() + cw[axis][1:] + ".",
-            ["auto"] + list(profile._ORDER[::-1]), unused)
+            ["auto"] + list(profile._ORDER[::-1]), used_by)
     row("gpu_reserve_min_mb", DEFAULTS["gpu_reserve_min_mb"],
         "NOBAD Find leaves the larger of this and 15% of the free graphics memory to Windows and other apps. "
         "A higher number only leaves more.", [],
-        "In this version it only changes the graphics-card check under Index > Running at once now.")
+        "Used for work on the graphics card (meaning for documents, talk about a photo, the check under Index > "
+        "Running at once now) and by the model suggestions.")
     return {"goal": goal, "rows": rows}

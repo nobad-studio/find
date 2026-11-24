@@ -333,12 +333,51 @@ def test_vision_state_sends_the_measured_timing_of_the_runtime_in_use(env):
     assert st[QWEN]["slow_note"] == ""
 
 
+def _gpu_sample(free_mb):
+    from nobadfind.governor import Sample
+    return Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                  presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                  gpu_mem={"kind": "dedicated", "free_mb": free_mb, "used_mb": 8192 - free_mb, "budget_mb": 8192})
+
+
 @pytest.mark.parametrize("vram_gb", [0.1, 8.0])        # Iris Xe (shared) and a graphics card: the same need
 def test_vulkan_runtime_passes_the_bigger_need_and_layers(env, monkeypatch, vram_gb):
     """On Vulkan the need is max(ram_mb, vram_mb) on every graphics card (measured: Qwen on Vulkan / Iris Xe
     committed more system RAM than its graphics memory; shared and dedicated memory can't be told apart)."""
     _put_files(env["data"], "llama-vulkan")
     monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": vram_gb})
+    if vram_gb >= 1:
+        env["a"]._governor.sample = _gpu_sample(6000)          # a card of its own, with room for the model
+    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(env["events"], r["job"]))
+    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
+    m = models.get(SMOL)
+    assert settings["need_mb"] == max(m["ram_mb"], m["vram_mb"]) and gpu == 99
+
+
+@pytest.mark.parametrize("free_mb", [900, None])        # short of the reserve + need; not known
+def test_talk_on_a_graphics_card_short_of_memory_runs_on_the_processor(env, monkeypatch, free_mb):
+    """Final review I1: on a card of its own, talk uses Vulkan only when free - reserve >= the model's vram_mb;
+    else (or unknown) gpu_layers 0 with the reason, said in the activity log and on Settings > Performance."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
+    env["a"]._governor.sample = None if free_mb is None else _gpu_sample(free_mb)
+    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
+    assert r["ok"] and _wait(lambda: _final(env["events"], r["job"]))
+    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
+    assert gpu == 0
+    why = env["a"]._talk_gpu_why
+    assert "processor" in why and (("900 MB" in why) if free_mb else ("isn't known" in why))
+    assert any(why in e["text"] for e in env["a"]._activity.recent(10))
+    rows = env["a"].performance_state()["rows"]
+    assert why in rows["backend_talk"]["note"]
+
+
+def test_built_in_graphics_keeps_the_vulkan_layers(env, monkeypatch):
+    """Built-in graphics (shared memory): the GPU need is counted against system RAM (talk_assess), so the
+    dedicated-memory check doesn't apply."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "Iris Xe", "vram_gb": 0.1})
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(env["events"], r["job"]))
     (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]

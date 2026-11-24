@@ -148,7 +148,7 @@ CATALOG = [
     # (size, SHA-256); never ggml-rpc.dll, never an .exe). Unpacked to runtime/<id> by the download.
     _runtime("llama-cpu", "llama.cpp runtime (CPU)", llama_pins.CPU_ZIP, llama_pins.CPU_DLLS,
              "Runs the talk models on the processor"),
-    _runtime("llama-vulkan", "llama.cpp runtime (graphics card)", llama_pins.VULKAN_ZIP, llama_pins.VULKAN_DLLS,
+    _runtime("llama-vulkan", "llama.cpp runtime (Vulkan)", llama_pins.VULKAN_ZIP, llama_pins.VULKAN_DLLS,
              "Runs the talk models on the graphics card (Vulkan)"),
     {"id": "windows-ocr", "feature": "ocr", "name": "Windows OCR", "tier": "light", "licence": "Windows",
      "source": "Windows (Windows.Media.Ocr)", "rev": "", "files": {}, "languages": ["the Windows language packs"],

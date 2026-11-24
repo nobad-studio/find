@@ -254,15 +254,18 @@ def test_graphics_card_off_beats_a_forced_directml_for_meaning():
     full = g.Decision(g.FULL, "")
     quiet = g.Decision(g.FULL, "", gpu_background=False)
     S = FakeSettings
-    assert indexer.text_gpu(g.FULL, full, S(backend_text="directml", gpu_background="off")) is False
-    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto", gpu_background="off")) is False
-    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="directml")) is True       # an override beats the goal
-    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="auto")) is False          # quiet on auto: processor
-    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto")) is True
-    assert indexer.text_gpu(g.FULL, full, S(backend_text="cpu", gpu_background="on")) is False
-    assert indexer.text_gpu(g.GENTLE, full, S(backend_text="directml", gpu_background="on")) is False
+    room = g.Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                    presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                    gpu_mem={"kind": "dedicated", "free_mb": 6000, "used_mb": 0, "budget_mb": 6000})
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="directml", gpu_background="off"), room, 400) is False
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto", gpu_background="off"), room, 400) is False
+    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="directml"), room, 400) is True    # override beats goal
+    assert indexer.text_gpu(g.FULL, quiet, S(backend_text="auto"), room, 400) is False    # quiet on auto: CPU
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="auto"), room, 400) is True
+    assert indexer.text_gpu(g.FULL, full, S(backend_text="cpu", gpu_background="on"), room, 400) is False
+    assert indexer.text_gpu(g.GENTLE, full, S(backend_text="directml", gpu_background="on"), room, 400) is False
     saver = g.Decision(g.FULL, "", gpu=False)                                         # battery saver / creative app
-    assert indexer.text_gpu(g.FULL, saver, S(backend_text="directml", gpu_background="on")) is False
+    assert indexer.text_gpu(g.FULL, saver, S(backend_text="directml", gpu_background="on"), room, 400) is False
     # the Performance page says so
     from nobadfind import performance
     pc = {"backends": {"onnx": ["cpu", "directml"], "llamacpp": ["cpu"]}}
@@ -329,7 +332,7 @@ def test_performance_state_says_what_auto_would_pick_and_why(tmp_path, monkeypat
     assert hdd["auto"] == 2 and "spinning disk" in hdd["why"]
     st.update({"workers": 0})
     # overrides that nothing reads yet say so (UI text never claims more than is built)
-    assert a.performance_state()["rows"]["profile_override_cpu"]["note"].startswith("Not used yet")
+    assert a.performance_state()["rows"]["profile_override_cpu"]["note"].startswith("Used by the model suggestions")
     st.update({"performance_goal": "quiet"})
     assert a.performance_state()["rows"]["gpu_background"]["auto"] == "off"
     st.update({"performance_goal": "fast", "workers": 4})

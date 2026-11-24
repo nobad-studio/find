@@ -22,10 +22,12 @@
   too), ignores the text reading workers number (the field is greyed out, with the reason) and still steps down
   when other apps need the PC or memory gets tight.
 - New choices beside it: the graphics card for background work, what photos, meaning and talk run on, the SigLIP 2
-  build, the class each part of the PC is planned as (not used yet: the model suggestions read it later), and the graphics memory left free. Each shows what Auto would
-  pick right now and why. No choice gets past the limits that protect the PC (the memory kept for Windows, the
-  graphics memory left free, the worker memory cap, the pauses). "Reset to safe defaults" asks once, then puts the
-  goal and these choices back; the index, your models, privacy settings, folders and learned apps stay.
+  build, the class each part of the PC is planned as (the model suggestions plan by it), and the graphics memory
+  left free. Each shows what Auto would pick right now and why. No choice gets past the limits that protect the PC
+  (the memory kept for Windows, the graphics memory left free, the worker memory cap, the pauses): meaning for
+  documents, and talk about a photo on a graphics card with its own memory, use the card only while its free memory,
+  less what is left free, holds the model; otherwise they run on the processor and Settings > Performance says why.
+  "Reset to safe defaults" asks once, then puts the goal and these choices back; the index, your models, privacy settings, folders and learned apps stay.
 
 ### Talk about a photo
 - Both talk models now use the same check as the search models ("Right now" in Settings > Models): free memory

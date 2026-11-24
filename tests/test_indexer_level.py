@@ -621,6 +621,10 @@ class LimGov:
     def __init__(self, level, limits, **d):
         self.decision = g.Decision(level, "why", **d)
         self.limits = {op: {"effective": n} for op, n in limits.items()}
+        # a graphics card with room (the reserve and fit check: test_gpu_fit.py)
+        self.sample = g.Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                              presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                              gpu_mem={"kind": "dedicated", "free_mb": 6000, "used_mb": 0, "budget_mb": 6000})
 
 
 def test_text_readers_follow_the_readers_limit(tmp_path, monkeypatch):

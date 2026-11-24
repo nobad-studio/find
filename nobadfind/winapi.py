@@ -600,6 +600,18 @@ def fixed_drives():
 DRIVE_TYPES = {2: "removable", 3: "fixed", 4: "network", 5: "cd", 6: "ram"}
 
 
+def drive_type(root):
+    """"removable" | "fixed" | "network" | "cd" | "ram" for a drive root such as "Z:\\", or None (not a drive
+    letter, no such drive, not Windows). GetDriveTypeW answers from the drive-letter mapping: a mapped network
+    drive's server isn't contacted."""
+    if not WIN or not isinstance(root, str) or not re.fullmatch(r"[A-Za-z]:\\", root):
+        return None
+    try:
+        return DRIVE_TYPES.get(k32.GetDriveTypeW(root.upper()))
+    except Exception:
+        return None
+
+
 def drives():
     """Every drive letter Windows shows this user: [{'root': 'E:\\', 'type': 'removable', 'label': 'SANDISK'}]."""
     if not WIN:

@@ -15,11 +15,12 @@ A model is runnable now when, in this order:
   4. battery saver is off (else light models only), and on battery the best tier waits for the charger;
   5. the processor isn't busy with other apps (heavier than light models wait);
   6. its speed measured on this PC isn't too slow to be useful.
-device: "gpu" when DirectML is there and the graphics card has that much free memory now (an integrated GPU's
-shared memory counts) and isn't busy; else "cpu".
+device: "gpu" when DirectML is there, the graphics card isn't busy, and its free memory now less the reserve
+(governor.gpu_fit: max(512 MB or the user's minimum, 15% of free); an integrated GPU's shared memory counts) holds
+the model; else "cpu". Unknown free graphics memory never counts as fits: "cpu".
 """
 from . import models
-from .governor import LIMITS
+from .governor import LIMITS, gpu_fit
 
 MARGIN_MB = 256          # every model gets this much on top of its need ...
 MARGIN_SHARE = 0.25      # ... plus a quarter of it (tokenizers, batches, the allocator)
@@ -66,7 +67,7 @@ def budget(sample, hardware=None):
             "battery": bool(_get(sample, "battery")), "battery_saver": _get(sample, "battery_saver") is True}
 
 
-def _one(m, pc, b, measured):
+def _one(m, pc, b, measured, settings=None):
     """(can run now, why, device)."""
     if m.get("builtin"):
         return True, "Built into Windows", "cpu"
@@ -97,19 +98,19 @@ def _one(m, pc, b, measured):
         unit = "photos" if m.get("feature") == "photo" else "pieces of text"
         return False, f"Too slow on this PC: measured {speed:g} {unit} a second", "cpu"
     gpu = bool(pc.get("directml")) and not b["battery_saver"] and (b["gpu"] is None or b["gpu"] < LIMITS["HOT_GPU"]) \
-        and (b["gpu_free_mb"] is None or b["gpu_free_mb"] >= total)
+        and gpu_fit({"free_mb": b["gpu_free_mb"]}, total, settings)[0]
     if b["usable_mb"] is None:
         return True, "Fits this PC (free memory unknown right now)", "gpu" if gpu else "cpu"
     return True, f"Fits now: needs about {_size(need)}, {_size(b['free_mb'])} free", "gpu" if gpu else "cpu"
 
 
-def assess(sample, hardware, measured=None, catalog=None):
+def assess(sample, hardware, measured=None, catalog=None, settings=None):
     """{"can_run": {model_id: bool}, "why": {model_id: str}, "device": {model_id: "gpu" | "cpu"},
-    "budget": budget(...)} for every model in the catalog."""
+    "budget": budget(...)} for every model in the catalog. settings: for the user's graphics reserve minimum."""
     pc = hardware or {}
     b = budget(sample, pc)
     out = {"can_run": {}, "why": {}, "device": {}, "budget": b}
     for m in (models.CATALOG if catalog is None else catalog):
-        ok, why, device = _one(m, pc, b, measured or {})
+        ok, why, device = _one(m, pc, b, measured or {}, settings)
         out["can_run"][m["id"]], out["why"][m["id"]], out["device"][m["id"]] = ok, why, device
     return out

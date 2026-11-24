@@ -143,6 +143,9 @@ def test_meaning_worker_follows_the_level(tmp_path, monkeypatch):
 
     class Gov:
         decision = g.Decision(g.FULL, "Full: you're away")
+        sample = g.Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                          presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                          gpu_mem={"kind": "dedicated", "free_mb": 6000, "used_mb": 0, "budget_mb": 6000})      # a card with room
 
     made = []
 

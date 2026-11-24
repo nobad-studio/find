@@ -855,13 +855,15 @@ class Api:
         """Settings > Performance: what auto would pick for each override right now, and why (performance.state)."""
         pc = hw.scan() or {}
         plan_ = (getattr(self._indexer, "status", None) or {}).get("plan") or {}
-        return performance.state(self._settings, pc, plan_, models.talk_runtime(pc, self._mdir()))
+        now = {"text": getattr(self._indexer, "text_gpu_why", "") or "", "talk": getattr(self, "_talk_gpu_why", "")}
+        return performance.state(self._settings, pc, plan_, models.talk_runtime(pc, self._mdir()), gpu_now=now)
 
     def capability_state(self):
         """Settings -> Models "Your PC, now": what this PC can run right now (capability.assess) from the
         governor's last reading. measured: per-model numbers from this PC (an in-app benchmark, later)."""
         sample = getattr(self._governor, "sample", None) if self._governor is not None else None
-        return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}))
+        return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}),
+                                 settings=self._settings)
 
     def storage_use(self):
         """What NOBAD Find keeps on this PC, measured from file sizes on disk (read only, nothing is changed):
@@ -1605,6 +1607,8 @@ class Api:
                           "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
                                        for x in need]}
         vulkan = rid == "llama-vulkan" and self._settings.get("backend_talk") != "cpu"    # 1.2.0: processor only
+        if vulkan:
+            vulkan = self._talk_gpu_fits(m, pc)
         settings = dict(m["talk"])
         settings["need_mb"] = models.talk_need_mb(m, rid) or None
         mdir = models.model_dir(m["id"], d)
@@ -1614,6 +1618,30 @@ class Api:
                          "mmproj": os.path.join(mdir, "mmproj.gguf"), "runtime": models.model_dir(rid, d)},
                "settings": settings, "gpu_layers": 99 if vulkan else 0, "files": list(ids)}
         return (job, m["name"]), None
+
+    _talk_gpu_why = ""                  # why talk runs on the processor though Vulkan was chosen (last job)
+
+    def _talk_gpu_fits(self, m, pc):
+        """Talk on Vulkan with a graphics card of its own: only when its free memory less the reserve holds the
+        model's measured vram_mb (governor.gpu_fit on the governor's last sample; unknown never fits), else
+        gpu_layers 0 with the reason (activity log, Settings > Performance). Built-in graphics use shared memory,
+        which talk_assess counts against system RAM, so they keep Vulkan."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        gm = getattr(sample, "gpu_mem", None) if not isinstance(sample, dict) else sample.get("gpu_mem")
+        kind = (gm or {}).get("kind")
+        discrete = kind == "dedicated" or (kind is None and float((pc or {}).get("vram_gb") or 0) * 1024
+                                           >= hw.INTEGRATED_MB)
+        if not discrete:
+            self._talk_gpu_why = ""
+            return True
+        fits, why = governor_mod.gpu_fit(gm, int(m.get("vram_mb") or 0), self._settings)
+        new = "" if fits else f"Talk about a photo runs on the processor for now: {why}."
+        if new and new != self._talk_gpu_why:
+            log(new)
+            if self._activity is not None:
+                self._activity.add("info", new)
+        self._talk_gpu_why = new
+        return fits
 
     def _vision_start(self, op, ids, question=None, deeper=False):
         got, refused = self._vision_job(op, ids, question, deeper)

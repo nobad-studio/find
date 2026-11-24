@@ -172,6 +172,22 @@ def gpu_reserve_mb(free_mb, settings=None):
     return int(max(low, LIMITS["GPU_RESERVE_SHARE"] * max(0, free_mb or 0)))
 
 
+def gpu_fit(gpu_mem, need_mb, settings=None):
+    """(fits, why not) for work that needs need_mb of graphics memory (spec 6.1's minimum-fit check): free minus the
+    reserve (gpu_reserve_mb) must hold it. gpu_mem is a Sample's gpu_mem (hardware.gpu_memory_free). An unknown
+    reading never counts as fits, also for a backend the user forced: safety limits beat overrides (8b rule 0)."""
+    free = (gpu_mem or {}).get("free_mb")
+    if not isinstance(free, (int, float)) or isinstance(free, bool):
+        return False, "how much graphics memory is free isn't known right now"
+    free = int(free)
+    reserve = gpu_reserve_mb(free, settings)
+    need = max(0, int(need_mb or 0))
+    if free - reserve >= need:
+        return True, ""
+    return False, (f"the graphics card has {free} MB free, NOBAD Find leaves {reserve} MB of it to Windows and "
+                   f"other apps, and this needs about {need} MB")
+
+
 def gpu_background_allowed(settings):
     """Background work may use the graphics card: the user's gpu_background beats the goal (8b rule 0); on auto,
     every goal but quiet. The safety rules (battery saver, a creative app in front, the reserve) still decide."""

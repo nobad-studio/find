@@ -195,6 +195,56 @@ def test_a_half_built_set_is_not_swapped_in_when_the_old_model_goes(tmp_path, mo
     s.close()
 
 
+@pytest.mark.parametrize("pending", [None, "siglip2-base#2"])      # chosen only; a rebuild already begun
+def test_a_restart_while_the_chosen_photo_model_isnt_downloaded_keeps_the_old_set_answering(tmp_path, monkeypatch,
+                                                                                           pending):
+    """Final review I2: the user chose SigLIP 2, its download is still running (or failed, or was cancelled), and
+    NOBAD Find starts again. The old vectors and their model are on disk: they answer photo search, alone. Once the
+    new model is ready the rebuild beside them starts; nothing is dropped or mixed meanwhile."""
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ids = _photos(s, 3)
+    for fid in ids:
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip-base")
+    if pending:
+        s.set_meta("pvec_next_model", pending)
+        s.set_photo_vector(ids[0], 1.0, NEW, next=True)
+    _patch(monkeypatch, [])
+    on_disk = {"siglip-base"}
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: mid in on_disk)
+    st = S(photo_meaning=True, photo_model="siglip2-base")
+    ix = _ix(s, st)                                                      # the engine starts again
+    ix._load_photo()
+    assert ix.photo_text is not None and ix.photo_text.model_id == "siglip-base"
+    assert ix.photo_model == "siglip-base" and ix.pindex.model == "siglip-base" and ix.pindex.n == 3
+    assert ix.photo_model_next is None and ix.photo_text_next is None and ix.pindex_next.n == 0
+    assert s.meta("pvec_model") == "siglip-base" and _count(s, "pvecs") == 3
+    assert (s.meta("pvec_next_model") or None) == pending                # a begun rebuild is kept for later
+    assert _count(s, "pvecs_next") == (1 if pending else 0)
+    r = search.search(s, "a red car on a road", photo_text=_Enc("siglip-base", photo.PHOTO_DIM, 0), pindex=ix.pindex)
+    assert len(r["results"]) == 3
+    # the download finishes: the rebuild beside the old set starts (api.model_download calls _load_photo)
+    on_disk.add("siglip2-base")
+    ix._load_photo()
+    assert ix.photo_model == "siglip-base" and ix.pindex.n == 3
+    assert ix.photo_model_next == "siglip2-base" and s.meta("pvec_next_model") == "siglip2-base#2"
+    assert ix.pindex_next.n == (1 if pending else 0)
+    s.close()
+
+
+def test_no_old_model_on_disk_and_the_chosen_one_missing_waits(tmp_path, monkeypatch):
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    for fid in _photos(s, 2):
+        s.set_photo_vector(fid, 1.0, OLD)
+    s.set_meta("pvec_model", "siglip-base")
+    _patch(monkeypatch, [])
+    monkeypatch.setattr(models, "ready", lambda mid, data_dir=None: False)
+    ix = _ix(s, S(photo_meaning=True, photo_model="siglip2-base"))
+    ix._load_photo()
+    assert ix.photo_text is None and _count(s, "pvecs") == 2 and s.meta("pvec_model") == "siglip-base"
+    s.close()
+
+
 # ---------- search during a rebuild ----------
 class _Enc:
     """A stand-in question encoder: dim numbers, all on axis `axis`."""
@@ -352,6 +402,80 @@ def test_upgrade_path_from_1_0_1_index(tmp_path, monkeypatch, encrypt):
     ix._photo_vectors()
     assert s.meta("pvec_model") == "siglip2-base#3" and _count(s, "pvecs") == 5
     assert {v for (v,) in s.q("SELECT v FROM pvecs")} == {NEW} and ix.pindex.n == 5
+    s.close()
+
+
+# ---------- upgrade from a 1.1.1 install ----------
+# The 1.1.1 schema (find-v1.1.1:nobadfind/store.py) is the current one without pvecs_next, notifications and the
+# browser tables; its files_ad trigger doesn't know pvecs_next.
+SCHEMA_1_1_1 = """
+DROP TRIGGER IF EXISTS browser_ai;
+DROP TRIGGER IF EXISTS browser_ad;
+DROP TABLE IF EXISTS browser_fts;
+DROP INDEX IF EXISTS browser_items_src;
+DROP TABLE IF EXISTS browser_items;
+DROP TABLE IF EXISTS notifications;
+DROP TRIGGER IF EXISTS files_ad;
+DROP TABLE IF EXISTS pvecs_next;
+CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
+  INSERT INTO names(names, rowid, name, dir) VALUES ('delete', old.id, old.name, old.dir);
+  DELETE FROM chunks WHERE file_id = old.id;
+  DELETE FROM nvecs WHERE file_id = old.id;
+  DELETE FROM pvecs WHERE file_id = old.id;
+  DELETE FROM vdesc WHERE file_id = old.id; END;
+"""
+NEW_TABLES = ("pvecs_next", "notifications", "browser_items", "browser_fts")
+
+
+@pytest.mark.parametrize("encrypt", [False, True])
+def test_upgrade_path_from_1_1_1(tmp_path, monkeypatch, encrypt):
+    """Final review: a 1.1.1 install (power "boost", meaning on; an index with text and photo vectors and none of
+    1.2.0's tables) opens in 1.2.0: the settings migrate once (boost -> the goal fast), every vector is kept, and
+    the new tables are made."""
+    import json
+    from nobadfind import settings as settings_mod
+    sp = tmp_path / "settings.json"
+    sp.write_text(json.dumps({"settings_rev": 3, "power": "boost", "semantic": True, "text_model": "multilingual-e5-small",
+                              "photo_meaning": True, "photo_model": "siglip2-base"}), encoding="utf-8")
+    s = Store(str(tmp_path / "i.db"), str(tmp_path / "i.key"), encrypt=encrypt)
+    ids = _photos(s, 4)
+    vec = embed.to_blob(_unit(np.ones(8)))
+    with s.wlock:
+        s.db.executescript(SCHEMA_1_1_1)
+        for fid in ids:
+            s.db.execute("INSERT INTO pvecs(file_id, mtime, v, err) VALUES(?,?,?,NULL)", (fid, 1.0, OLD))
+            s.db.execute("INSERT INTO nvecs(file_id, v) VALUES(?,?)", (fid, vec))
+            cid = s.db.execute("INSERT INTO chunks(file_id, ord, body) VALUES(?,0,'a bill')", (fid,)).lastrowid
+            s.db.execute("INSERT INTO vecs(chunk_id, v) VALUES(?,?)", (cid, vec))
+        for k, v in (("pvec_model", "siglip2-base#2"), ("vec_model", "multilingual-e5-small")):
+            s.db.execute("INSERT INTO meta(k, v) VALUES(?, ?)", (k, v))
+        s.db.commit()
+    for t in NEW_TABLES:
+        assert not s.one("SELECT 1 FROM sqlite_master WHERE name = ?", (t,))
+    s.close()
+
+    # 1.2.0 starts: the settings first (engine.py), then the index
+    st = settings_mod.Settings(str(sp))
+    assert st.get("performance_goal") == "fast" and st.get("power") == "boost" and st.goal_pending
+    assert st.settle_goal() is True
+    assert json.loads(sp.read_text(encoding="utf-8"))["performance_goal"] == "fast"
+    st.update({"performance_goal": "balanced"})                         # the user's later choice ...
+    again = settings_mod.Settings(str(sp))
+    assert again.get("performance_goal") == "balanced" and not again.goal_pending      # ... isn't migrated over
+    assert again.get("semantic") is True
+
+    s = Store(str(tmp_path / "i.db"), str(tmp_path / "i.key"), encrypt=encrypt)
+    for t in NEW_TABLES:
+        assert s.one("SELECT 1 FROM sqlite_master WHERE name = ?", (t,)), t
+    assert _count(s, "pvecs") == 4 and _count(s, "nvecs") == 4 and _count(s, "vecs") == 4
+    assert indexer.vector_model(s) == "multilingual-e5-small" and s.meta("pvec_model") == "siglip2-base#2"
+    _patch(monkeypatch, [])
+    ix = _ix(s, again)
+    ix._load_photo()
+    assert ix.pindex.n == 4 and ix.photo_model_next is None and not s.meta("pvec_next_model")
+    s.set_photo_vector(ids[0], 1.0, NEW, next=True)
+    s.remove_paths(["C:\\p\\img0.jpg"])                                 # the new trigger works on the old index
+    assert _count(s, "pvecs") == 3 and s.one("SELECT count(*) FROM pvecs_next") == 0
     s.close()
 
 

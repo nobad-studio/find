@@ -16,7 +16,7 @@ import time
 import numpy as np
 
 from . import browserdata, embed, extract, models, notify, ocr, photo, scope, winapi
-from .governor import FULL, PAUSED, workers_for
+from .governor import FULL, PAUSED, gpu_fit, workers_for
 from .const import APP_SECRET_FILES, COUNT_SHARE, SECRET_FILES_IN
 from .kinds import READABLE_EXT, kind_of
 from .log import log
@@ -101,19 +101,44 @@ def plan(settings, roots, ssd=None):
             "model_threads": models, "boost": boost, "goal": goal}
 
 
-def text_gpu(level, d, settings):
-    """Meaning for documents on the graphics card now (DirectML), or the processor. Only at Full, and never with
-    battery saver on or a creative app in front (Decision.gpu). Then the user's choices:
+def text_gpu_need(mid):
+    """Graphics memory the text model needs on DirectML: its measured DirectML row's vram_mb, else its catalog
+    ram_mb (the weights and buffers it holds on the processor; no DirectML row is measured yet). 0 if unknown."""
+    m = models.get(mid) if mid else None
+    if not m:
+        return 0
+    try:
+        row = ((models.variants(mid) or [{}])[0].get("backends") or {}).get("directml") or {}
+    except KeyError:
+        row = {}
+    return int(row.get("vram_mb") or m.get("ram_mb") or 0)
+
+
+def text_gpu_choice(level, d, settings, sample=None, need_mb=0):
+    """(on the graphics card, why not) for meaning for documents now (DirectML), or the processor. Only at Full, and
+    never with battery saver on or a creative app in front (Decision.gpu). Then the user's choices:
     - backend_text "cpu" means the processor;
     - gpu_background "off" means the processor too, even with backend_text "directml" (the narrowing choice wins);
     - a forced backend_text graphics backend beats the goal.
-    On auto, the goal and gpu_background decide (Decision.gpu_background)."""
+    On auto, the goal and gpu_background decide (Decision.gpu_background). Whatever was chosen, the graphics card is
+    used only when its free memory, less the reserve, holds the model (governor.gpu_fit on the governor's last
+    sample; unknown never fits): else the processor, and `why` says so (Settings > Performance shows it)."""
     backend = settings.get("backend_text") or "auto"
     if level != FULL or not getattr(d, "gpu", True) or backend == "cpu":
-        return False
+        return False, ""
     if settings.get("gpu_background") == "off":
-        return False
-    return backend != "auto" or bool(getattr(d, "gpu_background", True))
+        return False, ""
+    if backend == "auto" and not getattr(d, "gpu_background", True):
+        return False, ""
+    fits, why = gpu_fit(getattr(sample, "gpu_mem", None), need_mb, settings)
+    if not fits:
+        return False, f"Meaning for documents runs on the processor for now: {why}."
+    return True, ""
+
+
+def text_gpu(level, d, settings, sample=None, need_mb=0):
+    """text_gpu_choice without the reason."""
+    return text_gpu_choice(level, d, settings, sample, need_mb)[0]
 
 
 def user_roots():
@@ -151,6 +176,7 @@ class Indexer:
         self._mpool, self._mpool_gpu, self._mpool_model = None, None, None
         self._up_target = self._up_since = None     # a higher configuration waiting out UP_HOLD
         self._mpool_starts, self._mpool_why, self._storm_warned = [], "first start", None
+        self.text_gpu_why = ""           # why meaning runs on the processor though the graphics card was chosen
         self._text_pool, self._photo_pool = None, None   # for worker_names (the watchdog's messages)
         self._browser_pool = None        # the text reader that reads browser data (browserdata.py), while it runs
         self._browser_sched = browserdata.Schedule()
@@ -1049,7 +1075,12 @@ class Indexer:
         if not self._vectors_in_worker:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
-        gpu = text_gpu(level, self.governor.decision if self.governor is not None else None, self.settings)
+        gov = self.governor
+        gpu, why_not = text_gpu_choice(level, gov.decision if gov is not None else None, self.settings,
+                                       getattr(gov, "sample", None), text_gpu_need(mid))
+        if why_not and why_not != self.text_gpu_why:
+            log(why_not)
+        self.text_gpu_why = why_not
         plan_now = self.status.get("plan") or {}
         if self._mpool is not None:
             why = self._restart_reason(gpu, mid, plan_now.get("model_threads"))
@@ -1182,6 +1213,8 @@ class Indexer:
         if not pid or not models.ready(pid):
             if self.settings.get("photo_meaning"):
                 log(f"photo meaning waits: the photo model {pid or '(none chosen)'} isn't fully on this PC")
+            if pid:
+                self._keep_old_photo_set(pid)
             return
         try:
             had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
@@ -1217,6 +1250,27 @@ class Indexer:
                         f"An error ({type(e).__name__}) stopped photo search from starting, so searching by what is "
                         "in a photo is off for now. Restarting NOBAD Find tries again.", "warning", action="open_models",
                         key="photo-failed")
+
+    def _keep_old_photo_set(self, pid):
+        """The chosen photo model `pid` isn't on this PC yet (its download is running, failed or was cancelled): the
+        vectors already in the index answer alone with their own model, when it is on this PC and can ask them
+        (models.old_vectors_askable). Nothing is dropped and no rebuild starts: a half-built pvecs_next and its tag
+        stay for _load_photo, which runs again when the download is done. Final review I2: a restart in between
+        left photo search off."""
+        if self.photo_text is not None and self.photo_model_next is None:
+            return                                  # this run already searches with what's there
+        try:
+            had = self.store.meta("pvec_model") or ("siglip-base" if self.store.one(
+                "SELECT 1 FROM pvecs LIMIT 1") else "")
+            old = had.split("#")[0]
+            if not old or old == pid or not models.old_vectors_askable(had, old) or \
+                    not self.store.one("SELECT 1 FROM pvecs WHERE length(v) > 0 LIMIT 1"):
+                return
+            self._use_photo_model(old)
+            log(f"photo meaning on with {old} ({self.pindex.n} photos ready) until {pid} is on this PC")
+        except Exception as e:
+            log(f"photo meaning unavailable: {type(e).__name__}", "warn")
+            self.photo_text = None
 
     def _photo_encoder(self, pid):
         spec, d = models.get(pid), models.model_dir(pid)

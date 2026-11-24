@@ -19,6 +19,7 @@ import ntpath
 import re
 import urllib.parse
 
+from . import winapi
 from .display import visible
 from .store import fts_quote
 
@@ -217,8 +218,11 @@ _LOCAL_ABS = re.compile(r"^[A-Za-z]:\\")
 
 def download_path(path):
     """A download's file path when it is a plain local path (never \\\\server\\share or \\\\?\\: those would make
-    Windows reach out or skip its checks), normalized; else None."""
+    Windows reach out or skip its checks), normalized; else None. A drive letter mapped to a network share is refused
+    too, by its drive type (winapi.drive_type, no server contact), before anything looks the path up on disk."""
     if not isinstance(path, str) or not path or len(path) > 1024 or "\x00" in path:
         return None
     p = ntpath.normpath(path.replace("/", "\\"))
-    return p if _LOCAL_ABS.match(p) else None
+    if not _LOCAL_ABS.match(p) or winapi.drive_type(p[:3].upper()) == "network":
+        return None
+    return p
