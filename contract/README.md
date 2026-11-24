@@ -240,6 +240,17 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   were measured on the reference PC (0 / "" when not measured); `improves`, `licence`, `size_mb`, `source` and
   `ram_mb` are what the consent dialog shows. `recommended`: in the recommended tier for this PC and language focus.
   The `models` event brings the same object whenever it changes.
+  1.2.0: each model also says what the measured floors think of it for this PC and the runtime it would use (the
+  suggestion engine, `modelsuggest.for_pc`): `outcome` (`""` | suggested | upgrade | lighter | not_recommended |
+  not_measured; `""` for Windows OCR, the runtimes and the text models of the other language groups; text models are
+  not_measured: they have no floor yet), `suggested`, `above_suggestion` (upgrade or not_recommended: the UI shows
+  `cost_here` first, not_recommended also needs "Use anyway", and `model_use` needs `confirm`), `why` (one plain
+  sentence from the measurements; "Not now: ..." is appended while it doesn't fit the memory free right now),
+  `backend` (cpu | vulkan: what the figures are for), `cost_here` (`SetupCost`: load, answer or search time, peak
+  memory, `index_h` = hours to look at the photos the first scan found again; only measured figures, `measured_on`
+  says "this PC" or "similar PC"; `{}` when not measured, generic estimates never appear), `fits_now` (bool|null),
+  `chosen` (the model in use, or chosen and waiting) and `vectors_change` (choosing it looks at the files again,
+  beside the old vectors).
   1.1: `feature` may also be `talk` (SmolVLM2 500M and Qwen3-VL 2B, talk about a photo) or `runtime` (the llama.cpp
   runtimes `llama-cpu` / `llama-vulkan` they run on). A talk model also sends `vram_mb` (measured graphics memory on
   Vulkan) and `runtime` (the runtime id this PC uses for it). The UI's one consent dialog for a talk model names the
@@ -256,8 +267,13 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   Settings -> Models "Your PC, now"; `device` is where it would run (`gpu` only with DirectML and that much free
   graphics memory now; an integrated GPU's is `shared`). `null` in `budget` = unknown right now, never counted
   against a model; `live` false before the governor's first reading. Not an event: ask again while the page is open.
-- **`model_use`** `{feature, id}` → `{ok, error, needs_download: bool}`: choose the model for a feature (and turn the
-  feature on). Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
+- **`model_use`** `{feature, id, confirm?: bool}` → `{ok, error, needs_download: bool, needs_confirm: bool}`: choose
+  the model for a feature (and turn the feature on). A model above what is suggested for this PC (its `models` entry's
+  `above_suggestion`) is chosen only with `confirm: true`, which the UI sends after the screen with its measured cost
+  (a model not recommended also needs "Use anyway" there); without it `ok` is false, `needs_confirm` true, nothing
+  changes. A choice stays chosen: when it doesn't fit the memory free right now it waits and says why (`models`:
+  `fits_now` false, `why` ends with "Not now: ..."), it is never swapped for the suggestion.
+  Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
   model rebuilds the meaning vectors in the background (`status_full.phases` has `{id: "rebuild"}`); the old vectors
   and their model stay in use until the new ones are complete, then they swap at once. Vectors of two models are
   never searched together.
@@ -273,6 +289,15 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
   and language focus. Everything that needs no download is applied at once; for each step with `needs_download`, the
   UI asks for consent and calls `model_download`. A step's `id` is `""` when the tier turns that feature off.
+- **`reset_suggested`** `{confirm?: bool}` → `{ok, error, applied: bool, changes: [{feature: text|photo, id, name, from,
+  from_name, vectors_change, index_h: number|null, measured_on: ""|this PC|similar PC, needs_download}]}` (1.2.0,
+  Settings → Models "Reset to suggested"): each of meaning search and photo search that is on goes back to the model
+  suggested for this PC (a feature that is off stays off; with no suggestion it stays as it is; for text, which has no
+  measured floor yet, the tier's pick). Another model means other vectors, so without `confirm` nothing changes:
+  `applied` is false and `changes` lists each one with its re-index time `index_h` (hours, from the measured speed and
+  what the first scan counted; null = not measured) for the UI to show; the same call with `confirm: true` applies
+  them, and the old vectors keep answering until the new ones cover everything. Nothing to change: `applied` false,
+  `changes` empty. A model that isn't on disk is chosen and `needs_download` says the UI must ask for the download.
 - **`setup_offer`** `{}` → `{show, state: pending|later|accepted|done, walked, pc: {like: low|mid|high, similar,
   summary, classes, hardware}, items: [SetupItem], notes: [str], total_mb, est_download: str|null}` (1.2.0): the
   first-run models window. `show` is true once the first scan is done until the window is answered (and again when a

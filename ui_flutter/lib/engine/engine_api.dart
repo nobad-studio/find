@@ -175,8 +175,13 @@ abstract class EngineApi {
   /// memory, load and battery. An older engine answers -32601.
   Future<CapabilityState> capabilityState();
 
-  /// Use [id] for [feature] (it may need a download first).
-  Future<ModelUse> modelUse(String feature, String id);
+  /// Use [id] for [feature] (it may need a download first). [confirm]: the user saw the measured cost of a model
+  /// above the suggestion (without it the engine changes nothing and answers `needsConfirm`).
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false});
+
+  /// Back to the suggested models (1.2.0, `reset_suggested`). Without [confirm] nothing changes when a model
+  /// change needs a re-index: the answer lists each change with its time for the user to see first.
+  Future<ResetSuggested> resetSuggested({bool confirm = false});
 
   /// Download [id]. Only call after the consent dialog said yes: it sends the consent word.
   Future<ActionResult> modelDownload(String id);

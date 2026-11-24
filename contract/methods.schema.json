@@ -859,7 +859,7 @@
       }
     },
     "model_use": {
-      "description": "Choose the model for a feature (it turns the feature on). Not downloaded yet: it is chosen, needs_download is true and it is used once downloaded. A switched text model rebuilds the meaning vectors in the background (status_full phase rebuild); the old ones stay in use until then.",
+      "description": "Choose the model for a feature (it turns the feature on). Not downloaded yet: it is chosen, needs_download is true and it is used once downloaded. A switched text model rebuilds the meaning vectors in the background (status_full phase rebuild); the old ones stay in use until then. A model above what is suggested for this PC (the models entry's above_suggestion: an upgrade, or one not recommended) is chosen only with confirm true, which the UI sends after the screen with its measured cost; without it ok is false, needs_confirm true and nothing changes.",
       "params": {
         "$ref": "#/$defs/model_use_params"
       },
@@ -874,14 +874,28 @@
           },
           "needs_download": {
             "type": "boolean"
+          },
+          "needs_confirm": {
+            "type": "boolean",
+            "description": "true: the model is above the suggestion and was not chosen: show its measured cost, then ask again with confirm."
           }
         },
         "required": [
           "ok",
           "error",
-          "needs_download"
+          "needs_download",
+          "needs_confirm"
         ],
         "additionalProperties": false
+      }
+    },
+    "reset_suggested": {
+      "description": "Settings -> Models \"Reset to suggested\": each of meaning search and photo search that is on goes back to the model suggested for this PC (a feature that is off stays off; with no suggestion it stays as it is). Another model means other vectors, so without confirm nothing changes: applied is false and changes lists each one with its re-index time for the UI to show; the same call with confirm true applies them (the old vectors keep answering until the new ones cover everything). No changes: applied false, changes empty.",
+      "params": {
+        "$ref": "#/$defs/reset_suggested_params"
+      },
+      "result": {
+        "$ref": "#/$defs/reset_suggested_result"
       }
     },
     "model_download": {
@@ -3802,6 +3816,52 @@
         "dir": {
           "type": "string",
           "description": "The folder its files are (or will be) downloaded to; \"\" for one built into Windows."
+        },
+        "outcome": {
+          "enum": [
+            "",
+            "suggested",
+            "upgrade",
+            "lighter",
+            "not_recommended",
+            "not_measured"
+          ],
+          "description": "1.2: what the measured floors say about it for this PC (modelsuggest.for_pc); \"\" for a model with no verdict (Windows OCR, the runtimes, text models of the other language groups). Text models are not_measured: they have no floor yet."
+        },
+        "suggested": {
+          "type": "boolean",
+          "description": "outcome is suggested."
+        },
+        "above_suggestion": {
+          "type": "boolean",
+          "description": "outcome is upgrade or not_recommended: choosing it shows its measured cost first (not_recommended also needs Use anyway), and model_use needs confirm."
+        },
+        "why": {
+          "type": "string",
+          "description": "One plain sentence from the measurements (it starts with the outcome's label, e.g. \"Not recommended: SigLIP base: needs about ...\"); \"\" when outcome is \"\". Ends with \"Not now: ...\" while it doesn't fit the memory free right now."
+        },
+        "backend": {
+          "type": "string",
+          "description": "The runtime the figures were measured on: cpu or vulkan; \"\" when outcome is \"\"."
+        },
+        "cost_here": {
+          "$ref": "#/$defs/setup_cost",
+          "description": "Its measured cost for this PC and that runtime: load, answer or search time, peak memory, and index_h (hours to look at the photos the first scan found again) once the first scan counted them. {} when not measured. A figure measured on another PC says so in measured_on; generic estimates never appear."
+        },
+        "fits_now": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Whether its measured memory fits what is free right now (null: not known, or no outcome)."
+        },
+        "chosen": {
+          "type": "boolean",
+          "description": "It is the model in use for its feature, or chosen and waiting for its download or for room."
+        },
+        "vectors_change": {
+          "type": "boolean",
+          "description": "Choosing it makes other vectors than the ones in use: the files are looked at again, beside the old vectors."
         }
       },
       "required": [
@@ -3880,6 +3940,10 @@
         },
         "id": {
           "$ref": "#/$defs/model_id"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "true: choose a model above the suggestion (after the screen with its measured cost). Default false."
         }
       },
       "required": [
@@ -3891,8 +3955,112 @@
         {
           "feature": "text",
           "id": "multilingual-e5-small"
+        },
+        {
+          "feature": "photo",
+          "id": "siglip-base",
+          "confirm": true
         }
       ]
+    },
+    "reset_suggested_params": {
+      "type": "object",
+      "properties": {
+        "confirm": {
+          "type": "boolean",
+          "description": "true: apply the changes now (after showing them). Default false: only list them when a model change needs a re-index."
+        }
+      },
+      "additionalProperties": false,
+      "examples": [
+        {},
+        {
+          "confirm": true
+        }
+      ]
+    },
+    "reset_suggested_result": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "applied": {
+          "type": "boolean"
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "feature": {
+                "enum": [
+                  "text",
+                  "photo"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/model_id",
+                "description": "The suggested model it goes to."
+              },
+              "name": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string",
+                "description": "The model in use now."
+              },
+              "from_name": {
+                "type": "string"
+              },
+              "vectors_change": {
+                "type": "boolean",
+                "description": "The files are looked at again for the new model's vectors (beside the old ones)."
+              },
+              "index_h": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Hours to look at the files again, from the measured speed and what the first scan counted; null = not measured."
+              },
+              "measured_on": {
+                "enum": [
+                  "",
+                  "this PC",
+                  "similar PC"
+                ],
+                "description": "Where index_h was measured; \"\" when it is null."
+              },
+              "needs_download": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "feature",
+              "id",
+              "name",
+              "from",
+              "from_name",
+              "vectors_change",
+              "index_h",
+              "measured_on",
+              "needs_download"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "error",
+        "applied",
+        "changes"
+      ],
+      "additionalProperties": false
     },
     "model_download_params": {
       "type": "object",

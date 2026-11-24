@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/engine/engine_api.dart' show RpcException;
 import 'package:nobad_find/engine/events.dart';
 import 'package:nobad_find/engine/models/models_info.dart';
+import 'package:nobad_find/engine/models/setup_offer.dart' show SetupCost;
+import 'package:nobad_find/features/settings/model_cost_dialog.dart';
 import 'package:nobad_find/engine/models/status.dart';
 import 'package:nobad_find/widgets/controls.dart';
 
@@ -74,12 +76,12 @@ void main() {
     matching: find.byWidgetPredicate((w) => '${w.runtimeType}' == '_ModelRow'),
   );
 
-  testWidgets('1.1: Talk about photos lists SmolVLM2, Qwen and the runtimes; Qwen says why it may not run', (
+  testWidgets('1.1: Talking about a photo lists SmolVLM2, Qwen and the runtimes; Qwen says why it may not run', (
     tester,
   ) async {
     final engine = FakeEngine();
     await openModels(tester, engine);
-    expect(find.text('Talk about photos'), findsOneWidget);
+    expect(find.text('Talking about a photo'), findsOneWidget);
     expect(find.text('SmolVLM2 500M'), findsOneWidget);
     expect(find.text('Qwen3-VL 2B'), findsOneWidget);
     // the reference PC's built-in graphics run the Vulkan runtime: said so, not as a graphics card
@@ -92,7 +94,7 @@ void main() {
     const why = 'Needs 16 GB of memory and 8 cores, or a graphics card with 2.1 GB of its own memory';
     expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.textContaining('DirectML')), findsNothing);
     expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text(why)), findsOneWidget);
-    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('Download anyway…')), findsOneWidget);
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('See cost…')), findsOneWidget); // above the suggestion
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text(why)), findsNothing);
     expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('Use')), findsNothing); // no Use
   });
@@ -246,6 +248,236 @@ void main() {
     await openModels(tester, _NoCapability());
     expect(find.text('Recommended for this PC: Balanced'), findsOneWidget);
     expect(find.text('Right now'), findsNothing);
+  });
+
+  _suggestionTests();
+}
+
+/// The demo catalogue with [f] applied to model [id].
+void changeModel(FakeEngine engine, String id, ModelInfo Function(ModelInfo) f) {
+  engine.modelsInfo = ModelsInfo(
+    pc: engine.modelsInfo.pc,
+    tierRecommended: engine.modelsInfo.tierRecommended,
+    tierCurrent: engine.modelsInfo.tierCurrent,
+    languageFocus: engine.modelsInfo.languageFocus,
+    models: [for (final m in engine.modelsInfo.models) m.id == id ? f(m) : m],
+  );
+}
+
+ModelInfo asOutcome(ModelInfo m, String outcome, {String? why, bool? chosen, ModelUseState? state}) => ModelInfo(
+  id: m.id,
+  feature: m.feature,
+  name: m.name,
+  tier: m.tier,
+  licence: m.licence,
+  source: m.source,
+  sizeMb: m.sizeMb,
+  ramMb: m.ramMb,
+  vramMb: m.vramMb,
+  runtime: m.runtime,
+  languages: m.languages,
+  improves: m.improves,
+  state: state ?? m.state,
+  recommended: m.recommended,
+  outcome: outcome,
+  why: why ?? m.why,
+  backend: m.backend,
+  cost: m.cost,
+  chosen: chosen ?? m.chosen,
+  vectorsChange: m.vectorsChange,
+);
+
+void _suggestionTests() {
+  Finder card(String name) => find.ancestor(
+    of: find.text(name),
+    matching: find.byWidgetPredicate((w) => '${w.runtimeType}' == '_ModelRow'),
+  );
+
+  testWidgets('1.2: each workload is its own group and its models sit under the outcomes the floors gave them', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    for (final t in ['Meaning search', 'Searching photos', 'Talking about a photo']) {
+      expect(find.text(t), findsOneWidget);
+    }
+    expect(find.text('Suggested for this PC'), findsOneWidget); // the first-run row's label; the headings are caps
+    expect(find.text('SUGGESTED FOR THIS PC'), findsNWidgets(2)); // photos, and talking about a photo
+    expect(find.text('AVAILABLE UPGRADE'), findsOneWidget); // Qwen3-VL 2B
+    expect(find.text('NOT MEASURED ON A PC LIKE THIS ONE'), findsOneWidget); // SigLIP base
+    // the suggested badge and the measured sentence, without the outcome's label twice
+    expect(find.descendant(of: card('SigLIP 2 base'), matching: find.text('Suggested')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: card('SigLIP 2 base'),
+        matching: find.text(
+          'a search takes about 196 ms, it indexes 1.42 photos a second, 621 MB of memory (measured on a similar PC)',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('Above the suggestion')), findsOneWidget);
+    expect(find.descendant(of: card('SigLIP base'), matching: find.text('Not measured')), findsOneWidget);
+    // text has no floor yet: a tag, not a sentence per model
+    expect(find.textContaining('not measured against a floor yet'), findsNothing);
+  });
+
+  testWidgets('1.2: an upgrade shows this PC\'s measured cost first, and Not now chooses nothing', (tester) async {
+    final engine = FakeEngine();
+    await openModels(tester, engine);
+    final see = find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('See cost…'));
+    await tester.ensureVisible(see);
+    await tester.tap(see);
+    await tester.pumpAndSettle();
+    expect(find.text('Choose Qwen3-VL 2B?'), findsOneWidget);
+    expect(find.textContaining('above what is suggested for this PC'), findsOneWidget);
+    // only measured figures, on the runtime this PC uses, from a similar PC and said so
+    expect(find.text('on a similar PC, on llama.cpp runtime (built-in graphics, Vulkan)'), findsOneWidget);
+    expect(find.text('about 6.21 s'), findsOneWidget); // loading
+    expect(find.text('the first word in about 12 s'), findsOneWidget);
+    expect(find.textContaining('2,491 MB (2,058 MB of it is the built-in graphics'), findsOneWidget);
+    expect(find.textContaining('were measured on a similar PC, not on this PC'), findsOneWidget);
+    expect(find.textContaining('estimate'), findsNothing);
+    expect(find.text('Choose Qwen3-VL 2B'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(engine.calls, isNot(contains('model_download')));
+    expect(engine.modelUses, isEmpty);
+    // Choose goes on to the download's own consent (the talk model and its runtime)
+    await tester.tap(see);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose Qwen3-VL 2B'));
+    await tester.pumpAndSettle();
+    expect(find.text('Download Qwen3-VL 2B?'), findsOneWidget);
+  });
+
+  testWidgets('1.2: an upgrade for photos: the cost screen shows the time to look at the photos again; the choice '
+      'keeps a note with the cost', (tester) async {
+    final engine = FakeEngine();
+    changeModel(engine, 'siglip-base', (m) => ModelInfo(
+      id: m.id, feature: m.feature, name: m.name, tier: m.tier, licence: m.licence, source: m.source, sizeMb: m.sizeMb,
+      languages: m.languages, improves: m.improves, state: m.state, outcome: 'upgrade', why: m.why, backend: 'cpu',
+      cost: const SetupCost(ramMb: 600, itemsS: .9, queryMs: 420, indexH: .38, measuredOn: 'similar PC'),
+      vectorsChange: true,
+    ));
+    await openModels(tester, engine);
+    expect(find.text('AVAILABLE UPGRADE'), findsNWidgets(2));
+    final see = find.descendant(of: card('SigLIP base'), matching: find.text('See cost…'));
+    await tester.ensureVisible(see);
+    await tester.tap(see);
+    await tester.pumpAndSettle();
+    expect(find.text('Choose SigLIP base?'), findsOneWidget);
+    expect(find.text('on a similar PC, on the processor'), findsOneWidget);
+    expect(find.text('a search takes about 420 ms'), findsOneWidget);
+    expect(find.text('0.9 photos a second'), findsOneWidget);
+    expect(find.textContaining('about 23 min (on a similar PC)'), findsOneWidget); // 0.38 h
+    expect(find.textContaining('keep answering until the new ones are done'), findsOneWidget);
+    await tester.tap(find.text('Choose SigLIP base'));
+    await tester.pumpAndSettle();
+    expect(engine.modelUses, [('siglip-base', true)]); // chosen after the cost screen
+    final note = find.descendant(
+      of: card('SigLIP base'),
+      matching: find.textContaining('Above what is suggested for this PC: a search takes about 420 ms'),
+    );
+    expect(note, findsOneWidget);
+    expect(find.textContaining('peak memory 600 MB (measured on a similar PC)'), findsOneWidget);
+    // chosen already: no second cost screen
+    expect(find.descendant(of: card('SigLIP base'), matching: find.text('See cost…')), findsNothing);
+  });
+
+  testWidgets('1.2: a model not recommended says why, and needs Use anyway after the same screen', (tester) async {
+    final engine = FakeEngine();
+    changeModel(
+      engine,
+      'qwen3vl-2b',
+      (m) => asOutcome(
+        m,
+        'not_recommended',
+        why: 'Not recommended: Qwen3-VL 2B: needs about 9,000 MB of memory; this PC can give it 3,900 MB',
+      ),
+    );
+    await openModels(tester, engine);
+    expect(find.text('NOT RECOMMENDED'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: card('Qwen3-VL 2B'),
+        matching: find.text('needs about 9,000 MB of memory; this PC can give it 3,900 MB'),
+      ),
+      findsOneWidget,
+    );
+    final see = find.descendant(of: card('Qwen3-VL 2B'), matching: find.text('See cost…'));
+    await tester.ensureVisible(see);
+    await tester.tap(see);
+    await tester.pumpAndSettle();
+    expect(find.text('Use Qwen3-VL 2B anyway?'), findsOneWidget);
+    expect(find.textContaining("doesn't recommend this one for this PC"), findsOneWidget);
+    expect(find.text('Choose Qwen3-VL 2B'), findsNothing);
+    await tester.tap(find.text('Use anyway'));
+    await tester.pumpAndSettle();
+    expect(find.text('Download Qwen3-VL 2B?'), findsOneWidget);
+  });
+
+  testWidgets('1.2: Reset to suggested asks first and shows the re-index time; Not now changes nothing', (
+    tester,
+  ) async {
+    final engine = FakeEngine();
+    changeModel(engine, 'siglip-base', (m) => asOutcome(m, m.outcome, chosen: true, state: ModelUseState.active));
+    changeModel(engine, 'minilm-l6-v2', (m) => asOutcome(m, m.outcome, chosen: false, state: ModelUseState.ready));
+    changeModel(engine, 'multilingual-e5-small', (m) => asOutcome(m, m.outcome, chosen: true, state: ModelUseState.active));
+    await openModels(tester, engine);
+    final reset = find.text('Reset to suggested');
+    await tester.ensureVisible(reset);
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    expect(find.text('Back to the suggested models?'), findsOneWidget);
+    expect(find.text('Photos by what is in them: SigLIP base to SigLIP 2 base'), findsOneWidget);
+    expect(find.textContaining('Looking at your photos again takes about 14 min (measured on a similar PC)'), findsOneWidget);
+    await tester.tap(find.text('Not now'));
+    await tester.pumpAndSettle();
+    expect(engine.resets, [false]); // asked, nothing applied
+    expect(engine.modelsInfo.byId('siglip-base')!.chosen, isTrue);
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reset'));
+    await tester.pumpAndSettle();
+    expect(engine.resets, [false, false, true]);
+    expect(engine.modelsInfo.byId('siglip2-base')!.chosen, isTrue);
+    expect(engine.modelsInfo.byId('siglip-base')!.chosen, isFalse);
+    // the new model is not on this PC yet: the usual download consent comes next
+    expect(find.text('Download SigLIP 2 base?'), findsOneWidget);
+  });
+
+  testWidgets('1.2: Reset to suggested with nothing to change says so', (tester) async {
+    final engine = FakeEngine();
+    changeModel(engine, 'minilm-l6-v2', (m) => asOutcome(m, m.outcome, chosen: false, state: ModelUseState.ready));
+    changeModel(engine, 'multilingual-e5-small', (m) => asOutcome(m, m.outcome, chosen: true, state: ModelUseState.active));
+    await openModels(tester, engine);
+    final reset = find.text('Reset to suggested');
+    await tester.ensureVisible(reset);
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    expect(find.text('Back to the suggested models?'), findsNothing);
+    expect(find.text('Already on the suggested models.'), findsOneWidget);
+  });
+
+  test('1.2: whyText drops the outcome label, indexTime says how long', () {
+    ModelInfo w(String why) => ModelInfo(id: 'x', why: why);
+    expect(whyText(w('Upgrade: Qwen3-VL 2B: more memory (2,491 MB)')), 'more memory (2,491 MB)');
+    expect(whyText(w('Lighter option: SigLIP base: finds less than SigLIP 2 base (nDCG@10 0.70 against 0.81)')),
+        'finds less than SigLIP 2 base (nDCG@10 0.70 against 0.81)');
+    expect(whyText(w('Not measured: SigLIP base: not measured on a PC like this one yet')),
+        'not measured on a PC like this one yet');
+    expect(whyText(w('something else')), 'something else');
+    expect(indexTime(0.0), 'under a minute');
+    expect(indexTime(0.24), 'about 14 min');
+    expect(indexTime(2.25), 'about 2 h 15 min');
+    expect(indexTime(3.0), 'about 3 h');
+    expect(indexTime(72), 'about 3 days');
+  });
+
+  test('1.2: nothing measured: no figures at all (never a generic estimate)', () {
+    expect(costFacts(const ModelInfo(id: 'x', feature: 'photo', outcome: 'upgrade'), const ModelsInfo()), isEmpty);
+    expect(costLine(const ModelInfo(id: 'x', outcome: 'upgrade')), 'Nothing was measured for it on a PC like this one.');
   });
 }
 

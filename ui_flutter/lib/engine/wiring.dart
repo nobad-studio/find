@@ -169,7 +169,10 @@ class PipeEngine implements EngineApi {
   @override
   Future<CapabilityState> capabilityState() => _pipe.capabilityState();
   @override
-  Future<ModelUse> modelUse(String feature, String id) => _pipe.modelUse(feature, id);
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) =>
+      _pipe.modelUse(feature, id, confirm: confirm);
+  @override
+  Future<ResetSuggested> resetSuggested({bool confirm = false}) => _pipe.resetSuggested(confirm: confirm);
   @override
   Future<ActionResult> modelDownload(String id) => _pipe.modelDownload(id);
   @override

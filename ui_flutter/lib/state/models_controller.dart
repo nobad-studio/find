@@ -175,9 +175,20 @@ class ModelsController extends ChangeNotifier {
     }
   }
 
-  /// Use [m] for its feature; if it isn't downloaded yet, ask for consent and download it.
-  Future<void> use(ModelInfo m, {required Future<bool> Function(ModelInfo) consent}) async {
-    final r = await _run(m.id, () => engine.modelUse(m.feature, m.id));
+  /// Use [m] for its feature; if it isn't downloaded yet, ask for consent and download it. A model above what is
+  /// suggested for this PC first shows its measured cost ([cost]; "Use anyway" for one not recommended): without
+  /// the user's yes nothing is chosen, and the engine refuses it without `confirm` as well.
+  Future<void> use(
+    ModelInfo m, {
+    required Future<bool> Function(ModelInfo) consent,
+    Future<bool> Function(ModelInfo)? cost,
+  }) async {
+    var confirm = false;
+    if (m.aboveSuggestion && !m.chosen) {
+      if (cost == null || !await cost(m)) return;
+      confirm = true;
+    }
+    final r = await _run(m.id, () => engine.modelUse(m.feature, m.id, confirm: confirm));
     if (r == null) return;
     if (!r.ok) return _say(r.error.isNotEmpty ? r.error : "That model can't be used.");
     if (r.needsDownload) {
@@ -200,7 +211,13 @@ class ModelsController extends ChangeNotifier {
   }
 
   /// A talk model (1.1): one consent names it and the runtime it needs; Download fetches both.
-  Future<bool> downloadTalk(ModelInfo m, {required TalkConsent consent}) async {
+  /// A talk model above the suggestion shows its measured cost first ([cost]).
+  Future<bool> downloadTalk(
+    ModelInfo m, {
+    required TalkConsent consent,
+    Future<bool> Function(ModelInfo)? cost,
+  }) async {
+    if (m.aboveSuggestion && !m.onDisk && (cost == null || !await cost(m))) return false;
     final r = await _run(m.id, () => fetchTalkModel(engine, _info, m, consent: consent));
     if (r == null) return false;
     for (final x in r.started) {
@@ -250,6 +267,32 @@ class ModelsController extends ChangeNotifier {
     } finally {
       _auto = false;
       _changed();
+    }
+  }
+
+  /// Back to the suggested models. When a model change looks at the files again, [ask] shows the changes with their
+  /// re-index time first (nothing is changed before its yes); a model not on disk then asks for [consent] to download.
+  Future<void> resetSuggested({
+    required Future<bool> Function(List<ResetChange>) ask,
+    required Future<bool> Function(ModelInfo) consent,
+  }) async {
+    final r = await _run<ResetSuggested?>('reset', () async {
+      var a = await engine.resetSuggested();
+      if (a.ok && !a.applied && a.changes.isNotEmpty) {
+        if (!await ask(a.changes)) return null;
+        a = await engine.resetSuggested(confirm: true);
+      }
+      return a;
+    });
+    if (r == null) return;
+    if (!r.ok) return _say(r.error.isNotEmpty ? r.error : "The models weren't reset.");
+    await refresh();
+    if (r.changes.isEmpty) return _say('Already on the suggested models.');
+    if (!r.applied) return;
+    _say('Back on the suggested models.');
+    for (final c in r.changes) {
+      final m = _info.byId(c.id);
+      if (c.needsDownload && m != null) await download(m, consent: consent);
     }
   }
 

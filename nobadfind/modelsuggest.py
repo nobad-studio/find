@@ -214,7 +214,7 @@ def _evaluate(w, cand, variant, backend, facts, classes, live, rows, lk):
         c["shared_mb"] = shared
     count = (live or {}).get("photos" if w == "photo_search" else "files")
     if count and r.get("items_s"):
-        c["index_h"] = round(count / r["items_s"] / 3600, 1)
+        c["index_h"] = round(count / r["items_s"] / 3600, 2)
     e["cost_here"] = {k: v for k, v in c.items() if v is not None}
     e["shared"] = shared
 
@@ -426,6 +426,28 @@ def for_pc(facts, classes, live, goal="balanced", focus="multilingual", *, rows=
         items.sort(key=lambda i: _ORDER[i["outcome"]])
         res[w] = items
     return res
+
+
+# the outcomes that go beyond what is suggested for this PC: choosing one shows its measured cost first
+ABOVE = ("upgrade", "not_recommended")
+
+
+def by_model(sugg):
+    """{model id: its for_pc entry} over every workload."""
+    return {e["model"]: e for entries in (sugg or {}).values() for e in entries}
+
+
+def fields(entry):
+    """What the models list says about one model (api.models): its outcome and why, the measured cost here, whether
+    it is the suggestion or above it, and whether it fits right now (None: not known). All empty for a model that
+    has no entry (Windows OCR, the runtimes, text models of the other language groups)."""
+    if entry is None:
+        return {"outcome": "", "why": "", "backend": "", "cost_here": {}, "suggested": False,
+                "above_suggestion": False, "fits_now": None}
+    o = entry.get("outcome") or ""
+    return {"outcome": o, "why": entry.get("why") or "", "backend": entry.get("backend") or "",
+            "cost_here": dict(entry.get("cost_here") or {}),
+            "suggested": o == "suggested", "above_suggestion": o in ABOVE, "fits_now": entry.get("fits_now")}
 
 
 def none_reason(workload, entries):

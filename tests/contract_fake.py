@@ -267,12 +267,20 @@ class FakeApi:
         return capability.assess(CAPABILITY_SAMPLE, self.hardware(), {})
 
     # model tiers: the real catalog, a fixed PC, nothing downloaded unless the transcript downloads it
+    def _suggestions(self, pc, focus):
+        """modelsuggest.for_pc on the fixed PC, with what the first scan counted (the re-index times)."""
+        from nobadfind import modelsuggest, profile
+        classes = profile.effective(profile.classify(pc), self.settings)
+        live = {"runtime": {"photo_talk": "vulkan"}, "photos": self.scanned["photos"], "files": self.scanned["documents"]}
+        return modelsuggest.for_pc(pc, classes, live, "balanced", focus)
+
     def models(self):
-        from nobadfind import models as cat
+        from nobadfind import models as cat, modelsuggest
         pc = self.hardware()
         focus = self.settings.get("language_focus") or "english"
         rec = cat.recommend(pc)
         choice = cat.tier_choice(rec, focus)
+        entries = modelsuggest.by_model(self._suggestions(pc, focus))
         out = []
         rid = "llama-vulkan" if pc.get("gpu") else "llama-cpu"
         for m in cat.CATALOG:
@@ -286,7 +294,9 @@ class FakeApi:
                 state = "active" if cat.selected(self.settings, m["feature"]) == m["id"] else "ready"
             else:
                 state = "not_downloaded"
-            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            fit = {**modelsuggest.fields(entries.get(m["id"])), "chosen": cat.selected(self.settings, m["feature"]) == m["id"],
+                   "vectors_change": cat.vectors_change(self.settings, m["feature"], m["id"])}
+            out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": cat.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -298,14 +308,42 @@ class FakeApi:
         return {"pc": pc, "tier_recommended": rec, "tier_current": cat.tier_current(self.settings, focus),
                 "language_focus": focus, "models": out}
 
-    def model_use(self, feature, mid):
-        from nobadfind import models as cat
+    def model_use(self, feature, mid, confirm=False):
+        from nobadfind import models as cat, modelsuggest
         m = cat.get(mid)
         if m is None or m["feature"] != feature:
-            return {"ok": False, "error": "There's no such model for that.", "needs_download": False}
+            return {"ok": False, "error": "There's no such model for that.", "needs_download": False,
+                    "needs_confirm": False}
+        if not confirm and feature in ("text", "photo") and cat.selected(self.settings, feature) != mid:
+            e = modelsuggest.by_model(self._suggestions(self.hardware(), self.settings.get("language_focus") or "english")).get(mid)
+            if e is not None and e["outcome"] in modelsuggest.ABOVE:
+                return {"ok": False, "needs_download": False, "needs_confirm": True,
+                        "error": "That is above what is suggested for this PC: its measured cost comes first."}
         self.set_settings({"text": {"text_model": mid, "semantic": True}, "photo": {"photo_model": mid,
                            "photo_meaning": True}, "ocr": {"ocr": True}}[feature])
-        return {"ok": True, "error": "", "needs_download": not m["builtin"] and mid not in self.ready}
+        return {"ok": True, "error": "", "needs_download": not m["builtin"] and mid not in self.ready,
+                "needs_confirm": False}
+
+    def reset_suggested(self, confirm=False):
+        from nobadfind import models as cat, modelsuggest
+        pc, focus = self.hardware(), self.settings.get("language_focus") or "english"
+        sugg = self._suggestions(pc, focus)
+        choice, entries, changes = cat.recommend_choice(pc, focus, sugg), modelsuggest.by_model(sugg), []
+        for feature in ("text", "photo"):
+            have, want = cat.selected(self.settings, feature), choice.get(feature) or ""
+            if not have or not want or have == want:
+                continue
+            cost = (entries.get(want) or {}).get("cost_here") or {}
+            changes.append({"feature": feature, "id": want, "name": cat.get(want)["name"], "from": have,
+                            "from_name": (cat.get(have) or {}).get("name") or have,
+                            "vectors_change": cat.vectors_change(self.settings, feature, want),
+                            "index_h": cost.get("index_h"),
+                            "measured_on": cost.get("measured_on", "") if cost.get("index_h") is not None else "",
+                            "needs_download": want not in self.ready})
+        if not changes or (not confirm and any(c["vectors_change"] for c in changes)):
+            return {"ok": True, "error": "", "applied": False, "changes": changes}
+        self.set_settings({("text_model" if c["feature"] == "text" else "photo_model"): c["id"] for c in changes})
+        return {"ok": True, "error": "", "applied": True, "changes": changes}
 
     def model_download(self, mid, consent):
         from nobadfind import models as cat

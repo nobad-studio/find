@@ -104,7 +104,7 @@ def test_language_focus_from_windows_then_the_users_choice(a, monkeypatch):
 
 def test_model_use_selects_and_says_when_a_download_is_needed(a):
     r = a.model_use("text", "multilingual-e5-small")
-    assert r == {"ok": True, "error": "", "needs_download": True}
+    assert r == {"ok": True, "error": "", "needs_download": True, "needs_confirm": False}
     assert a._settings.get("text_model") == "multilingual-e5-small" and a._settings.get("semantic") is True
     _fake_download(a, "siglip2-base")
     assert a.model_use("photo", "siglip2-base")["needs_download"] is False
@@ -283,3 +283,122 @@ def test_suggestions_use_the_goal_and_the_users_gpu_reserve(a, monkeypatch):
 def test_real_suggestion_on_the_reference_pc_keeps_siglip2(a):
     assert a.auto_configure()["tier"] == "best"
     assert a._settings.get("photo_model") == "siglip2-base" and a._settings.get("photo_meaning") is True
+
+
+# ---------- Task 7: the Models page's suggestions (suggested badge, above the suggestion, reset to suggested) ----------
+def _walked(a):
+    """The first scan is done: 1,240 photos and 3,180 documents."""
+    a._indexer.status["last_scan"] = 1763400000.0
+    a._scan_counts = {"photos": 1240, "documents": 3180}
+
+
+def _slower_stronger(monkeypatch):
+    """A photo model measured as finding more than the suggestion but answering slower than the floor allows: an upgrade
+    (a made-up measurement, for this test only)."""
+    row = dict(models.MEASURED[("siglip2-base", "fp16-vision", "cpu", "mid")], visual_ndcg10=0.9, visual_recall10=0.93,
+               query_ms=420.0, items_s=0.9, ram_mb=560, ws_mb=600, need_mb=600)
+    monkeypatch.setitem(models.MEASURED, ("siglip-base", "8bit", "cpu", "mid"), row)
+
+
+def test_models_marks_the_suggested_model_and_the_one_above_it(a):
+    _walked(a)
+    by = {m["id"]: m for m in a.models()["models"]}
+    s = by["siglip2-base"]
+    assert s["suggested"] is True and s["outcome"] == "suggested" and s["above_suggestion"] is False
+    assert s["cost_here"]["measured_on"] == "similar PC" and s["cost_here"]["query_ms"] == 196.5
+    assert s["cost_here"]["index_h"] == round(1240 / 1.416 / 3600, 2)           # the first scan's photos
+    assert s["why"].startswith("Suggested: SigLIP 2 base") and s["backend"] == "cpu"
+    q = by["qwen3vl-2b"]                                        # heavier and slower than SmolVLM2: an upgrade
+    assert q["outcome"] == "upgrade" and q["above_suggestion"] is True and q["suggested"] is False
+    assert q["cost_here"]["answer_s"] == 12.08 and q["backend"] == "vulkan"
+    assert by["smolvlm2-500m"]["suggested"] is True
+    assert by["siglip-base"]["outcome"] == "not_measured" and not by["siglip-base"]["above_suggestion"]
+    assert by["gte-small"]["outcome"] == "not_measured" and by["gte-small"]["cost_here"] == {}   # no text floor yet
+    o = by["windows-ocr"]
+    assert (o["outcome"], o["why"], o["cost_here"], o["suggested"], o["above_suggestion"]) == ("", "", {}, False, False)
+    assert s["chosen"] is False and by["siglip-base"]["chosen"] is False       # photo meaning is off: none is chosen
+
+
+def test_models_before_the_first_scan_has_no_reindex_time(a):
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["siglip2-base"]["suggested"] and "index_h" not in by["siglip2-base"]["cost_here"]
+
+
+def test_not_recommended_on_a_small_pc_keeps_its_reason(a, monkeypatch):
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "ram_gb": 7.8, "cores": 4, "threads": 8})
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["siglip2-base"]["outcome"] == "not_measured" and not by["siglip2-base"]["suggested"]
+    assert "not measured on a PC like this one" in by["siglip2-base"]["why"]
+
+
+def test_override_above_suggestion_waits_not_swaps(a, monkeypatch):
+    """Review Focus 3: a model above the suggestion is chosen only after its cost screen (confirm); then, when the
+    memory free falls, the choice stays, says it waits and why, and is never swapped for the suggestion."""
+    _walked(a)
+    _slower_stronger(monkeypatch)
+    a._settings.update({"photo_model": "siglip2-base", "photo_meaning": True})
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["siglip-base"]["outcome"] == "upgrade" and by["siglip-base"]["above_suggestion"] is True
+    assert by["siglip2-base"]["suggested"] is True
+    r = a.model_use("photo", "siglip-base")                         # no cost screen first: nothing changes
+    assert r["ok"] is False and r["needs_confirm"] is True and "cost" in r["error"]
+    assert a._settings.get("photo_model") == "siglip2-base" and not a._indexer.wake.is_set()
+    r = a.model_use("photo", "siglip-base", confirm=True)
+    assert r["ok"] is True and r["needs_confirm"] is False and a._settings.get("photo_model") == "siglip-base"
+    assert a._indexer.wake.is_set()
+    a._governor.sample = {"free_mb": 1800}                          # memory falls: 300 MB usable after Windows' 1.5 GB
+    by = {m["id"]: m for m in a.models()["models"]}
+    b = by["siglip-base"]
+    assert b["chosen"] is True and b["above_suggestion"] is True and b["fits_now"] is False
+    assert "Not now" in b["why"] and "1,500 MB" not in b["why"]
+    assert a._settings.get("photo_model") == "siglip-base" and a._settings.get("photo_meaning") is True
+
+
+def test_a_model_not_recommended_needs_the_same_confirmation(a, monkeypatch):
+    _walked(a)
+    row = dict(models.MEASURED[("siglip2-base", "fp16-vision", "cpu", "mid")], need_mb=9000, ram_mb=9000, ws_mb=9000)
+    monkeypatch.setitem(models.MEASURED, ("siglip-base", "8bit", "cpu", "mid"), row)
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert by["siglip-base"]["outcome"] == "not_recommended" and by["siglip-base"]["above_suggestion"] is True
+    assert by["siglip-base"]["why"].startswith("Not recommended: SigLIP base: needs about 9,000 MB")
+    assert a.model_use("photo", "siglip-base")["needs_confirm"] is True
+    assert a.model_use("photo", "siglip-base", confirm=True)["ok"] is True
+
+
+def test_a_model_that_is_not_above_the_suggestion_is_chosen_at_once(a):
+    _walked(a)
+    r = a.model_use("photo", "siglip2-base")
+    assert r["ok"] is True and r["needs_confirm"] is False and a._settings.get("photo_model") == "siglip2-base"
+    assert a.model_use("text", "gte-small")["ok"] is True
+
+
+def test_reset_suggested_asks_first_and_shows_the_reindex_time(a):
+    _walked(a)
+    a._settings.update({"photo_model": "siglip-base", "photo_meaning": True, "text_model": "gte-small", "semantic": True})
+    r = a.reset_suggested()
+    assert r["ok"] is True and r["applied"] is False and r["error"] == ""
+    assert [c["feature"] for c in r["changes"]] == ["photo"]                 # text is on the suggestion already
+    c = r["changes"][0]
+    assert (c["id"], c["from"], c["vectors_change"]) == ("siglip2-base", "siglip-base", True)
+    assert c["name"] == "SigLIP 2 base" and c["needs_download"] is True
+    assert c["index_h"] == round(1240 / 1.416 / 3600, 2) and c["measured_on"] == "similar PC"
+    assert a._settings.get("photo_model") == "siglip-base" and not a._indexer.wake.is_set()    # nothing yet
+    r = a.reset_suggested(confirm=True)
+    assert r["applied"] is True and a._settings.get("photo_model") == "siglip2-base"
+    assert a._settings.get("photo_meaning") is True and a._indexer.wake.is_set()
+    again = a.reset_suggested()
+    assert again == {"ok": True, "error": "", "applied": False, "changes": []}
+
+
+def test_reset_suggested_returns_each_feature_and_leaves_off_features_off(a):
+    _walked(a)
+    a._settings.update({"photo_model": "siglip-base", "photo_meaning": False, "text_model": "minilm-l6-v2",
+                        "semantic": True})
+    r = a.reset_suggested()
+    assert [c["feature"] for c in r["changes"]] == ["text"]                  # photo meaning is off: left off
+    t = r["changes"][0]
+    assert (t["id"], t["from"], t["vectors_change"], t["index_h"], t["measured_on"]) == (
+        "gte-small", "minilm-l6-v2", True, None, "")                         # a text model's re-index isn't measured
+    assert a.reset_suggested(confirm=True)["applied"] is True
+    assert a._settings.get("text_model") == "gte-small" and a._settings.get("photo_meaning") is False
+    assert a._settings.get("photo_model") == "siglip-base"

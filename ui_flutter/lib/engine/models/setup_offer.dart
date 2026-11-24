@@ -16,6 +16,7 @@ class SetupCost {
     this.loadS,
     this.gpuMb,
     this.sharedMb,
+    this.indexH,
     this.measuredOn = '',
   });
   final double? ramMb;
@@ -30,8 +31,15 @@ class SetupCost {
   /// Built-in graphics' memory it holds: the PC's memory, already in [ramMb].
   final double? sharedMb;
 
+  /// Hours to look at the photos the first scan found (again), from the measured speed. Null: not known.
+  final double? indexH;
+
   /// `this PC`, `similar PC` or `reference PC`.
   final String measuredOn;
+
+  /// Nothing was measured (the engine sent `{}`).
+  bool get isEmpty =>
+      ramMb == null && itemsS == null && queryMs == null && answerS == null && loadS == null && indexH == null;
 
   bool get here => measuredOn == 'this PC';
 
@@ -52,6 +60,7 @@ class SetupCost {
       loadS: jNumOrNull(m['load_s']),
       gpuMb: jNumOrNull(m['gpu_mb']),
       sharedMb: jNumOrNull(m['shared_mb']),
+      indexH: jNumOrNull(m['index_h']),
       measuredOn: jStr(m['measured_on']),
     );
   }

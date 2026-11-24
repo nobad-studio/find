@@ -25,6 +25,7 @@ import '../../../widgets/icons.dart';
 import '../../../widgets/panels.dart';
 import '../../consent/download_consent_dialog.dart';
 import '../../setup/setup_dialog.dart';
+import '../model_cost_dialog.dart';
 import '../settings_parts.dart';
 
 class ModelsPage extends StatefulWidget {
@@ -145,12 +146,12 @@ class _Catalogue extends StatelessWidget {
           m: m,
         ),
         _FeatureGroup(
-          title: 'Photos by what is in them',
+          title: 'Searching photos',
           icon: NbGlyph.image,
           switchKey: 'photo_meaning',
           switchLabel: "Find photos by what's in them",
           switchHelp: '“Dog on a beach” finds IMG_0042.jpg. The first pass is slow, in the background.',
-          groups: [('', info.byFeature('photo'))],
+          groups: byOutcome(info.byFeature('photo')),
           m: m,
         ),
         _FeatureGroup(
@@ -164,17 +165,36 @@ class _Catalogue extends StatelessWidget {
         ),
         // 1.1: not part of a tier; a photo's Describe / Ask / Compare offers the same download
         _FeatureGroup(
-          title: 'Talk about photos',
+          title: 'Talking about a photo',
           icon: NbGlyph.chat,
           about:
               'Describe a photo, ask about it, or compare two, on its detail pane. The models run on this PC only, '
               'on the llama.cpp runtime; each download asks first.',
-          groups: [('', info.byFeature('talk')), ('Runtime', info.byFeature('runtime'))],
+          groups: [...byOutcome(info.byFeature('talk')), ('Runtime', info.byFeature('runtime'))],
           m: m,
         ),
       ],
     );
   }
+}
+
+/// The models of one workload under the outcomes the measured floors gave them for this PC, in this order: the
+/// suggestion, an available upgrade, a lighter option, not recommended (with its reason on the row) and not
+/// measured. A model with no verdict (an older engine) stays in one group without a heading.
+List<(String, List<ModelInfo>)> byOutcome(List<ModelInfo> models) {
+  const heads = [
+    ('suggested', 'Suggested for this PC'),
+    ('upgrade', 'Available upgrade'),
+    ('lighter', 'Lighter option: finds less, uses less'),
+    ('not_recommended', 'Not recommended'),
+    ('not_measured', 'Not measured on a PC like this one'),
+  ];
+  return [
+    for (final (outcome, label) in heads)
+      if (models.any((x) => x.outcome == outcome)) (label, [for (final x in models) if (x.outcome == outcome) x]),
+    if (models.any((x) => !heads.any((h) => h.$1 == x.outcome)))
+      ('', [for (final x in models) if (!heads.any((h) => h.$1 == x.outcome)) x]),
+  ];
 }
 
 /// Your PC, the tier recommended for it, the tier in use, and Auto-configure.
@@ -227,6 +247,23 @@ class _PcAndTier extends StatelessWidget {
             ),
           ),
         const _SuggestedRow(),
+        SettingRow(
+          label: 'Back to the suggested models',
+          help:
+              'Puts meaning search and photo search on the models suggested for this PC again (one that is off stays '
+              'off). A different model means your files are looked at again, so it asks first and shows how long '
+              'that takes.',
+          control: NbButton(
+            m.busy('reset') ? 'Resetting…' : 'Reset to suggested',
+            small: true,
+            kind: NbButtonKind.ghost,
+            onPressed: m.busy('reset')
+                ? null
+                : () => unawaited(
+                    m.resetSuggested(ask: (c) => askReset(context, c), consent: (x) => _consent(context, x)),
+                  ),
+          ),
+        ),
       ],
     );
   }
@@ -435,7 +472,13 @@ class _ModelRow extends StatelessWidget {
                             style: NbType.text(14, c.text, weight: FontWeight.w600, height: 1.3),
                           ),
                           if (x.tier.isNotEmpty) ModelTag(tierLabel(x.tier)),
-                          if (x.recommended) const ModelTag('Recommended', strong: true),
+                          if (x.suggested) const ModelTag('Suggested', strong: true),
+                          if (x.recommended && !x.suggested && (x.outcome.isEmpty || x.feature == 'text'))
+                            const ModelTag('Recommended', strong: true),
+                          if (x.outcome == 'upgrade') const ModelTag('Above the suggestion'),
+                          if (x.outcome == 'lighter') const ModelTag('Lighter'),
+                          if (x.outcome == 'not_recommended') const ModelTag('Not recommended'),
+                          if (x.outcome == 'not_measured') const ModelTag('Not measured'),
                         ],
                       ),
                       if (x.improves.isNotEmpty)
@@ -469,6 +512,25 @@ class _ModelRow extends StatelessWidget {
                 if (q != null) NbFact(NbGlyph.gauge, '${(q.recall5 * 100).round()}% right in the top 5'),
               ],
             ),
+            // 1.2: what the measured floors say (text has no floor yet: its tag says so, the sentence would repeat)
+            if (x.why.isNotEmpty && x.outcome.isNotEmpty && !(x.feature == 'text' && x.outcome == 'not_measured'))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  whyText(x),
+                  style: NbType.text(12.5, x.outcome == 'not_recommended' ? c.warn : c.muted, height: 1.4),
+                ),
+              ),
+            // a model chosen above the suggestion keeps this note, with its measured cost
+            if (x.aboveSuggestion && (x.chosen || (x.feature == 'talk' && x.onDisk)))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '${x.notRecommended ? 'Not recommended for this PC' : 'Above what is suggested for this PC'}: '
+                  '${costLine(x)}.',
+                  style: NbType.text(12.5, c.text, weight: FontWeight.w600, height: 1.4),
+                ),
+              ),
             if (!x.capable && x.capableReason.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -523,7 +585,7 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      GlyphTile(glyphOf(x.feature), accent: x.state == ModelUseState.active || x.recommended);
+      GlyphTile(glyphOf(x.feature), accent: x.state == ModelUseState.active || x.recommended || x.suggested);
 }
 
 /// Everything else about the model, plainly: how fast, how it measured, where it comes from, where it lives.
@@ -615,14 +677,17 @@ class _Actions extends StatelessWidget {
         child: Text('In use', style: NbType.text(12.5, c.orange, weight: FontWeight.w600)),
       );
     }
-    void use() => unawaited(m.use(x, consent: (y) => _consent(context, y)));
+    Future<bool> cost(ModelInfo y) => askModelCost(context, y, m.info);
+    void use() => unawaited(m.use(x, consent: (y) => _consent(context, y), cost: cost));
     // talk models and runtimes have no Use: they are fetched (one consent with the runtime) and used on a photo
     final talk = x.feature == 'talk' || x.feature == 'runtime';
     void fetch() => unawaited(
       x.feature == 'talk'
-          ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt, pc: m.info.pc))
+          ? m.downloadTalk(x, consent: (y, rt) => askTalkConsent(context, y, rt, pc: m.info.pc), cost: cost)
           : m.download(x, consent: (y) => askRuntimeConsent(context, y, pc: m.info.pc)),
     );
+    // above the suggestion: its measured cost comes first (the button says so); chosen already: nothing to ask
+    final seeCost = x.aboveSuggestion && !x.chosen && !x.onDisk;
     final List<Widget> buttons;
     if (busy) {
       buttons = const [];
@@ -638,16 +703,16 @@ class _Actions extends StatelessWidget {
           )
         else
           NbButton(
-            x.capable ? 'Download…' : 'Download anyway…',
+            seeCost ? 'See cost…' : (x.capable ? 'Download…' : 'Download anyway…'),
             small: true,
             kind: NbButtonKind.ghost,
-            icon: NbGlyph.download,
+            icon: seeCost ? null : NbGlyph.download,
             onPressed: fetch,
           ),
       ];
     } else if (x.onDisk) {
       buttons = [
-        NbButton('Use', small: true, onPressed: use),
+        NbButton(x.aboveSuggestion && !x.chosen ? 'See cost…' : 'Use', small: true, onPressed: use),
         if (!x.builtin)
           NbButton(
             'Remove',
@@ -660,10 +725,10 @@ class _Actions extends StatelessWidget {
     } else {
       buttons = [
         NbButton(
-          x.capable ? 'Download…' : 'Download anyway…',
+          seeCost ? 'See cost…' : (x.capable ? 'Download…' : 'Download anyway…'),
           small: true,
-          kind: x.capable && x.recommended ? NbButtonKind.primary : NbButtonKind.ghost,
-          icon: NbGlyph.download,
+          kind: x.capable && (x.recommended || x.suggested) && !seeCost ? NbButtonKind.primary : NbButtonKind.ghost,
+          icon: seeCost ? null : NbGlyph.download,
           onPressed: use,
         ),
       ];

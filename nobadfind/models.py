@@ -306,6 +306,12 @@ def vector_tag(mid):
     return f"{mid}#{m['vectors']}" if m.get("vectors") else mid
 
 
+def vectors_change(settings, feature, mid):
+    """True when using `mid` for text or photo meaning makes other vectors than the ones in use now (another vector
+    tag, or the feature is off): the files are looked at again, beside the old vectors."""
+    return feature in ("text", "photo") and vector_tag(mid) != vector_tag(selected(settings, feature))
+
+
 def _tag_number(tag):
     try:
         return int(tag.split("#", 1)[1]) if "#" in tag else 0

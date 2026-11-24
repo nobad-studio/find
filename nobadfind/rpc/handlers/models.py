@@ -1,12 +1,12 @@
 """Model downloads and tiers.
 
 download_model, download_photo_model (0.7.0: only with the download allowed in Settings, the Api checks it) stay as
-they were. models, model_use, model_download, model_remove, model_folder, auto_configure, model_language: Settings -> Models
+they were. models, model_use, model_download, model_remove, model_folder, auto_configure, reset_suggested, model_language: Settings -> Models
 (models.CATALOG). Progress comes as `download` events (id = the model id), changes as `models` events.
 setup_offer, setup_accept, setup_later (1.2.0): the first-run models window (firstrun.py)."""
 import re
 
-from ..protocol import INVALID_PARAMS, RpcError, choice_param, ok, str_param
+from ..protocol import INVALID_PARAMS, RpcError, bool_param, choice_param, ok, str_param
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9.-]{0,63}$")
 FEATURES = ("text", "photo", "ocr")
@@ -47,9 +47,23 @@ def _accept(api, params):
             "started": [str(x) for x in r.get("started") or []]}
 
 
+def _confirm(params):
+    return bool_param(params, "confirm") if "confirm" in params else False
+
+
 def _use(api, params):
-    r = api.model_use(choice_param(params, "feature", FEATURES, None), _model_id(params))
-    return {"ok": bool(r.get("ok")), "error": str(r.get("error") or ""), "needs_download": bool(r.get("needs_download"))}
+    r = api.model_use(choice_param(params, "feature", FEATURES, None), _model_id(params), confirm=_confirm(params))
+    return {"ok": bool(r.get("ok")), "error": str(r.get("error") or ""), "needs_download": bool(r.get("needs_download")),
+            "needs_confirm": bool(r.get("needs_confirm"))}
+
+
+def _reset(api, params):
+    r = api.reset_suggested(confirm=_confirm(params))
+    return {"ok": bool(r.get("ok")), "error": str(r.get("error") or ""), "applied": bool(r.get("applied")),
+            "changes": [{"feature": c["feature"], "id": c["id"], "name": c["name"], "from": c["from"],
+                         "from_name": c["from_name"], "vectors_change": bool(c["vectors_change"]),
+                         "index_h": c["index_h"], "measured_on": c["measured_on"],
+                         "needs_download": bool(c["needs_download"])} for c in r.get("changes") or []]}
 
 
 def methods(api, events=None):
@@ -62,6 +76,7 @@ def methods(api, events=None):
             "model_remove": lambda params, conn=None: ok(api.model_remove(_model_id(params))),
             "model_folder": lambda params, conn=None: ok(api.model_folder(_model_id(params))),
             "auto_configure": lambda params, conn=None: api.auto_configure(),
+            "reset_suggested": lambda params, conn=None: _reset(api, params),
             "setup_offer": lambda params, conn=None: api.setup_offer(),
             "setup_accept": lambda params, conn=None: _accept(api, params),
             "setup_later": lambda params, conn=None: ok(api.setup_later(_remind(params))),

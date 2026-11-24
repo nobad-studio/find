@@ -876,21 +876,78 @@ class FakeEngine implements EngineApi {
   /// A text model was switched: the meaning vectors are rebuilt (status_full gets a "rebuild" phase).
   bool rebuilding = false;
 
+  /// Each model_use call's id and confirm, in order.
+  final modelUses = <(String, bool)>[];
+
   @override
-  Future<ModelUse> modelUse(String feature, String id) => _new('model_use', () {
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) => _new('model_use', () {
     final m = modelsInfo.models.where((x) => x.id == id).firstOrNull;
     if (m == null) return const ModelUse(false, error: 'No such model.');
-    if (!m.onDisk) return const ModelUse(true, needsDownload: true);
-    if (feature == 'text') rebuilding = true;
+    // like the engine: above the suggestion it is chosen only after the cost screen (confirm); nothing changes
+    if (!confirm && m.aboveSuggestion && !m.chosen) {
+      return const ModelUse(
+        false,
+        error: 'That is above what is suggested for this PC: its measured cost comes first.',
+        needsConfirm: true,
+      );
+    }
+    modelUses.add((id, confirm));
+    if (feature == 'text' && m.onDisk) rebuilding = true;
     _setModels(
       (x) => x.feature == feature
           ? x.withState(
-              x.id == id ? ModelUseState.active : (x.state == ModelUseState.active ? ModelUseState.ready : x.state),
+              x.id == id && x.onDisk
+                  ? ModelUseState.active
+                  : (x.id != id && x.state == ModelUseState.active ? ModelUseState.ready : x.state),
+              chosen: x.id == id,
             )
           : x,
       tier: 'custom',
     );
-    return const ModelUse(true);
+    return ModelUse(true, needsDownload: !m.onDisk);
+  });
+
+  /// Each reset_suggested call's confirm, in order.
+  final resets = <bool>[];
+
+  @override
+  Future<ResetSuggested> resetSuggested({bool confirm = false}) => _new('reset_suggested', () {
+    resets.add(confirm);
+    final changes = <ResetChange>[];
+    for (final f in const ['text', 'photo']) {
+      final have = modelsInfo.byFeature(f).where((x) => x.chosen).firstOrNull;
+      final want = f == 'photo'
+          ? modelsInfo.byFeature(f).where((x) => x.suggested).firstOrNull
+          : modelsInfo.byFeature(f).where((x) => x.recommended).firstOrNull;
+      if (have == null || want == null || have.id == want.id) continue;
+      changes.add(
+        ResetChange(
+          feature: f,
+          id: want.id,
+          name: want.name,
+          from: have.id,
+          fromName: have.name,
+          vectorsChange: true,
+          indexH: want.cost.indexH,
+          measuredOn: want.cost.indexH == null ? '' : want.cost.measuredOn,
+          needsDownload: !want.onDisk,
+        ),
+      );
+    }
+    if (changes.isEmpty || !confirm) return ResetSuggested(applied: false, changes: changes);
+    for (final c in changes) {
+      _setModels(
+        (x) => x.feature == c.feature
+            ? x.withState(
+                x.id == c.id && x.onDisk
+                    ? ModelUseState.active
+                    : (x.id != c.id && x.state == ModelUseState.active ? ModelUseState.ready : x.state),
+                chosen: x.id == c.id,
+              )
+            : x,
+      );
+    }
+    return ResetSuggested(applied: true, changes: changes);
   });
 
   @override
@@ -1758,6 +1815,7 @@ ModelsInfo demoModels({
       improves: 'Finds files by what they mean, in English',
       state: ModelUseState.active,
       quality: ModelQuality(recall5: .71, ndcg10: .62),
+      chosen: true,
     ),
     const ModelInfo(
       id: 'bge-small-en-v1.5',
@@ -1768,6 +1826,9 @@ ModelsInfo demoModels({
       sizeMb: 33,
       languages: ['en'],
       quality: ModelQuality(recall5: .78, ndcg10: .69),
+      outcome: 'not_measured',
+      why: 'Not measured: BGE small (English) v1.5: not measured against a floor yet',
+      vectorsChange: true,
     ),
     const ModelInfo(
       id: 'bge-base-en-v1.5',
@@ -1788,6 +1849,9 @@ ModelsInfo demoModels({
       languages: many,
       improves: 'Finds files by meaning in Hindi, mixed Hindi and English, and about 100 other languages',
       quality: ModelQuality(recall5: .80, ndcg10: .70),
+      outcome: 'not_measured',
+      why: 'Not measured: multilingual-e5-small: not measured against a floor yet',
+      vectorsChange: true,
     ),
     const ModelInfo(
       id: 'multilingual-e5-base',
@@ -1832,6 +1896,10 @@ ModelsInfo demoModels({
       languages: ['en'],
       improves: "Finds photos by what's in them (English questions)",
       dir: r'C:\Users\me\AppData\Local\NOBAD\Find\photo-model',
+      outcome: 'not_measured',
+      why: 'Not measured: SigLIP base: not measured on a PC like this one yet',
+      backend: 'cpu',
+      vectorsChange: true,
     ),
     const ModelInfo(
       id: 'siglip2-base',
@@ -1844,8 +1912,12 @@ ModelsInfo demoModels({
       sizeMb: 393,
       languages: ['en', 'hi', 'multilingual'],
       improves: 'Finds photos more accurately, and with questions in many languages',
-      capable: false,
-      capableReason: best,
+      outcome: 'suggested',
+      why: 'Suggested: SigLIP 2 base: a search takes about 196 ms, it indexes 1.42 photos a second, 621 MB of memory '
+          '(measured on a similar PC)',
+      backend: 'cpu',
+      cost: SetupCost(ramMb: 621, itemsS: 1.416, queryMs: 196.5, indexH: .24, measuredOn: 'similar PC'),
+      vectorsChange: true,
     ),
     const ModelInfo(
       id: 'windows-ocr',
@@ -1877,6 +1949,11 @@ ModelsInfo demoModels({
           '(5-15 s while NOBAD Find runs very light)',
       languages: ['en'],
       improves: 'Answers questions about a photo, on this PC',
+      outcome: 'suggested',
+      why: 'Suggested: SmolVLM2 500M: first word about 6 s, 663 MB of memory, shared with the built-in graphics '
+          '(measured on a similar PC)',
+      backend: 'vulkan',
+      cost: SetupCost(ramMb: 1033, loadS: 1.27, answerS: 5.77, sharedMb: 663, measuredOn: 'similar PC'),
     ),
     ModelInfo(
       id: 'qwen3vl-2b',
@@ -1891,6 +1968,10 @@ ModelsInfo demoModels({
       runtime: talkRuntime,
       languages: ['en', 'multilingual'],
       improves: 'Deeper answers about a photo, on this PC',
+      outcome: 'upgrade',
+      why: 'Upgrade: Qwen3-VL 2B: more memory (2,491 MB), longer loading and answers (12 s on a similar PC)',
+      backend: 'vulkan',
+      cost: SetupCost(ramMb: 2491, loadS: 6.21, answerS: 12.08, sharedMb: 2058, measuredOn: 'similar PC'),
       // the hybrid laptop's 6 GB card can run it
       capable: gpu == GraphicsKind.discrete,
       // talk models never use DirectML: their own check (models._talk_capable)
@@ -1920,6 +2001,7 @@ ModelsInfo demoModels({
     ),
   ];
   final was = {for (final m in from?.models ?? const <ModelInfo>[]) m.id: m.state};
+  final wasChosen = {for (final m in from?.models ?? const <ModelInfo>[]) m.id: m.chosen};
   return ModelsInfo(
     pc: from?.pc ?? fakeHardware(gpu, cores: 6, threads: 12),
     tierRecommended: 'balanced',
@@ -1927,7 +2009,11 @@ ModelsInfo demoModels({
     languageFocus: focus,
     models: [
       for (final m in all)
-        m.withState(was[m.id] ?? m.state, recommended: m.id == text || m.id == 'siglip-base' || m.id == 'windows-ocr'),
+        m.withState(
+          was[m.id] ?? m.state,
+          recommended: m.id == text || m.id == 'siglip-base' || m.id == 'windows-ocr',
+          chosen: wasChosen[m.id] ?? m.chosen,
+        ),
     ],
   );
 }

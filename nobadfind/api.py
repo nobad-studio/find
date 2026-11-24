@@ -1233,6 +1233,9 @@ class Api:
         if b["gpu_kind"] == "dedicated" and b["gpu_free_mb"] is not None:
             live["gpu_free_mb"] = b["gpu_free_mb"]
         live["settings"] = {"gpu_reserve_min_mb": self._settings.get("gpu_reserve_min_mb")}    # a safety limit
+        counts = self._first_scan_counts()          # what the first scan found: the re-index time of each model
+        if counts:
+            live["photos"], live["files"] = counts["photos"], counts["documents"]
         classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
         return modelsuggest.for_pc(pc, classes, live, settings_goal(self._settings), focus)
 
@@ -1240,7 +1243,9 @@ class Api:
         pc = hw.scan()
         focus = self._focus()
         rec = models.recommend(pc)
-        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        entries = modelsuggest.by_model(sugg)
         out = []
         rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
@@ -1250,7 +1255,12 @@ class Api:
             # 1.1: the talk models also say their graphics memory and the runtime they need on this PC (its
             # download is offered with theirs, in one consent)
             talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
-            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            # 1.2: the suggestion's verdict on it (modelsuggest.fields), whether it is the one in use, and whether using
+            # it would make other vectors (a re-index, with the time shown first)
+            fit = {**modelsuggest.fields(entries.get(m["id"])),
+                   "chosen": models.selected(self._settings, m["feature"]) == m["id"],
+                   "vectors_change": models.vectors_change(self._settings, m["feature"], m["id"])}
+            out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": models.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -1261,17 +1271,64 @@ class Api:
         return {"pc": pc, "tier_recommended": rec, "tier_current": models.tier_current(self._settings, focus),
                 "language_focus": focus, "models": out}
 
-    def model_use(self, feature, mid):
+    def model_use(self, feature, mid, confirm=False):
+        """Choose the model for a feature. A model above what is suggested for this PC (an upgrade, or one not
+        recommended) is chosen only with confirm: the UI sends it after the measured-cost screen, so nothing changes
+        without it. Once chosen it stays chosen: when it doesn't fit right now it waits and says why (models:
+        fits_now, why), it is never swapped for the suggestion."""
         m = models.get(mid) if isinstance(mid, str) else None
         if m is None or m["feature"] != feature:
-            return {"ok": False, "error": "There's no such model for that.", "needs_download": False}
+            return {"ok": False, "error": "There's no such model for that.", "needs_download": False,
+                    "needs_confirm": False}
+        if not confirm and feature in ("text", "photo") and models.selected(self._settings, feature) != mid:
+            pc = hw.scan()
+            e = modelsuggest.by_model(self._suggestions(pc, self._focus())).get(mid)
+            if e is not None and e["outcome"] in modelsuggest.ABOVE:
+                return {"ok": False, "needs_download": False, "needs_confirm": True,
+                        "error": "That is above what is suggested for this PC: its measured cost comes first."}
         changes = {"text": {"text_model": mid, "semantic": True}, "photo": {"photo_model": mid, "photo_meaning": True},
                    "ocr": {"ocr": True}}[feature]
         self.set_settings(changes)
         wake = getattr(self._indexer, "wake", None)
         if wake is not None:
             wake.set()                          # a switched text model is rebuilt by the indexer (phase rebuild)
-        return {"ok": True, "error": "", "needs_download": not models.ready(mid, self._mdir())}
+        return {"ok": True, "error": "", "needs_download": not models.ready(mid, self._mdir()),
+                "needs_confirm": False}
+
+    def reset_suggested(self, confirm=False):
+        """Back to what is suggested for this PC: each of meaning search and photo search that is ON goes to the
+        suggested model (the one the floors pick; for text the tier's pick, which has no measured floor yet). A
+        feature that is off stays off; nothing suggested (no photo model meets the floor) leaves it as it is.
+        {"ok", "error", "applied", "changes": [{feature, id, name, from, from_name, vectors_change, index_h,
+        measured_on, needs_download}]}. Another model means other vectors, so without `confirm` nothing is changed
+        and the changes come back with each one's re-index time (null: not measured); the UI shows them, then asks
+        again with confirm."""
+        pc, focus = hw.scan(), self._focus()
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        entries = modelsuggest.by_model(sugg)
+        changes = []
+        for feature in ("text", "photo"):
+            have, want = models.selected(self._settings, feature), choice.get(feature) or ""
+            m = models.get(want) if want else None
+            if not have or not want or have == want or m is None:
+                continue
+            cost = (entries.get(want) or {}).get("cost_here") or {}
+            changes.append({"feature": feature, "id": want, "name": m["name"], "from": have,
+                            "from_name": (models.get(have) or {}).get("name") or have,
+                            "vectors_change": models.vectors_change(self._settings, feature, want),
+                            "index_h": cost.get("index_h"),
+                            "measured_on": cost.get("measured_on", "") if cost.get("index_h") is not None else "",
+                            "needs_download": not models.ready(want, self._mdir())})
+        if not changes:
+            return {"ok": True, "error": "", "applied": False, "changes": []}
+        if not confirm and any(c["vectors_change"] for c in changes):
+            return {"ok": True, "error": "", "applied": False, "changes": changes}
+        self.set_settings({("text_model" if c["feature"] == "text" else "photo_model"): c["id"] for c in changes})
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()
+        return {"ok": True, "error": "", "applied": True, "changes": changes}
 
     def model_download(self, mid, consent):
         m = models.get(mid) if isinstance(mid, str) else None
@@ -1660,7 +1717,7 @@ class Api:
     def _first_scan_counts(self):
         """{"photos", "documents"} the first walk counted (one GROUP BY on the kind index, kept for the run), or None
         before the first walk is done."""
-        if not self._indexer.status.get("last_scan"):
+        if not (getattr(self._indexer, "status", None) or {}).get("last_scan"):
             return None
         if self._scan_counts is None:
             try:

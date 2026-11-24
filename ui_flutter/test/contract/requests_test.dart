@@ -107,8 +107,10 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.uiHidden(p['window'] as String? ?? 'main');
     case 'models':
       return c.models();
-    case 'model_use' when p['feature'] is String && p['id'] is String:
-      return c.modelUse(p['feature'] as String, p['id'] as String);
+    case 'model_use' when p['feature'] is String && p['id'] is String && (p['confirm'] == null || p['confirm'] is bool):
+      return c.modelUse(p['feature'] as String, p['id'] as String, confirm: p['confirm'] == true);
+    case 'reset_suggested' when p['confirm'] == null || p['confirm'] is bool:
+      return c.resetSuggested(confirm: p['confirm'] == true);
     case 'model_download' when p['id'] is String && p['consent'] == 'DOWNLOAD':
       return c.modelDownload(p['id'] as String);
     case 'model_remove' when p['id'] is String:

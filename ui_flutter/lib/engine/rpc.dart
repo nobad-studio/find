@@ -452,8 +452,10 @@ class EngineClient {
   // ---- 0.8 ----
   Future<ModelsInfo> models() async => ModelsInfo.fromJson(await call('models'));
   Future<CapabilityState> capabilityState() async => CapabilityState.fromJson(await call('capability_state'));
-  Future<ModelUse> modelUse(String feature, String id) async =>
-      ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id}));
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) async =>
+      ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id, if (confirm) 'confirm': true}));
+  Future<ResetSuggested> resetSuggested({bool confirm = false}) async =>
+      ResetSuggested.fromJson(await call('reset_suggested', {if (confirm) 'confirm': true}));
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});
   Future<ActionResult> modelRemove(String id) => _ok('model_remove', {'id': id});
   Future<ActionResult> modelFolder(String id) => _ok('model_folder', {'id': id});
