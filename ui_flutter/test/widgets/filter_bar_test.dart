@@ -1,9 +1,10 @@
 // 1.2.0 (browser spec §4): the filter bar's "Settings & apps" and "Browser" choices, the Browser kinds, the date
 // range that shows only with History, and browser results opened by their id (the engine opens them).
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/widgets.dart' show Size, ValueKey;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart' show TextField;
+import 'package:material_ui/material_ui.dart' show MenuItemButton, TextField;
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/features/search/result_tile.dart' show DetailPane;
 import 'package:nobad_find/widgets/controls.dart';
@@ -166,5 +167,22 @@ void main() {
     await choose(tester, 'Browser', 'login');
     expect(find.text('Password manager'), findsOneWidget);
     expect(find.textContaining('password:'), findsNothing);
+  });
+
+  testWidgets('the right-click menu of a browser result lists only what applies to it', (tester) async {
+    final engine = FakeEngine(settings: _on)..browserResults = [_web, _login];
+    await pumpApp(tester, engine, size: const Size(900, 700));
+    await type(tester, 'github');
+    await choose(tester, 'Kind', 'browser');
+    await tester.tap(find.text('GitHub: pull requests').first, buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    final menu = find.byType(MenuItemButton);
+    Finder item(String label) => find.descendant(of: menu, matching: find.text(label));
+    expect(item('Open'), findsOneWidget);
+    expect(item('Copy address'), findsOneWidget); // a web address, not a path
+    expect(item('Copy name'), findsOneWidget);
+    for (final label in ['Open with…', 'Show in folder', 'Forget…', 'Copy path']) {
+      expect(item(label), findsNothing, reason: label);
+    }
   });
 }

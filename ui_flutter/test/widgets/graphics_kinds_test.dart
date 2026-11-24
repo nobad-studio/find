@@ -272,7 +272,7 @@ void main() {
       expect(find.text('6 GB video memory'), findsOneWidget);
       expect(find.text('Video memory free'), findsOneWidget);
       expect(find.descendant(of: card('SmolVLM2 500M'), matching: find.text('665 MB video memory')), findsOneWidget);
-      expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget);
+      expect(find.text('llama.cpp runtime (Vulkan)'), findsOneWidget);
     });
 
     testWidgets('built-in graphics: shared memory that counts as memory, never video memory', (tester) async {
@@ -298,7 +298,7 @@ void main() {
       expect(find.text('No graphics card'), findsOneWidget);
       expect(find.text('Processor only'), findsOneWidget);
       expect(find.textContaining('Graphics memory free'), findsNothing);
-      expect(find.text('llama.cpp runtime (graphics card)'), findsNothing);
+      expect(find.text('llama.cpp runtime (Vulkan)'), findsNothing);
       expect(find.text('llama.cpp runtime (CPU)'), findsOneWidget);
       expect(find.textContaining('graphics memory'), findsNothing);
       expect(find.textContaining('video memory'), findsNothing);
@@ -317,9 +317,9 @@ void main() {
         models: [for (final m in info.models) m.id == 'llama-vulkan' ? m.withState(ModelUseState.ready) : m],
       );
       await openPage(tester, engine, SettingsPage.models);
-      expect(find.text('llama.cpp runtime (graphics card)'), findsOneWidget);
+      expect(find.text('llama.cpp runtime (Vulkan)'), findsOneWidget);
       expect(
-        find.descendant(of: card('llama.cpp runtime (graphics card)'), matching: find.text('Remove')),
+        find.descendant(of: card('llama.cpp runtime (Vulkan)'), matching: find.text('Remove')),
         findsOneWidget,
       );
     });

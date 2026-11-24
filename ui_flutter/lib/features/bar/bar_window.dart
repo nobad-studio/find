@@ -315,7 +315,7 @@ class _BarWindowState extends State<BarWindow> {
       ResultAction.copyName,
       ResultAction.forget,
     ])
-      _item(a.label, () => _rowAction(a), shortcut: a.shortcut),
+      if (a.appliesTo(find.current)) _item(a.labelFor(find.current), () => _rowAction(a), shortcut: a.shortcut),
   ];
 
   List<Widget> _appMenu() {

@@ -24,7 +24,7 @@ import 'models/update.dart';
 /// The first-run offer on the reference PC (contract transcript 11): GTE small (the tier's pick, not measured),
 /// SigLIP 2 suggested and ticked, SmolVLM2 suggested but unticked, Qwen3-VL under More for this PC.
 SetupOffer demoSetupOffer(Hardware pc) {
-  const rt = SetupRuntime(id: 'llama-vulkan', name: 'llama.cpp runtime (graphics card)', sizeMb: 37, source: 'github.com');
+  const rt = SetupRuntime(id: 'llama-vulkan', name: 'llama.cpp runtime (Vulkan)', sizeMb: 37, source: 'github.com');
   return SetupOffer(
     walked: true,
     like: 'mid',
@@ -589,7 +589,9 @@ class FakeEngine implements EngineApi {
     final goal = jStr(_settings['performance_goal']);
     final fast = goal == 'fast';
     const classes = ['auto', 'performance', 'balanced', 'efficiency', 'compatibility'];
-    const unused = 'Not used yet: the model suggestions that plan by these classes come in a later update.';
+    const usedBy =
+        "Used by the model suggestions (Settings > Models and the first-run setup); it doesn't change how hard NOBAD "
+        'Find works.';
     PerformanceRow row(String k, Object? auto, String why, [List<String> options = const [], String note = '']) =>
         PerformanceRow(value: _settings[k], auto: auto, why: why, options: options, note: note);
     // like performance.state: the backend options are the ones installed on this PC
@@ -675,24 +677,25 @@ class FakeEngine implements EngineApi {
           GraphicsKind.none => 'Background work: no graphics adapter.',
         },
         classes,
-        unused,
+        usedBy,
       ),
-      'profile_override_cpu': row('profile_override_cpu', 'performance', '8 cores with AVX2.', classes, unused),
+      'profile_override_cpu': row('profile_override_cpu', 'performance', '8 cores with AVX2.', classes, usedBy),
       'profile_override_storage': row(
         'profile_override_storage',
         'performance',
         'A solid-state drive.',
         classes,
-        unused,
+        usedBy,
       ),
-      'profile_override_memory': row('profile_override_memory', 'balanced', '16 GB of memory.', classes, unused),
+      'profile_override_memory': row('profile_override_memory', 'balanced', '16 GB of memory.', classes, usedBy),
       'gpu_reserve_min_mb': row(
         'gpu_reserve_min_mb',
         512,
         'NOBAD Find leaves the larger of this and 15% of the free graphics memory to Windows and other apps. A higher '
             'number only leaves more.',
         const [],
-        'In this version it only changes the graphics-card check under Index > Running at once now.',
+        'Used for work on the graphics card (meaning for documents, talk about a photo, the check under Index > '
+            'Running at once now) and by the model suggestions.',
       ),
     });
   });
@@ -2032,7 +2035,7 @@ ModelsInfo demoModels({
     const ModelInfo(
       id: 'llama-vulkan',
       feature: 'runtime',
-      name: 'llama.cpp runtime (graphics card)',
+      name: 'llama.cpp runtime (Vulkan)',
       tier: 'light',
       licence: 'MIT',
       source: 'https://github.com/ggml-org/llama.cpp/releases/tag/b12602',

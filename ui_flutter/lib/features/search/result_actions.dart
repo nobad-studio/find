@@ -40,11 +40,21 @@ enum ResultAction {
       _ => true,
     };
   }
+
+  /// The label for [r]: a browser page, bookmark or login copies its web address, not a path.
+  String labelFor(FileResult? r) =>
+      this == copyPath && r?.browser != null && !r!.browser!.hasFolder ? 'Copy address' : label;
 }
 
-/// The menu (right-click, the menu key, "⋯"): every action with its shortcut. [details] false when the detail
-/// pane is already on screen.
-List<Widget> resultMenuItems(BuildContext context, void Function(ResultAction) onAction, {bool details = true}) {
+/// The menu (right-click, the menu key, "⋯"): every action that applies to [result] with its shortcut (a browser
+/// result has no Open with or Forget, and only a download has a folder). [details] false when the detail pane is
+/// already on screen.
+List<Widget> resultMenuItems(
+  BuildContext context,
+  void Function(ResultAction) onAction, {
+  bool details = true,
+  FileResult? result,
+}) {
   final c = NbColors.of(context);
   Widget item(ResultAction a) => MenuItemButton(
     onPressed: () => onAction(a),
@@ -58,14 +68,16 @@ List<Widget> resultMenuItems(BuildContext context, void Function(ResultAction) o
       ),
       overlayColor: const WidgetStatePropertyAll(Color(0x00000000)),
     ),
-    child: Text(a.label, style: NbType.text(13, a == ResultAction.forget ? c.danger : c.text)),
+    child: Text(a.labelFor(result), style: NbType.text(13, a == ResultAction.forget ? c.danger : c.text)),
   );
+  final forget = ResultAction.forget.appliesTo(result);
   return [
-    for (final a in ResultAction.inline) item(a),
+    for (final a in ResultAction.inline)
+      if (a.appliesTo(result)) item(a),
     item(ResultAction.copyName),
     if (details) item(ResultAction.details),
-    Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), color: c.line),
-    item(ResultAction.forget),
+    if (forget) Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), color: c.line),
+    if (forget) item(ResultAction.forget),
   ];
 }
 
@@ -92,7 +104,7 @@ class InlineActions extends StatelessWidget {
         for (final a in ResultAction.inline)
           if (a.appliesTo(result))
           _ActionChip(
-            label: a.label,
+            label: a.labelFor(result),
             glyph: a.glyph,
             compact: compact,
             onTap: () => onAction(a),

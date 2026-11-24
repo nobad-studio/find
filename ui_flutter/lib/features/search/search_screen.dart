@@ -523,9 +523,16 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: MenuAnchor(
-                        controller: _menu,
-                        menuChildren: MenuGlass.wrap(resultMenuItems(context, _action, details: !wide)),
+                      // the menu follows the selected result (a browser result has fewer actions)
+                      child: ListenableBuilder(
+                        listenable: s.find,
+                        builder: (context, child) => MenuAnchor(
+                          controller: _menu,
+                          menuChildren: MenuGlass.wrap(
+                            resultMenuItems(context, _action, details: !wide, result: s.find.current),
+                          ),
+                          child: child,
+                        ),
                         child: KeyedSubtree(
                           key: _menuAnchor,
                           child: Align(
