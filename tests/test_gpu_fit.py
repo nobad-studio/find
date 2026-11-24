@@ -125,6 +125,50 @@ def test_the_meaning_worker_starts_on_the_processor_when_the_card_is_short(monke
     assert _Pool.made[-1].gpu is True and ix.text_gpu_why == ""
 
 
+def _two_gb(free):
+    return {"kind": "dedicated", "free_mb": free, "used_mb": 2048 - free, "budget_mb": 2048}
+
+
+def test_the_meaning_worker_on_the_card_counts_its_own_memory_as_allowed(monkeypatch):
+    """Re-review I1: the governor's free graphics memory is all apps together, so once the meaning worker runs on
+    the card its own memory is in "used". Its need is credited back, so staying needs what starting needed and
+    the worker doesn't flap between the card and the processor; a real further drop still moves it."""
+    _Pool.made = []
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", _Pool)
+    monkeypatch.setattr(indexer.models, "model_dir", lambda mid: "dir")
+    monkeypatch.setattr(indexer, "log", lambda msg, lvl="info": None)
+    mid = "multilingual-e5-small"
+    need = indexer.text_gpu_need(mid)                           # 385
+    gov = _Gov(smp(_two_gb(1100)))                              # 1100 - 512 = 588 >= 385: the card
+    ix = indexer.Indexer(None, S(backend_text="directml", gpu_background="on", text_model=mid),
+                         governor=gov, activity=Activity())
+    ix._vectors_in_worker = True
+    ix.status["plan"] = {"model_threads": 4, "text_workers": 4, "text_workers_idle": 4}
+    ix._encode(["a"], mid)
+    assert len(_Pool.made) == 1 and _Pool.made[-1].gpu is True
+    gov.sample = smp(_two_gb(1100 - need))                      # the worker's own model is now in "used"
+    for t in (100.0, 1000.0, 5000.0):
+        ix._clock = lambda t=t: t
+        assert ix._encode(["a"], mid) is not None              # no restart reason: the same worker
+    assert len(_Pool.made) == 1 and ix.text_gpu_why == ""
+    gov.sample = smp(_two_gb(1100 - need - 300))                # another app took 300 MB: below the reserve
+    ix._encode(["a"], mid)
+    assert len(_Pool.made) == 2 and _Pool.made[-1].gpu is False and "processor" in ix.text_gpu_why
+    # unknown is still the processor, whatever the worker holds
+    assert indexer.text_gpu_choice(g.FULL, FULL, ix.settings, smp(None), need, resident_mb=need)[0] is False
+
+
+def test_the_directml_need_is_said_to_be_unmeasured():
+    """Re-review m3: no DirectML row is measured, so the need is the processor's; the reason says so."""
+    st = S(backend_text="directml", gpu_background="on")
+    assert indexer.text_gpu_need_measured("multilingual-e5-small") is False
+    gpu, why = indexer.text_gpu_choice(g.FULL, FULL, st, smp(dedicated(700)), 385, need_measured=False)
+    assert gpu is False and "this needs about" not in why
+    assert "the model needs about 385 MB on the processor; its graphics need isn't measured yet" in why
+    ok, why = g.gpu_fit(dedicated(1000), 600)                   # a measured need (talk's vram_mb) keeps its words
+    assert "this needs about 600 MB" in why
+
+
 # ---------- capability's device ----------
 PC_GPU = {"ram_gb": 15.7, "cores": 8, "threads": 16, "directml": True, "vram_gb": 8.0, "disk_free_gb": 100.0}
 MID = {"id": "mid", "feature": "text", "tier": "balanced", "ram_mb": 900, "builtin": False, "dim": 384,

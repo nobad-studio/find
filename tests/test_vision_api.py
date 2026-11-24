@@ -373,6 +373,28 @@ def test_talk_on_a_graphics_card_short_of_memory_runs_on_the_processor(env, monk
     assert why in rows["backend_talk"]["note"]
 
 
+def test_the_talk_fit_check_is_only_for_the_next_load(env, monkeypatch):
+    """Re-review m2: the talk worker reloads only for another model (a changed gpu_layers doesn't reload), so a
+    model already loaded keeps running where it was loaded: no fit check, no "runs on the processor" while it
+    stays on Vulkan. With nothing loaded (or another model) the next load is checked again."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
+    a = env["a"]
+    a._governor.sample = _gpu_sample(6000)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(env["events"], r["job"]))
+    assert _wait(lambda: a._talk.state()["loaded"] == SMOL)
+    assert [x[3] for x in FakeSession.log if x[0] == "load"] == [99]
+    a._governor.sample = _gpu_sample(900)                    # the model's own graphics memory is in "used" now
+    (job, _), _r = a._vision_job("describe", [env["ids"]["dog.jpg"]], None, False)
+    assert job["gpu_layers"] == 99 and a._talk_gpu_why == ""
+    assert not any("processor" in e["text"] for e in a._activity.recent(10))
+    with a._talk._lock:
+        a._talk._loaded = ""                                 # unloaded (idle): the next load is checked
+    (job, _), _r = a._vision_job("describe", [env["ids"]["dog.jpg"]], None, False)
+    assert job["gpu_layers"] == 0 and "processor" in a._talk_gpu_why and "900 MB" in a._talk_gpu_why
+
+
 def test_built_in_graphics_keeps_the_vulkan_layers(env, monkeypatch):
     """Built-in graphics (shared memory): the GPU need is counted against system RAM (talk_assess), so the
     dedicated-memory check doesn't apply."""

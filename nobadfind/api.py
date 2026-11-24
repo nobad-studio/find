@@ -84,6 +84,7 @@ class Api:
         self._timer, self._exit = threading.Timer, os._exit     # tests replace them
         self._talk = None                 # vlm.worker.Talker, made on the first talk-about-a-photo question
         self._talk_lock = threading.Lock()
+        self._talk_gpu_for = {}           # talk model id -> (on Vulkan, why not) as decided for its last load
         self._on_vision = None            # engine.py: push one `vision` event to the UI
         self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
         self._migrate_forgotten()         # once: forgotten paths out of settings.json (fix round 1, I5)
@@ -1607,19 +1608,29 @@ class Api:
                           "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
                                        for x in need]}
         vulkan = rid == "llama-vulkan" and self._settings.get("backend_talk") != "cpu"    # 1.2.0: processor only
-        if vulkan:
+        talk = self._talker()
+        # The worker reloads only for another model (vlm/worker.py: a changed gpu_layers doesn't reload), so the
+        # fit check is for the next load only: a model already loaded keeps the layers it was loaded with, and
+        # its own graphics memory (in the sample's "used") can't make it "run on the processor".
+        on = self._talk_gpu_for
+        resident = m["id"] in on and (talk.state() or {}).get("loaded") == m["id"]
+        if vulkan and resident:
+            vulkan, self._talk_gpu_why = on[m["id"]]        # the reason of that load, not another model's check
+        elif vulkan:
             vulkan = self._talk_gpu_fits(m, pc)
+            on[m["id"]] = (vulkan, self._talk_gpu_why)
+        elif not resident:
+            on[m["id"]] = (False, "")                       # the processor by choice: nothing to explain
         settings = dict(m["talk"])
         settings["need_mb"] = models.talk_need_mb(m, rid) or None
         mdir = models.model_dir(m["id"], d)
-        talk = self._talker()
         job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
                "model": {"id": m["id"], "model": os.path.join(mdir, "model.gguf"),
                          "mmproj": os.path.join(mdir, "mmproj.gguf"), "runtime": models.model_dir(rid, d)},
                "settings": settings, "gpu_layers": 99 if vulkan else 0, "files": list(ids)}
         return (job, m["name"]), None
 
-    _talk_gpu_why = ""                  # why talk runs on the processor though Vulkan was chosen (last job)
+    _talk_gpu_why = ""                  # why talk runs on the processor though Vulkan was chosen (last load)
 
     def _talk_gpu_fits(self, m, pc):
         """Talk on Vulkan with a graphics card of its own: only when its free memory less the reserve holds the

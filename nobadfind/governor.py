@@ -172,20 +172,27 @@ def gpu_reserve_mb(free_mb, settings=None):
     return int(max(low, LIMITS["GPU_RESERVE_SHARE"] * max(0, free_mb or 0)))
 
 
-def gpu_fit(gpu_mem, need_mb, settings=None):
+def gpu_fit(gpu_mem, need_mb, settings=None, held_mb=0, measured=True):
     """(fits, why not) for work that needs need_mb of graphics memory (spec 6.1's minimum-fit check): free minus the
-    reserve (gpu_reserve_mb) must hold it. gpu_mem is a Sample's gpu_mem (hardware.gpu_memory_free). An unknown
-    reading never counts as fits, also for a backend the user forced: safety limits beat overrides (8b rule 0)."""
+    reserve (gpu_reserve_mb) must hold it. gpu_mem is a Sample's gpu_mem (hardware.gpu_memory_free): all apps
+    together, so work already on the card passes what it holds there as held_mb, which counts as free for it
+    (else staying would need about twice what starting needed, and it would flap). An unknown reading never counts
+    as fits, also for a backend the user forced: safety limits beat overrides (8b rule 0). measured False: need_mb
+    isn't a graphics measurement (the processor's need stands in), and the reason says so."""
     free = (gpu_mem or {}).get("free_mb")
     if not isinstance(free, (int, float)) or isinstance(free, bool):
         return False, "how much graphics memory is free isn't known right now"
     free = int(free)
-    reserve = gpu_reserve_mb(free, settings)
+    held = max(0, int(held_mb or 0))
+    reserve = gpu_reserve_mb(free + held, settings)
     need = max(0, int(need_mb or 0))
-    if free - reserve >= need:
+    if free + held - reserve >= need:
         return True, ""
-    return False, (f"the graphics card has {free} MB free, NOBAD Find leaves {reserve} MB of it to Windows and "
-                   f"other apps, and this needs about {need} MB")
+    has = f"{free} MB free" + (f" plus about {held} MB this work already holds there" if held else "")
+    needs = (f"this needs about {need} MB" if measured else
+             f"the model needs about {need} MB on the processor; its graphics need isn't measured yet")
+    return False, (f"the graphics card has {has}, NOBAD Find leaves {reserve} MB of it to Windows and other apps, "
+                   f"and {needs}")
 
 
 def gpu_background_allowed(settings):

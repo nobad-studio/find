@@ -101,20 +101,28 @@ def plan(settings, roots, ssd=None):
             "model_threads": models, "boost": boost, "goal": goal}
 
 
+def _directml_row(mid):
+    try:
+        return ((models.variants(mid) or [{}])[0].get("backends") or {}).get("directml") or {}
+    except KeyError:
+        return {}
+
+
 def text_gpu_need(mid):
     """Graphics memory the text model needs on DirectML: its measured DirectML row's vram_mb, else its catalog
     ram_mb (the weights and buffers it holds on the processor; no DirectML row is measured yet). 0 if unknown."""
     m = models.get(mid) if mid else None
     if not m:
         return 0
-    try:
-        row = ((models.variants(mid) or [{}])[0].get("backends") or {}).get("directml") or {}
-    except KeyError:
-        row = {}
-    return int(row.get("vram_mb") or m.get("ram_mb") or 0)
+    return int(_directml_row(mid).get("vram_mb") or m.get("ram_mb") or 0)
 
 
-def text_gpu_choice(level, d, settings, sample=None, need_mb=0):
+def text_gpu_need_measured(mid):
+    """True only when text_gpu_need comes from a measured DirectML row (not the processor's ram_mb)."""
+    return bool(mid and models.get(mid) and _directml_row(mid).get("vram_mb"))
+
+
+def text_gpu_choice(level, d, settings, sample=None, need_mb=0, resident_mb=0, need_measured=True):
     """(on the graphics card, why not) for meaning for documents now (DirectML), or the processor. Only at Full, and
     never with battery saver on or a creative app in front (Decision.gpu). Then the user's choices:
     - backend_text "cpu" means the processor;
@@ -122,7 +130,9 @@ def text_gpu_choice(level, d, settings, sample=None, need_mb=0):
     - a forced backend_text graphics backend beats the goal.
     On auto, the goal and gpu_background decide (Decision.gpu_background). Whatever was chosen, the graphics card is
     used only when its free memory, less the reserve, holds the model (governor.gpu_fit on the governor's last
-    sample; unknown never fits): else the processor, and `why` says so (Settings > Performance shows it)."""
+    sample; unknown never fits): else the processor, and `why` says so (Settings > Performance shows it).
+    resident_mb: what the meaning worker already holds on the card for this model (it's in the sample's "used"),
+    counted as free for it, so staying needs what starting needed (re-review I1: no flapping)."""
     backend = settings.get("backend_text") or "auto"
     if level != FULL or not getattr(d, "gpu", True) or backend == "cpu":
         return False, ""
@@ -130,7 +140,7 @@ def text_gpu_choice(level, d, settings, sample=None, need_mb=0):
         return False, ""
     if backend == "auto" and not getattr(d, "gpu_background", True):
         return False, ""
-    fits, why = gpu_fit(getattr(sample, "gpu_mem", None), need_mb, settings)
+    fits, why = gpu_fit(getattr(sample, "gpu_mem", None), need_mb, settings, resident_mb, need_measured)
     if not fits:
         return False, f"Meaning for documents runs on the processor for now: {why}."
     return True, ""
@@ -1076,8 +1086,12 @@ class Indexer:
             return self.embedder.encode(texts)      # a stand-in model (tests): in this process
         level = self.governor.decision.level if self.governor is not None else FULL
         gov = self.governor
+        need = text_gpu_need(mid)
+        # on the card already for this model: its own memory is in the sample's "used" (no figure per process is
+        # measured, so its need stands in)
+        held = need if self._mpool is not None and self._mpool_gpu and self._mpool_model == mid else 0
         gpu, why_not = text_gpu_choice(level, gov.decision if gov is not None else None, self.settings,
-                                       getattr(gov, "sample", None), text_gpu_need(mid))
+                                       getattr(gov, "sample", None), need, held, text_gpu_need_measured(mid))
         if why_not and why_not != self.text_gpu_why:
             log(why_not)
         self.text_gpu_why = why_not
