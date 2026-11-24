@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "1.1.1"
+APP_VER = "1.2.0"
 # A count over the whole index (Store.stats, the phase counts) is reused at least this many times as long as it
 # took: <= 5% of a core on a big index (api.Api._stats / _counts, indexer.Indexer._refresh_stats)
 COUNT_SHARE = 20

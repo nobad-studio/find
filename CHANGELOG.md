@@ -33,6 +33,74 @@
   (Qwen3-VL waits on battery) and other apps' use of the processor. On a graphics card the model's graphics need
   counts against system memory too, if it is the bigger one.
 
+### Models suggested for your PC
+- Settings > Models sorts the models of each job (meaning search, searching photos, talking about a photo) by what
+  was measured on a PC like yours: Suggested for this PC, Available upgrade, Lighter option (finds less, uses
+  less), Not recommended (with the reason) and Not measured on a PC like this one. Suggestions come only from
+  measured runs, never from a guess. So far only a mid-range PC (i5-12500H, 16 GB, Iris Xe built-in graphics)
+  has been measured, so on lighter or stronger PCs most models say "Not measured" for now. A figure measured on
+  built-in graphics never counts for a graphics card, or the other way round.
+- Choosing a model above the suggestion shows its measured cost first: load, answer or search time, peak memory,
+  and how long your files take to be looked at again when the model changes them. A figure from another PC says
+  so. A Not recommended model also needs Use anyway, and a chosen one keeps a note with that cost. If it doesn't
+  fit right now, it waits and says why; it is never swapped for another model.
+- Reset to suggested puts meaning search and photo search back on the suggested models. It asks first and says how
+  long the new look at your files takes. A photo model with nothing measured for this PC stays as it is.
+- "Stored on this PC" on the Index page and in Settings > Models: how much disk the index, each model, the runtimes
+  and temporary files use, from their file sizes, with Free up (opens Settings > Models).
+
+### First-run setup
+- After its first look at your files, NOBAD Find shows one window with the models suggested for this PC: size,
+  memory, why, and an estimate of how long indexing your files with them takes. Download asks one consent for the
+  ticked models (only suggested ones are ticked, a talk model never) and shows each download's progress, with Try
+  again if one fails. The download time is shown once a download has measured this PC's speed. Details opens
+  Settings > Models; Later leaves a notification with Open Models. Updating from 1.1 with meaning or photo search
+  on doesn't ask. Settings > Models > Suggested for this PC shows the window again.
+
+### Graphics
+- Graphics-card choices only show on a PC with a graphics card. On built-in graphics the settings say so plainly
+  (for example "llama.cpp runtime (built-in graphics, Vulkan)"), and Auto never names a way of running a model that
+  the PC can't use.
+
+### Browser data (optional, off by default)
+- Settings > Privacy > Browsers > Search my browsers: NOBAD Find can read the history (page title, address, site,
+  last visit, visits), bookmarks and downloads of Chrome, Edge, Brave, Vivaldi, Opera and Firefox, every profile of
+  your Windows account, and with "Also saved logins" the site and user name of each saved login (Firefox: the site
+  only). Never passwords (they are not decrypted, kept or shown), page contents, cookies or open tabs. It asks once
+  before it reads anything, reads a copy so your browser keeps running (never closes it), and tries a locked file
+  again later. What it read stays in the encrypted index; turning it off, or Clear browser data, removes all of it.
+- Browser results: a page or bookmark opens in your default browser, a saved login opens that browser's own
+  password manager, a download opens its file (or its folder). The Browser filter has History (with dates),
+  Bookmarks, Saved logins and Downloads. While it is on, words like "history", "visited", "bookmarks" or "saved
+  logins" ask only your browsers, so a search such as "family history" can leave out a file named that way.
+
+### Search
+- A "Settings & apps" filter shows only the Windows settings pages and apps you can open that match the search.
+- Apps that Windows lists as installed but that have no Start menu entry can be found and opened too. Uninstallers,
+  updaters, setup programs, system parts and anything on a network path are left out.
+- One-word searches show fewer unrelated photos: a photo found only by how it looks must be a close match, unless
+  its name, text or meaning also matches. On the photo test set, unrelated photos in the top 10 of a keyword search
+  fell from 6.7 to 0.7, with the same overall scores ([measurements](docs/measurements.md)). Searches that
+  describe a picture are unchanged.
+- A new photo model, or an update to one, builds its photo vectors beside the old ones instead of dropping them
+  first; the old ones keep answering (when the new model can still ask them) until the new set covers every photo.
+- Opening the Index, Models or What to index page never makes a search wait: they ask on their own lane, and try
+  again for a moment when the engine is busy.
+
+### The window
+- A click on a result selects it and shows its preview; double-click, Enter or Open opens it, Ctrl+Enter or
+  Ctrl+click shows it in its folder. In a narrow window the preview is a strip under the results (Esc closes it).
+- The search box shows a turning ring while a search takes more than 150 ms (a still dot with reduced motion).
+- The window is at least 960 px wide (less on a screen too small for that).
+- Settings > General > Theme style: Classic (the default: the original colours, now see-through, with darker inner
+  cards in dark mode), Minimal ice (cold frost, one ice-blue accent, quiet icons) and Nocturne (smoked glass,
+  rounder panels, white actions, the status line as a floating dock). Each uses the same type. See-through window
+  puts Windows 11's Acrylic glass behind the window while Windows' Transparency effects are on.
+- Menus are frosted glass and open softly; the category shortcuts are one slim row of chips above the results. The
+  welcome is centred, the pages have icons in one same-size box, and the cards in a row are one size (long text is
+  cut, with the rest in a tooltip).
+- The quick find bar is see-through in every theme, with its glass reaching the window's own rounded corners.
+
 ### Privacy and security
 - The turbo helper's service checks more before it serves anyone. The program that connects must still be running
   and must have started before it connected, so a program that connects and quits can't pass its process number on
