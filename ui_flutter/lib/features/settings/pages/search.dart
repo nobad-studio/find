@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../../app/scope.dart';
 import '../../../widgets/controls.dart';
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 
 class SearchSettingsPage extends StatelessWidget {
@@ -21,6 +22,7 @@ class SearchSettingsPage extends StatelessWidget {
       children: [
         const SettingsGroup(
           'Opening files',
+          icon: NbGlyph.openFile,
           rows: [
             SwitchSetting(
               'hide_after_open',
@@ -32,6 +34,7 @@ class SearchSettingsPage extends StatelessWidget {
         if (recent != null)
           SettingsGroup(
             'Recent searches',
+            icon: NbGlyph.clock,
             rows: [
               ListenableBuilder(
                 listenable: Listenable.merge([recent, s.settings]),

@@ -9,9 +9,10 @@ import 'package:flutter/widgets.dart';
 import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
-import '../../../engine/models/settings.dart' show appFilesConsent;
+import '../../../engine/models/settings.dart' show BrowserDataState, appFilesConsent, browserConsent, browserDataLevels;
 import '../../../widgets/controls.dart';
 import '../../../widgets/dialogs.dart';
+import '../../../widgets/icons.dart';
 import '../settings_parts.dart';
 
 /// The one exception to "names only" (setting `secret_app_files`, 1.1.0, off by default; const.APP_SECRET_* in
@@ -52,6 +53,125 @@ class AppFilesSetting extends StatelessWidget {
           await s.set('secret_app_files', v, consent: v ? appFilesConsent : null);
         },
       ),
+    );
+  }
+}
+
+/// Browser data (setting `browser_data`, 1.2.0, off by default; browserdata.py in the engine): the browsers'
+/// history, bookmarks and downloads, and saved logins' site and user name. Reading more asks once.
+class BrowserDataGroup extends StatefulWidget {
+  const BrowserDataGroup({super.key});
+
+  static const label = 'Search my browsers';
+  static const help =
+      "Off (the default): NOBAD Find doesn't read your browsers. On: it reads Chrome, Edge, Brave, Vivaldi, Opera "
+      'and Firefox, every profile of this Windows account: history (page title, address, site, last visit, '
+      'visits), bookmarks (title, address, folder) and downloads (file path, source site, date); with saved logins '
+      'also the site and user name of each saved login (Firefox: the site only). Never passwords (they are not '
+      'decrypted, kept or shown), page contents, cookies or open tabs. It reads a copy, so your browser keeps '
+      'running. Turning it off removes everything it read.';
+  static const options = [
+    ('off', 'Off'),
+    ('history', 'History, bookmarks and downloads'),
+    ('history_logins', 'Also saved logins (no passwords)'),
+  ];
+  static const askTitle = 'Read your browsers?';
+  static const ask =
+      'NOBAD Find will read the history, bookmarks and downloads of your browsers on this PC, and with saved '
+      "logins the site and user name of each one. Passwords are never read. It all stays in NOBAD Find's "
+      'encrypted index on this PC and can appear in search results. Turn this off to remove it again.';
+
+  static const clearAsk =
+      'Removes everything NOBAD Find read from your browsers from its index. Your browsers keep their own history. '
+      'While "Search my browsers" is on, NOBAD Find reads them again the next time they change.';
+
+  @override
+  State<BrowserDataGroup> createState() => _BrowserDataGroupState();
+}
+
+class _BrowserDataGroupState extends State<BrowserDataGroup> {
+  BrowserDataState _state = BrowserDataState.none;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_load()));
+  }
+
+  Future<void> _load() async {
+    try {
+      final st = await AppScope.of(context).engine.browserDataState();
+      if (mounted) setState(() => _state = st);
+    } on Object {
+      // an older engine, or none: no line
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
+    final app = AppScope.of(context);
+    final s = app.settings;
+    final c = NbColors.of(context);
+    final now = s.settings.text('browser_data');
+    final line = _state.summary(DateTime.now());
+    return SettingsGroup(
+      'Browsers',
+      icon: NbGlyph.globe,
+      rows: [
+        SettingRow(
+          label: BrowserDataGroup.label,
+          help: BrowserDataGroup.help,
+          control: NbSelect(
+            label: BrowserDataGroup.label,
+            value: now,
+            options: BrowserDataGroup.options,
+            maxWidth: 260,
+            onChanged: (v) async {
+              final more = browserDataLevels.indexOf(v) > browserDataLevels.indexOf(now);
+              if (more &&
+                  !await confirmDialog(
+                    context,
+                    title: BrowserDataGroup.askTitle,
+                    question: BrowserDataGroup.ask,
+                    yes: 'Read them',
+                  )) {
+                return;
+              }
+              await s.set('browser_data', v, consent: more ? browserConsent : null);
+              await _load();
+            },
+          ),
+          below: line.isEmpty ? null : Text(line, style: NbType.text(NbSize.small, c.dim, height: 1.4)),
+        ),
+        SettingRow(
+          label: 'Clear browser data',
+          help: 'Forgets everything read from your browsers. Turning "Search my browsers" off does this too.',
+          control: NbButton(
+            'Clear browser data',
+            kind: NbButtonKind.ghost,
+            onPressed: () async {
+              if (!await confirmDialog(
+                context,
+                title: 'Clear browser data?',
+                question: BrowserDataGroup.clearAsk,
+                yes: 'Clear',
+              )) {
+                return;
+              }
+              try {
+                final r = await app.engine.browserClear();
+                app.toasts.show(r.ok ? 'Browser data cleared.' : "Couldn't clear the browser data.");
+              } on Object {
+                app.toasts.show("NOBAD Find's engine isn't running.");
+              }
+              await _load();
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -104,10 +224,12 @@ class PrivacyPage extends StatelessWidget {
       children: [
         SettingsGroup(
           'Windows Search',
+          icon: NbGlyph.search,
           rows: [SettingRow(label: 'Use NOBAD Find instead of Windows Search', helpWidget: wsHelp, control: wsControl)],
         ),
         SettingsGroup(
           'Search history',
+          icon: NbGlyph.clock,
           rows: [
             const SwitchSetting(
               'search_history',
@@ -135,9 +257,24 @@ class PrivacyPage extends StatelessWidget {
             ),
           ],
         ),
-        const SettingsGroup('Files other programs keep', rows: [AppFilesSetting()]),
+        const SettingsGroup('Files other programs keep', icon: NbGlyph.archive, rows: [AppFilesSetting()]),
+        const BrowserDataGroup(),
+        const SettingsGroup(
+          'Notifications',
+          icon: NbGlyph.bell,
+          rows: [
+            SwitchSetting(
+              'notify_show_names',
+              'Show file names in notifications',
+              'Off: notifications never name a file or show where it is. On: the name of the file involved (not '
+                  'its folder), also in Windows notifications, which can show on the lock screen. Turning it off '
+                  'removes the names kept so far. Notifications are kept encrypted with the index, at most 100.',
+            ),
+          ],
+        ),
         SettingsGroup(
           'Your data',
+          icon: NbGlyph.shield,
           rows: [
             SettingRow(
               label: 'Delete the whole index',

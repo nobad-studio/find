@@ -180,7 +180,8 @@ class StatusController extends ChangeNotifier {
         if (state.state == 'available' && (was.state != 'available' || was.latest != state.latest)) {
           onUpdateFound?.call(state);
         }
-      case ShowEvent() || NoticeEvent() || HereEvent() || QuittingEvent() || ModelsEvent() || VisionEvent():
+      case ShowEvent() || NoticeEvent() || HereEvent() || QuittingEvent() || ModelsEvent() || VisionEvent() ||
+          NotificationEvent():
         return;
     }
     _changed();

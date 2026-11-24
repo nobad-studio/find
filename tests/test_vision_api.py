@@ -263,7 +263,8 @@ def test_missing_model_or_runtime_names_the_download(env):
 def test_not_enough_free_memory_refuses_smolvlm(env, monkeypatch):
     monkeypatch.setattr(api_mod.winapi, "memory_status", lambda: (95, 900))
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
-    assert r["ok"] is False and r["error"].startswith("Not now: only 0.9 GB free, SmolVLM2 needs about 1.0 GB")
+    assert r["ok"] is False and r["error"].startswith("Not now: it needs about 1.0 GB plus")
+    assert "900 MB of memory is free (NOBAD Find leaves 1.5 GB to Windows)" in r["error"]
 
 
 def test_compare_needs_two_different_photos(env):
@@ -332,12 +333,73 @@ def test_vision_state_sends_the_measured_timing_of_the_runtime_in_use(env):
     assert st[QWEN]["slow_note"] == ""
 
 
+def _gpu_sample(free_mb):
+    from nobadfind.governor import Sample
+    return Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                  presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                  gpu_mem={"kind": "dedicated", "free_mb": free_mb, "used_mb": 8192 - free_mb, "budget_mb": 8192})
+
+
 @pytest.mark.parametrize("vram_gb", [0.1, 8.0])        # Iris Xe (shared) and a graphics card: the same need
 def test_vulkan_runtime_passes_the_bigger_need_and_layers(env, monkeypatch, vram_gb):
     """On Vulkan the need is max(ram_mb, vram_mb) on every graphics card (measured: Qwen on Vulkan / Iris Xe
     committed more system RAM than its graphics memory; shared and dedicated memory can't be told apart)."""
     _put_files(env["data"], "llama-vulkan")
     monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": vram_gb})
+    if vram_gb >= 1:
+        env["a"]._governor.sample = _gpu_sample(6000)          # a card of its own, with room for the model
+    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(env["events"], r["job"]))
+    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
+    m = models.get(SMOL)
+    assert settings["need_mb"] == max(m["ram_mb"], m["vram_mb"]) and gpu == 99
+
+
+@pytest.mark.parametrize("free_mb", [900, None])        # short of the reserve + need; not known
+def test_talk_on_a_graphics_card_short_of_memory_runs_on_the_processor(env, monkeypatch, free_mb):
+    """Final review I1: on a card of its own, talk uses Vulkan only when free - reserve >= the model's vram_mb;
+    else (or unknown) gpu_layers 0 with the reason, said in the activity log and on Settings > Performance."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
+    env["a"]._governor.sample = None if free_mb is None else _gpu_sample(free_mb)
+    r = env["a"].vision_describe(env["ids"]["sea.jpg"])
+    assert r["ok"] and _wait(lambda: _final(env["events"], r["job"]))
+    (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
+    assert gpu == 0
+    why = env["a"]._talk_gpu_why
+    assert "processor" in why and (("900 MB" in why) if free_mb else ("isn't known" in why))
+    assert any(why in e["text"] for e in env["a"]._activity.recent(10))
+    rows = env["a"].performance_state()["rows"]
+    assert why in rows["backend_talk"]["note"]
+
+
+def test_the_talk_fit_check_is_only_for_the_next_load(env, monkeypatch):
+    """Re-review m2: the talk worker reloads only for another model (a changed gpu_layers doesn't reload), so a
+    model already loaded keeps running where it was loaded: no fit check, no "runs on the processor" while it
+    stays on Vulkan. With nothing loaded (or another model) the next load is checked again."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "A graphics card", "vram_gb": 8.0})
+    a = env["a"]
+    a._governor.sample = _gpu_sample(6000)
+    r = a.vision_describe(env["ids"]["sea.jpg"])
+    assert _wait(lambda: _final(env["events"], r["job"]))
+    assert _wait(lambda: a._talk.state()["loaded"] == SMOL)
+    assert [x[3] for x in FakeSession.log if x[0] == "load"] == [99]
+    a._governor.sample = _gpu_sample(900)                    # the model's own graphics memory is in "used" now
+    (job, _), _r = a._vision_job("describe", [env["ids"]["dog.jpg"]], None, False)
+    assert job["gpu_layers"] == 99 and a._talk_gpu_why == ""
+    assert not any("processor" in e["text"] for e in a._activity.recent(10))
+    with a._talk._lock:
+        a._talk._loaded = ""                                 # unloaded (idle): the next load is checked
+    (job, _), _r = a._vision_job("describe", [env["ids"]["dog.jpg"]], None, False)
+    assert job["gpu_layers"] == 0 and "processor" in a._talk_gpu_why and "900 MB" in a._talk_gpu_why
+
+
+def test_built_in_graphics_keeps_the_vulkan_layers(env, monkeypatch):
+    """Built-in graphics (shared memory): the GPU need is counted against system RAM (talk_assess), so the
+    dedicated-memory check doesn't apply."""
+    _put_files(env["data"], "llama-vulkan")
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "gpu": "Iris Xe", "vram_gb": 0.1})
     r = env["a"].vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(env["events"], r["job"]))
     (_, mid, settings, gpu) = [x for x in FakeSession.log if x[0] == "load"][0]
@@ -394,11 +456,11 @@ def test_out_of_memory_mid_answer_is_an_error_and_the_next_job_works(env):
 def test_deeper_needs_capability(env, monkeypatch):
     a, ev = env["a"], env["events"]
     monkeypatch.setattr(api_mod, "talk_assess",
-                        lambda m, sample, pc: (False, "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"))
+                        lambda m, sample, pc, runtime: (False, "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"))
     r = a.vision_ask(env["ids"]["sea.jpg"], "what is the mood here?", deeper=True)
     assert r == {"ok": False, "error": "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin", "job": 0}
     assert not [x for x in FakeSession.log if x[0] == "load"] and env["start"].started == []
-    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc: (True, ""))
+    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc, runtime: (True, ""))
     r1 = a.vision_describe(env["ids"]["sea.jpg"])
     assert _wait(lambda: _final(ev, r1["job"]))
     r2 = a.vision_ask(env["ids"]["sea.jpg"], "what is the mood here?", deeper=True)
@@ -407,16 +469,17 @@ def test_deeper_needs_capability(env, monkeypatch):
     assert seq == [("load", SMOL), ("close", SMOL), ("load", QWEN)]             # the other model leaves first
 
 
-def test_the_fallback_assessment_checks_the_pc_and_free_memory(monkeypatch):
+def test_the_assessment_checks_the_pc_and_free_memory(monkeypatch):
+    """capability.assess decides: the installed PC first, then free memory after the 1.5 GB kept for Windows."""
     qwen = models.get(QWEN)
     small_pc = dict(PC, ram_gb=7.8, cores=4)
-    ok, why = api_mod.talk_assess(qwen, None, small_pc)
+    ok, why = api_mod.talk_assess(qwen, None, small_pc, "llama-cpu")
     assert not ok and "16 GB" in why
     sample = type("S", (), {"free_mb": 3072})()
-    ok, why = api_mod.talk_assess(qwen, sample, PC)
-    assert not ok and why == "Not now: only 3.0 GB free, Qwen3-VL needs about 2.4 GB plus margin"
+    ok, why = api_mod.talk_assess(qwen, sample, PC, "llama-cpu")
+    assert not ok and why.startswith("Not now: it needs about 2.4 GB plus") and "3.0 GB of memory is free" in why
     sample.free_mb = 6000
-    assert api_mod.talk_assess(qwen, sample, PC) == (True, "")
+    assert api_mod.talk_assess(qwen, sample, PC, "llama-cpu") == (True, "Fits now: needs about 2.4 GB, 5.9 GB free")
 
 
 def test_text_question_shows_stored_ocr_first(env):
@@ -538,6 +601,12 @@ def test_worker_hooks_reach_the_talk_worker_first(env):
     assert _final(ev, r["job"]) == {"job": r["job"], "state": "cancelled", "text": "", "model": SMOL,
                                     "note": "Stopped: NOBAD Find needed the memory."}
     assert not a.vision_state()["running"] and hooks["talk_mb"]() == 0
+    # high commit (governor v2, release_models): the talk worker leaves first, then the indexer's models
+    real_stop = a.vision_stop
+    a.vision_stop = lambda why="": order.append("talk stop") or real_stop(why)
+    order.clear()
+    hooks["release_all"]()
+    assert order == ["talk stop", "indexer release"]
 
 
 def _watchdog(a, mb, job_mb, order, keep=False, start=None):
@@ -556,7 +625,7 @@ def test_the_watchdog_gives_the_deeper_talk_worker_its_own_budget(env, monkeypat
     """C1: Qwen (2411 MB measured) in the talk worker is not killed at WORKER_MB, and Find's total may grow by it."""
     from nobadfind import watchdog as wd
     a, ev = env["a"], env["events"]
-    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc: (True, ""))
+    monkeypatch.setattr(api_mod, "talk_assess", lambda m, sample, pc, runtime: (True, ""))
     budgets = []
     start = thread_start(env["opts"], pid=4242)
     a._talk = worker.Talker(ev.append, start=start, on_budget=budgets.append)

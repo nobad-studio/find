@@ -148,8 +148,13 @@ def worker_hooks(pieces):
             "release_talk": on("api", lambda a: a.vision_stop("Stopped: NOBAD Find needed the memory."), False),
             "talk_mb": on("api", lambda a: a.vision_budget_mb(), 0),
             "recycle": on("indexer", lambda i: i.recycle_workers()),
+            # high commit (governor v2): every model leaves memory, the talk worker's first
+            "release_all": both(lambda a: a.vision_stop("Stopped: NOBAD Find needed the memory."),
+                                lambda i: i.release_models()),
             "release_idle": both(lambda a: a.vision_tick(), lambda i: i.release_idle_models()),
-            "names": both(lambda a: a.vision_pids(), lambda i: i.worker_names(), {})}
+            "names": both(lambda a: a.vision_pids(), lambda i: i.worker_names(), {}),
+            "plan": on("indexer", lambda i: i.status.get("plan")),
+            "drives": on("indexer", lambda i: [d["root"] for d in i.drive_list if d.get("present")], [])}
 
 
 def show_requests(base, show, stop, make=winapi.show_event, wait=winapi.wait_any, spawn=None):
@@ -449,12 +454,21 @@ def main(stop=None):
     return run(stop, lock=lock)
 
 
+def say_settings(text):
+    """S0: the settings file couldn't be read (set aside) or a change couldn't be saved yet, as a notification.
+    No kind fits exactly; internal_error (a warning) is the nearest: the app's own file. Once a day per text."""
+    from . import notify
+    notify.post("internal_error", "Settings file", text, "warning", key=text, every=86400)
+
+
 def run(stop=None, open_ui=None, lock=None):
     """The engine, once the caller holds the single-instance lock (main, app.main). open_ui: the window to start
     the UI on ("main", "settings", "index", "bar"), or None to start without one. Returns the exit code."""
     lock = lock or lock_name()
     os.makedirs(DATA_DIR, exist_ok=True)
     init_log(LOG_PATH)
+    from . import browserdata
+    browserdata.wipe_tmp(DATA_DIR)  # browser data copies a crash left behind (browserdata.snapshot)
     jobs.setup()                    # nothing the engine starts can outlive it
     log(f"{APP_NAME} {APP_VER} engine starting")
     from . import uilaunch
@@ -473,6 +487,16 @@ def run(stop=None, open_ui=None, lock=None):
     store = Store(DB_PATH, KEY_PATH)
     if not store.encrypted:
         log("SQLCipher missing: the index is NOT encrypted", "warn")
+    from . import notify
+    late = {}                                       # the governor and the tray's balloon, once they exist
+
+    def balloon(title, text):
+        return bool(late.get("balloon", lambda t, b: False)(title, text))
+    center = notify.Center(settings, store=store, toast=notify.windows_toast(balloon=balloon),
+                           quiet=lambda: bool(late["governor"].busy_with()) if "governor" in late else False)
+    center.load()
+    notify.CENTER = center                          # from here on any part of the engine can post
+    notify.install_thread_hook()                    # an uncaught error in a thread is posted, never fatal
     vindex = embed.VectorIndex()
     activity = Activity()
     pieces = {}
@@ -481,7 +505,9 @@ def run(stop=None, open_ui=None, lock=None):
                                                          "release_talk")},
                         keep_models=lambda: bool(settings.get("models_stay_loaded")))
     apps = AppMemory(store)
-    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"])
+    governor = Governor(settings, apps, activity, watchdog=watchdog, release_idle=hooks["release_idle"],
+                        release_models=hooks["release_all"], plan=hooks["plan"], drives=hooks["drives"])
+    late["governor"] = governor
     measure = measure_overrides(os.environ)
     if measure["level"]:
         governor.brain.fixed = measure["level"]
@@ -497,7 +523,12 @@ def run(stop=None, open_ui=None, lock=None):
     pieces["api"] = api                           # the talk worker's idle release and memory release (worker_hooks)
     api._governor, api._activity, api._apps = governor, activity, apps
     api._turbo = turbo
+    api._notify = center
+    settings.on_notice = lambda text: say_settings(text)      # S0: an unreadable settings file, said once
+    if getattr(settings, "notice", ""):
+        say_settings(settings.notice)               # it was set aside while starting, before the centre existed
     rpc = Rpc(api, name=measure["pipe"], activity=activity)
+    center.listen(rpc.events.notification)
     turbo._push = rpc.events.turbo
     api._on_vision = lambda ev: rpc.events.push("vision", ev)     # talk about a photo (vlm/worker.Talker)
     api._on_talk_budget = jobs.set_talk_allowance                 # the worker group's limit + the talk model
@@ -540,6 +571,7 @@ def run(stop=None, open_ui=None, lock=None):
     api._settings_worker = later.put
     wiring.tray_ok = lambda: tray_box["icon"] is not None
     wiring.balloon = lambda title, text: bool(tray_box["icon"] and tray_box["icon"].balloon(title, text))
+    late["balloon"] = wiring.balloon               # a Windows toast Windows refused goes to the tray balloon
     log(f"engine ready (pid {os.getpid()})")
     print(f"NOBAD Find engine ready (pid {os.getpid()}). Ctrl+C stops it.", flush=True)
     tip, n = None, 0
@@ -561,6 +593,8 @@ def run(stop=None, open_ui=None, lock=None):
     except KeyboardInterrupt:
         pass
     log("engine stopping")
+    notify.CENTER = None
+    notify.uninstall_thread_hook()
     if tray_box["icon"] is not None:
         tray_box["icon"].stop()
     for hk in keys:

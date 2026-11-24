@@ -88,4 +88,57 @@ void main() {
     expect(find.text('5 MB'), findsOneWidget);
     expect(find.text('1,200'), findsOneWidget); // files: the indexer's live count
   });
+
+  EngineStatus withFreshness(Map<String, Object?> extra) => EngineStatus.fromJson({
+        'level': 'gentle',
+        'phase': 'watching',
+        'files': 1200,
+        'with_text': 10,
+        'vectors': 0,
+        'name_vectors': 0,
+        'photo_vectors': 0,
+        'db_bytes': 5 * 1048576,
+        'phases': <Object?>[],
+        ...extra,
+      });
+
+  double secondsAgo(int s) => DateTime.now().subtract(Duration(seconds: s)).millisecondsSinceEpoch / 1000;
+
+  Future<void> shows(WidgetTester tester, Map<String, Object?> extra, Object expected) async {
+    final engine = SlowFullEngine(wait: Duration.zero, answer: withFreshness(extra));
+    await openIndex(tester, engine);
+    await waitFor(tester, const Duration(seconds: 1));
+    expect(find.textContaining(RegExp('Counted |Counting|Couldn')), expected);
+  }
+
+  testWidgets('a ready count says how long ago it was counted', (tester) async {
+    await shows(tester, {'totals_state': 'ready', 'totals_at': secondsAgo(125), 'totals_error': ''}, findsOneWidget);
+    expect(find.text('Counted 2 min ago'), findsOneWidget);
+  });
+
+  testWidgets('a first count says Counting…', (tester) async {
+    await shows(tester, {'totals_state': 'counting', 'totals_at': null, 'counting_totals': true}, findsNWidgets(4));
+    expect(find.text('Counting…'), findsNWidgets(4)); // three totals and the line
+  });
+
+  testWidgets('a refresh in progress says Counting again…', (tester) async {
+    await shows(tester, {'totals_state': 'refreshing', 'totals_at': secondsAgo(30)}, findsOneWidget);
+    expect(find.text('Counting again…'), findsOneWidget);
+  });
+
+  testWidgets('a failed count names the reason and the time of the last good one', (tester) async {
+    final at = secondsAgo(3000);
+    final d = DateTime.fromMillisecondsSinceEpoch((at * 1000).round());
+    final hm = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    await shows(tester, {'totals_state': 'failed', 'totals_at': at, 'totals_error': 'the index was busy'},
+        findsOneWidget);
+    expect(find.text("Couldn't count just now: the index was busy. Showing the last count from $hm."), findsOneWidget);
+  });
+
+  testWidgets('an older engine (no freshness fields) shows no line and nothing breaks', (tester) async {
+    await shows(tester, {}, findsNothing);
+    expect(find.text('Index at a glance'), findsOneWidget);
+    expect(withFreshness({}).details!.totalsState, '');
+    expect(freshnessLine(state: ''), isNull);
+  });
 }

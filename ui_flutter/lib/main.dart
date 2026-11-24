@@ -15,6 +15,7 @@ import 'app/theme/typography.dart';
 import 'engine/engine_api.dart';
 import 'engine/events.dart';
 import 'engine/fake_engine.dart';
+import 'engine/models/graphics.dart';
 import 'engine/pipe_client.dart';
 import 'engine/rpc.dart';
 import 'engine/wiring.dart';
@@ -41,9 +42,14 @@ Future<void> main(List<String> args) async {
     engine = FakeEngine(
       files: demoFiles(),
       live: true,
+      // the made-up PC's graphics: discrete | integrated (default, like the reference PC) | none
+      gpu: GraphicsKind.values.asNameMap()[Platform.environment['NOBAD_FIND_FAKE_GPU']] ?? GraphicsKind.integrated,
       settings: {
         'welcome_seen': Platform.environment['NOBAD_FIND_FAKE_WELCOME'] == '0',
         if (Platform.environment['NOBAD_FIND_FAKE_GLASS'] == '0') 'glass': false,
+        // screenshots of the Minimal ice style (the fake engine starts in Classic, like a real one)
+        if (const {'ice', 'nocturne'}.contains(Platform.environment['NOBAD_FIND_FAKE_STYLE']))
+          'theme_style': Platform.environment['NOBAD_FIND_FAKE_STYLE']!,
       },
     );
   } else {

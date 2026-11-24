@@ -39,8 +39,9 @@ def _release(obj):
     _method(obj, 2)(obj)
 
 
-def adapters():
-    """[(name, dedicated video memory in bytes, flags)] for every graphics adapter DXGI lists; [] if it fails."""
+def adapters(full=False):
+    """[(name, dedicated video memory in bytes, flags)] for every graphics adapter DXGI lists; [] if it fails.
+    full=True: dicts with the shared system memory and the adapter's LUID too (adapter_memory)."""
     if not winapi.WIN:
         return []
     out = []
@@ -61,7 +62,13 @@ def adapters():
                 try:
                     desc = _AdapterDesc1()
                     if _method(ad, 10, ctypes.POINTER(_AdapterDesc1))(ad, ctypes.byref(desc)) == 0:   # GetDesc1
-                        out.append((desc.Description, int(desc.DedicatedVideoMemory), int(desc.Flags)))
+                        if full:
+                            out.append({"name": desc.Description.strip(), "flags": int(desc.Flags), "vendor_id": int(desc.VendorId),
+                                        "dedicated_mb": int(desc.DedicatedVideoMemory) // 1048576,
+                                        "shared_mb": int(desc.SharedSystemMemory) // 1048576,
+                                        "luid": f"0x{desc.LuidHigh & 0xFFFFFFFF:08x}_0x{desc.LuidLow:08x}"})
+                        else:
+                            out.append((desc.Description, int(desc.DedicatedVideoMemory), int(desc.Flags)))
                 finally:
                     _release(ad)
         finally:
@@ -72,18 +79,107 @@ def adapters():
     return out
 
 
+INTEGRATED_MB = 512      # less dedicated memory than this: an integrated GPU, which lives on shared memory
+_mem_cache = None
+
+
+def adapter_memory():
+    """The real graphics adapter with the most video memory, for the live GPU memory budget:
+    {"name", "luid", "dedicated_mb", "shared_mb", "integrated"} (dedicated_mb / shared_mb = what Windows gives it,
+    its budget; integrated: an iGPU such as Intel Iris Xe, which uses shared memory only). None if there is none.
+    Read once per run, like scan()."""
+    global _mem_cache
+    with _lock:
+        if _mem_cache is None:
+            try:
+                real = [a for a in adapters(full=True) if not a["flags"] & _DXGI_SOFTWARE]
+            except Exception:
+                real = []
+            best = max(real, key=lambda a: (a["dedicated_mb"], a["shared_mb"])) if real else None
+            _mem_cache = [dict(best, integrated=best["dedicated_mb"] < INTEGRATED_MB) if best else None]
+        return _mem_cache[0]
+
+
+def gpu_memory_free(adapter, used):
+    """Free graphics memory now for the adapter (adapter_memory) from a GpuMemorySampler reading: {"kind":
+    "dedicated" | "shared", "free_mb", "used_mb", "budget_mb"}, or None when either is unknown. An integrated GPU
+    is judged on its shared memory (system RAM it may use), a discrete one on its dedicated memory."""
+    if not adapter or not used:
+        return None
+    row = used.get(adapter.get("luid", ""))
+    if row is None:
+        return None
+    kind = "shared" if adapter.get("integrated") else "dedicated"
+    budget = int(adapter.get(f"{kind}_mb") or 0)
+    if budget <= 0:
+        return None
+    use = int(row.get(f"{kind}_mb") or 0)
+    return {"kind": kind, "free_mb": max(0, budget - use), "used_mb": use, "budget_mb": budget}
+
+
+_VENDORS = {0x10DE: "nvidia", 0x1002: "amd", 0x1022: "amd", 0x8086: "intel"}
+
+
+def gpu_list():
+    """Every real graphics adapter (software ones left out), not only the biggest, for hybrid laptops:
+    [{"vendor": "nvidia" | "amd" | "intel" | "other", "name", "dedicated_mb", "shared_mb", "integrated"}].
+    shared_mb is system memory the adapter may borrow, never video memory. [] if Windows lists none."""
+    try:
+        real = [a for a in adapters(full=True) if not a["flags"] & _DXGI_SOFTWARE]
+    except Exception:
+        return []
+    return [{"vendor": _VENDORS.get(a.get("vendor_id"), "other"), "name": a["name"],
+             "dedicated_mb": a["dedicated_mb"], "shared_mb": a["shared_mb"],
+             "integrated": a["dedicated_mb"] < INTEGRATED_MB} for a in real]
+
+
+_dml_cache = None
+
+
+def _dml():
+    """True when the ONNX Runtime build in this process has the DirectML provider; False if unknown. Asked once:
+    the ONNX Runtime build cannot change in a running process."""
+    global _dml_cache
+    if _dml_cache is None:
+        _dml_cache = _dml_probe()
+    return _dml_cache
+
+
+def _dml_probe():
+    try:
+        import onnxruntime
+        return "DmlExecutionProvider" in onnxruntime.get_available_providers()
+    except Exception:
+        return False
+
+
+def _llama_ready(rid):
+    from . import models
+    return models.ready(rid)
+
+
+def backends():
+    """The backends installed (not live), per family: {"onnx": [...], "llamacpp": [...]}. An unknown one is left out.
+    ONNX: cpu always; directml when this process's ONNX Runtime has it; cuda only with the NVIDIA GPU pack, which
+    does not exist yet, so it is never listed. llama.cpp: vulkan / cpu when that pinned runtime is on disk."""
+    onnx = ["cpu"] + (["directml"] if _dml() else [])
+    llama = []
+    for name, rid in (("vulkan", "llama-vulkan"), ("cpu", "llama-cpu")):
+        try:
+            if _llama_ready(rid):
+                llama.append(name)
+        except Exception:
+            pass
+    return {"onnx": onnx, "llamacpp": llama}
+
+
 def _gpu():
     """(name, vram_gb, directml) of the real adapter with the most video memory."""
     real = [a for a in adapters() if not a[2] & _DXGI_SOFTWARE]
     if not real:
         return "", 0.0, False
     name, vram, _flags = max(real, key=lambda a: a[1])
-    try:
-        import onnxruntime
-        dml = "DmlExecutionProvider" in onnxruntime.get_available_providers()
-    except Exception:
-        dml = False
-    return name.strip(), round(vram / 1073741824, 1), dml
+    return name.strip(), round(vram / 1073741824, 1), _dml()
 
 
 def _physical_cores(threads):
@@ -115,7 +211,8 @@ def _physical_cores(threads):
 def _scan():
     threads = os.cpu_count() or 1
     out = {"ram_gb": 0.0, "cores": threads, "threads": threads, "avx2": False, "avx512_vnni": False,
-           "gpu": "", "vram_gb": 0.0, "directml": False, "disk_free_gb": 0.0, "ssd": None}
+           "gpu": "", "vram_gb": 0.0, "directml": False, "disk_free_gb": 0.0, "ssd": None,
+           "gpus": [], "backends": {"onnx": ["cpu"], "llamacpp": []}}
     if winapi.WIN:
         m = winapi._MEMSTATUS()
         m.dwLength = ctypes.sizeof(m)
@@ -133,6 +230,8 @@ def _scan():
         except Exception:
             pass
         out["gpu"], out["vram_gb"], out["directml"] = _gpu()
+        out["gpus"] = gpu_list()
+    out["backends"] = backends()
     home = os.path.expanduser("~")
     try:
         out["disk_free_gb"] = round(shutil.disk_usage(home).free / 1073741824, 1)
@@ -146,7 +245,8 @@ def _scan():
 
 
 def scan():
-    """The hardware facts, cached for the life of the process."""
+    """The hardware facts, cached for the life of the process, except "backends": a runtime can be downloaded while
+    the engine runs, so it is re-read (file checks only) on every call. The cached dict itself is returned."""
     global _cache
     with _lock:
         if _cache is None:
@@ -156,5 +256,7 @@ def scan():
                 log(f"hardware check failed: {type(e).__name__}", "warn")
                 _cache = {"ram_gb": 0.0, "cores": os.cpu_count() or 1, "threads": os.cpu_count() or 1, "avx2": False,
                           "avx512_vnni": False, "gpu": "", "vram_gb": 0.0, "directml": False,
-                          "disk_free_gb": 0.0, "ssd": None}
+                          "disk_free_gb": 0.0, "ssd": None, "gpus": [],
+                          "backends": {"onnx": ["cpu"], "llamacpp": []}}
+        _cache["backends"] = backends()
         return _cache

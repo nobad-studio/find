@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -32,6 +33,7 @@ import '../search/result_tile.dart' show WhyChip;
 import '../search/smart_search.dart';
 import '../../state/suggest_controller.dart';
 import '../../widgets/glass.dart';
+import '../../widgets/menu_glass.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/smooth_scroll.dart';
 
@@ -81,6 +83,10 @@ class _BarWindowState extends State<BarWindow> {
       if (e is QuittingEvent) widget.window.close();
     });
     widget.demo?.run(widget.engine, box, find, 'bar', after: hide);
+    // design work with the fake engine: NOBAD_FIND_FAKE_SHOW_BAR=1 shows the bar at start (no hotkey there)
+    if (Platform.environment['NOBAD_FIND_FAKE_SHOW_BAR'] == '1') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => show());
+    }
     _life; // start listening
   }
 
@@ -246,7 +252,7 @@ class _BarWindowState extends State<BarWindow> {
     final box = _menuAnchor.currentContext?.findRenderObject() as RenderBox?;
     setState(() => _menuItems = items);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (box != null && mounted) _menu.open(position: box.globalToLocal(global));
+      if (box != null && mounted) _menu.open(position: MenuGlass.at(box.globalToLocal(global)));
     });
   }
 
@@ -309,7 +315,7 @@ class _BarWindowState extends State<BarWindow> {
       ResultAction.copyName,
       ResultAction.forget,
     ])
-      _item(a.label, () => _rowAction(a), shortcut: a.shortcut),
+      if (a.appliesTo(find.current)) _item(a.labelFor(find.current), () => _rowAction(a), shortcut: a.shortcut),
   ];
 
   List<Widget> _appMenu() {
@@ -426,11 +432,13 @@ class _BarWindowState extends State<BarWindow> {
     // a frosted pill: Windows' Acrylic behind the window does the blur; the glass adds the tint and the rim
     return Glass(
       level: GlassLevel.panel,
-      radius: 18,
+      // the bar's own window has Windows 11's round corners (8 px): the glass follows them, so no square box shows
+      // around a rounder pill
+      radius: NbRadius.window,
       fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
       child: MenuAnchor(
         controller: _menu,
-        menuChildren: _menuItems,
+        menuChildren: MenuGlass.wrap(_menuItems),
         onOpen: () => widget.window.fitBar(BarSize.maxRows), // room for the menu inside the bar's window
         onClose: () {
           _rows = -1;
@@ -689,7 +697,10 @@ class _FieldState extends State<_Field> {
             curve: NbMotion.curve,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [c.orange, c.orangeA(0)], stops: const [0, .85]),
+                gradient: LinearGradient(
+                  colors: [c.action, c.action.withValues(alpha: 0)],
+                  stops: const [0, .85],
+                ),
               ),
             ),
           ),
@@ -767,8 +778,10 @@ class _RowState extends State<_Row> {
                     child: Container(
                       margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: ShapeDecoration(
-                        color: c.orangeA(c.isDark ? .16 : .12),
-                        shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(18)),
+                        color: c.smoke ? c.pick : c.orangeA(c.isDark ? .16 : .12),
+                        shape: RoundedSuperellipseBorder(
+                          borderRadius: BorderRadius.circular(NbRadius.card * (c.smoke ? 1.45 : 1)),
+                        ),
                       ),
                     ),
                   ),
@@ -779,7 +792,7 @@ class _RowState extends State<_Row> {
                   bottom: 9,
                   width: 3,
                   child: AnimatedScale(
-                    scale: widget.selected ? 1 : 0,
+                    scale: widget.selected && !c.smoke ? 1 : 0, // Nocturne: the lift alone
                     duration: NbMotion.of(context, const Duration(milliseconds: 150)),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
@@ -797,7 +810,7 @@ class _RowState extends State<_Row> {
                         width: 40,
                         child: Text(
                           kindTag(widget.result.kind),
-                          style: NbType.data(9.5, c.orange, weight: FontWeight.w700),
+                          style: NbType.data(9.5, c.smoke ? c.muted : c.orange, weight: FontWeight.w700),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -817,10 +830,10 @@ class _RowState extends State<_Row> {
                           message: widget.guess!,
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                            decoration: BoxDecoration(color: c.orange, borderRadius: NbRadius.pillAll),
+                            decoration: BoxDecoration(color: c.action, borderRadius: NbRadius.pillAll),
                             child: Text(
                               'Best guess',
-                              style: NbType.text(NbSize.micro - 1, c.onOrange, weight: FontWeight.w700, height: 1.3),
+                              style: NbType.text(NbSize.micro - 1, c.onAction, weight: FontWeight.w700, height: 1.3),
                             ),
                           ),
                         ),
@@ -948,7 +961,7 @@ class _ActionLine extends StatelessWidget {
         color: p.lit ? c.cardHover : null,
         child: Row(
           children: [
-            NbIcon(glyph, size: 15, color: c.orange),
+            NbIcon(glyph, size: 15, color: c.smoke ? c.text : c.orange),
             const SizedBox(width: 12),
             Flexible(
               child: Text(
@@ -965,7 +978,7 @@ class _ActionLine extends StatelessWidget {
               ),
             ] else
               const Spacer(),
-            Text('Open', style: NbType.text(12, c.orange, weight: FontWeight.w600)),
+            Text('Open', style: NbType.text(12, c.smoke ? c.text : c.orange, weight: FontWeight.w600)),
           ],
         ),
       ),

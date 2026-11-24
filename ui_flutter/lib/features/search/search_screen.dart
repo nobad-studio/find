@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -28,6 +29,7 @@ import '../../platform/demo.dart';
 import '../../widgets/dialogs.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
+import '../../widgets/menu_glass.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/panels.dart';
 import '../../widgets/pressable.dart';
@@ -40,12 +42,19 @@ import '../../platform/timing.dart';
 import '../../state/typed_filters.dart';
 import '../../widgets/controls.dart';
 import 'result_actions.dart';
+import 'preview_strip.dart';
 import 'result_tile.dart';
+import 'searching_ring.dart';
 import 'smart_search.dart';
 import 'status_line.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
+
+  /// The search box, Home's category row and list, and the status line share the same left and right edges
+  /// (test/widgets/alignment_test.dart).
+  static const boxKey = ValueKey('search-box');
+  static const statusKey = ValueKey('search-status');
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
@@ -187,6 +196,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     if (identical(Demo.mainBox, box)) Demo.mainBox = null;
     _shows?.cancel();
+    _clickedFor?.cancel();
     s.find.removeListener(_follow);
     s.find.removeListener(_followPhoto);
     talk.dispose();
@@ -233,6 +243,9 @@ class _SearchScreenState extends State<SearchScreen> {
   /// detail pane's width), and Home / End jump in the results instead of moving the caret.
   bool _navigating = false;
   bool _sheet = false;
+
+  /// Narrow window (no detail pane): a click opened the preview strip under the results (preview_strip.dart).
+  bool _strip = false;
   bool _wide = false;
   final _menu = MenuController();
   final _menuAnchor = GlobalKey();
@@ -331,6 +344,35 @@ class _SearchScreenState extends State<SearchScreen> {
     }));
   }
 
+  /// A second plain click on the same result within this time is a double-click.
+  static const _doubleClick = Duration(milliseconds: 450);
+  int _clickedId = -1;
+  Timer? _clickedFor;
+
+  /// A click on a result (1.2): it selects and previews, it never opens. The preview is the detail pane, or, in a
+  /// window too narrow for the pane, the strip under the results (nothing covers the list). A double-click opens;
+  /// Ctrl+click shows the file in its folder (Enter, Ctrl+Enter and the preview's buttons do the same for the
+  /// selected result). The click takes effect at once: nothing waits to find out whether a second one follows.
+  void _clicked(int i, bool reveal) {
+    s.find.select(i);
+    focus.requestFocus();
+    _clickedFor?.cancel();
+    if (reveal) {
+      _clickedId = -1;
+      unawaited(_open(reveal: true));
+      return;
+    }
+    final id = s.find.results[i].id;
+    if (id == _clickedId) {
+      _clickedId = -1;
+      unawaited(_open());
+      return;
+    }
+    _clickedId = id;
+    _clickedFor = Timer(_doubleClick, () => _clickedId = -1);
+    if (!_wide && !_strip) setState(() => _strip = true);
+  }
+
   void _action(ResultAction a) {
     switch (a) {
       case ResultAction.open:
@@ -354,7 +396,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void _menuAt(Offset global) {
     final box = _menuAnchor.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
-    _menu.open(position: box.globalToLocal(global));
+    _menu.open(position: MenuGlass.at(box.globalToLocal(global)));
   }
 
   /// The menu key / Shift+F10: the menu under the selected result.
@@ -373,6 +415,10 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     if (_sheet) {
       setState(() => _sheet = false);
+      return;
+    }
+    if (_strip && !_wide) {
+      setState(() => _strip = false); // the preview strip closes before the box is cleared
       return;
     }
     if (box.text.isNotEmpty) {
@@ -436,12 +482,13 @@ class _SearchScreenState extends State<SearchScreen> {
                 },
               ),
               // the toolbar: the box and its filters, on the page gutter
-              Padding(
-                padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x2),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+              // the same box as the list under it (max width, then the inset), so their edges line up
+              Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x2),
                     // Space, Home and End go to the results while the selection is being moved with the keys
                     child: Focus(
                       canRequestFocus: false,
@@ -453,6 +500,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         link: _boxLink,
                         onWidth: (w) => _boxWidth = w,
                         dropdown: _dropdown,
+                        searching: s.find.searching,
                         overlay: (context) => _dropdownLayer(context),
                         filters: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -475,9 +523,16 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: Stack(
                   children: [
                     Positioned.fill(
-                      child: MenuAnchor(
-                        controller: _menu,
-                        menuChildren: resultMenuItems(context, _action, details: !wide),
+                      // the menu follows the selected result (a browser result has fewer actions)
+                      child: ListenableBuilder(
+                        listenable: s.find,
+                        builder: (context, child) => MenuAnchor(
+                          controller: _menu,
+                          menuChildren: MenuGlass.wrap(
+                            resultMenuItems(context, _action, details: !wide, result: s.find.current),
+                          ),
+                          child: child,
+                        ),
                         child: KeyedSubtree(
                           key: _menuAnchor,
                           child: Align(
@@ -506,6 +561,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                       : s.find.showingResults &&
                                             !s.find.busy &&
                                             s.find.results.isEmpty &&
+                                            s.find.answer.actions.isEmpty &&
                                             s.find.askedFor.isNotEmpty
                                       ? _NoResults(
                                           key: const ValueKey('none'),
@@ -545,11 +601,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                                 scroll: scroll,
                                                 rowKey: rowKey,
                                                 cards: _cards,
-                                                onTap: (i, reveal) {
-                                                  s.find.select(i);
-                                                  _open(reveal: reveal);
-                                                  focus.requestFocus();
-                                                },
+                                                onTap: _clicked,
                                                 onSecondary: (i, pos) {
                                                   s.find.select(i);
                                                   _menuAt(pos);
@@ -616,9 +668,49 @@ class _SearchScreenState extends State<SearchScreen> {
                   ],
                 ),
               ),
-              ListenableBuilder(
-                listenable: s.find,
-                builder: (context, _) => StatusLine(keys: s.find.results.isNotEmpty),
+              // narrow window: the preview of the selected result, under the results (never over them)
+              if (!wide)
+                Align(
+                  alignment: Alignment.topLeft,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                    child: ListenableBuilder(
+                      listenable: s.find,
+                      builder: (context, _) {
+                        final r = s.find.current;
+                        final show = _strip && !_sheet && s.find.showingResults && r != null;
+                        return AnimatedSize(
+                          duration: NbMotion.size(context, NbMotion.base),
+                          curve: NbMotion.curve,
+                          alignment: Alignment.topCenter,
+                          child: show
+                              ? PreviewStrip(
+                                  key: const ValueKey('preview-strip'),
+                                  result: r,
+                                  onOpen: _open,
+                                  onReveal: () => _open(reveal: true),
+                                  onClose: () {
+                                    setState(() => _strip = false);
+                                    focus.requestFocus();
+                                  },
+                                )
+                              : const SizedBox(width: double.infinity),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              // on the same edges as the search box and Home's tiles and list
+              Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                  child: ListenableBuilder(
+                    listenable: s.find,
+                    builder: (context, _) =>
+                        StatusLine(key: SearchScreen.statusKey, keys: s.find.results.isNotEmpty),
+                  ),
+                ),
               ),
             ],
           );
@@ -637,6 +729,7 @@ class _SearchBox extends StatefulWidget {
     required this.onWidth,
     required this.dropdown,
     required this.overlay,
+    required this.searching,
   });
   final TextEditingController controller;
   final FocusNode focus;
@@ -647,6 +740,9 @@ class _SearchBox extends StatefulWidget {
   final ValueChanged<double> onWidth;
   final OverlayPortalController dropdown;
   final WidgetBuilder overlay;
+
+  /// A search is on its way (the ring shows after 150 ms of it).
+  final ValueListenable<bool> searching;
 
   @override
   State<_SearchBox> createState() => _SearchBoxState();
@@ -694,10 +790,11 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
       child: SlideTransition(
         position: _rise,
         child: Glass(
+          key: SearchScreen.boxKey,
           level: GlassLevel.panel,
-          radius: 18,
-          rim: on ? c.orangeA(.6) : null,
-          padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+          radius: NbRadius.card,
+          rim: on && !c.smoke ? c.orangeA(.6) : null,
+          padding: c.smoke ? const EdgeInsets.fromLTRB(10, 10, 10, 12) : const EdgeInsets.fromLTRB(4, 2, 4, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -712,7 +809,11 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
                   );
                 },
               ),
-              Container(height: 1, margin: const EdgeInsets.fromLTRB(10, 0, 10, 8), color: c.line),
+              Container(
+                height: 1,
+                margin: c.smoke ? const EdgeInsets.fromLTRB(4, 8, 4, 10) : const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                color: c.line,
+              ),
               Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: widget.filters),
             ],
           ),
@@ -735,18 +836,42 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
         border: InputBorder.none,
         hintText: 'Describe it: “rent pdf from last week”, “budget.xlsx”',
         hintStyle: NbType.text(NbSize.field, c.dim),
-        prefixIcon: Padding(
-          padding: const EdgeInsets.only(left: 12, right: 10),
-          child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
-        ),
-        prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 18),
+        prefixIcon: c.smoke
+            // Nocturne: the reference's round button on the left
+            ? Padding(
+                padding: const EdgeInsets.only(right: 14),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: c.raised, border: Border.all(color: c.line)),
+                  child: SearchingRing(
+                    searching: widget.searching,
+                    color: c.text,
+                    size: 18,
+                    child: NbIcon(NbGlyph.search, size: 18, color: on ? c.text : c.muted),
+                  ),
+                ),
+              )
+            : Padding(
+                padding: const EdgeInsets.only(left: 12, right: 10),
+                child: SearchingRing(
+                  searching: widget.searching,
+                  color: c.orange,
+                  size: 17,
+                  child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
+                ),
+              ),
+        prefixIconConstraints: c.smoke
+            ? const BoxConstraints(minWidth: 58, minHeight: 44)
+            : const BoxConstraints(minWidth: 40, minHeight: 18),
         // a way to clear the box with the mouse; Esc does the same
         suffixIcon: ListenableBuilder(
           listenable: widget.controller,
           builder: (context, _) => widget.controller.text.isEmpty
-              ? const SizedBox(width: 8)
+              ? SizedBox(width: c.smoke ? 44 : 8, height: c.smoke ? 44 : null)
               : Padding(
-                  padding: const EdgeInsets.only(right: 10),
+                  padding: EdgeInsets.only(right: c.smoke ? 0 : 10),
                   child: Pressable(
                     onTap: () {
                       widget.controller.clear();
@@ -756,15 +881,30 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
                     tooltip: 'Clear (Esc)',
                     canRequestFocus: false,
                     ringRadius: NbRadius.pillAll,
-                    builder: (context, p) => Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(color: p.lit ? c.cardHover : null, shape: BoxShape.circle),
-                      child: NbIcon(NbGlyph.close, size: 13, color: p.lit ? c.text : c.dim),
-                    ),
+                    builder: (context, p) => c.smoke
+                        // Nocturne: the white round button on the right
+                        ? Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: p.lit ? Color.lerp(c.action, c.onAction, .06) : c.action,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(color: c.float, blurRadius: 16, offset: const Offset(0, 6), spreadRadius: -6),
+                              ],
+                            ),
+                            child: NbIcon(NbGlyph.close, size: 16, color: c.onAction),
+                          )
+                        : Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(color: p.lit ? c.cardHover : null, shape: BoxShape.circle),
+                            child: NbIcon(NbGlyph.close, size: 13, color: p.lit ? c.text : c.dim),
+                          ),
                   ),
                 ),
         ),
-        contentPadding: const EdgeInsets.fromLTRB(0, 12, 12, 11),
+        contentPadding: c.smoke ? const EdgeInsets.fromLTRB(0, 12, 8, 12) : const EdgeInsets.fromLTRB(0, 12, 12, 11),
       ),
     ),
   );
@@ -789,7 +929,9 @@ class _Meta extends StatelessWidget {
     } else if (f.askedFor.isNotEmpty || f.filters.narrows) {
       spans.add(
         TextSpan(
-          text: a.results.isEmpty
+          text: f.filters.isLauncher && a.actions.isNotEmpty
+              ? '${a.actions.length} ${a.actions.length == 1 ? 'setting or app' : 'settings and apps'} · ${a.ms} ms'
+              : a.results.isEmpty
               ? 'Nothing found. Try fewer or other words, or fewer filters.'
               : '${a.results.length}${a.more ? '+' : ''} ${a.results.length == 1 && !a.more ? 'result' : 'results'} · ${a.ms} ms',
         ),
@@ -850,7 +992,7 @@ class _Meta extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 8),
-                child: ActionsBlock(acts),
+                child: ActionsBlock(acts, max: f.filters.isLauncher ? acts.length : 3),
               ),
             ),
           ),
@@ -943,8 +1085,8 @@ class _Results extends StatelessWidget {
     final head = tiles == null
         ? null
         : Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-            child: CategoryTiles(tiles: tiles!, current: s.find.filters, onTile: s.find.setFilters),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+            child: CategoryChips(tiles: tiles!, current: s.find.filters, onTile: s.find.setFilters),
           );
     final firstWeak = rows.indexWhere((r) => r.weak);
     final divider = firstWeak > 0;
@@ -982,7 +1124,7 @@ class _Results extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.x2, NbSpace.x3),
       child: Glass(
         level: GlassLevel.panel,
-        radius: 18,
+        radius: NbRadius.card,
         padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
         child: Scrollbar(
           controller: scroll,
@@ -1186,7 +1328,7 @@ class _NoResults extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 620),
           child: Glass(
-            radius: 18,
+            radius: NbRadius.card,
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1252,7 +1394,9 @@ class _EmptyCategory extends StatelessWidget {
             CategoryTiles(tiles: category.tiles, current: current, onTile: onTile),
             const SizedBox(height: NbSpace.x4),
             Text(
-              category == SearchCategory.all
+              current.isLauncher
+                  ? 'Type the name of a setting or an app.'
+                  : category == SearchCategory.all
                   ? 'Nothing matches these filters.'
                   : 'Nothing here yet in ${category.label}. Files show up as they are indexed.',
               style: NbType.text(13, c.muted, weight: FontWeight.w600),

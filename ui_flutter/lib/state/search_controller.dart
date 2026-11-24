@@ -85,6 +85,10 @@ class FindController extends ChangeNotifier {
   FileResult? get current => results.isEmpty ? null : results[_selected.clamp(0, results.length - 1)];
   bool get busy => _busy;
 
+  /// A search is on its way (from the moment it is asked until its answer, a newer one or a cleared box). A
+  /// notifier of its own so the search box's ring repaints without rebuilding the results.
+  final ValueNotifier<bool> searching = ValueNotifier(false);
+
   /// Words, or a filter that narrows: results are shown instead of Home (0.7.0's rule).
   bool get showingResults => _text.trim().isNotEmpty || _filters.narrows;
 
@@ -155,6 +159,7 @@ class FindController extends ChangeNotifier {
       _selected = 0;
       _notice = '';
       _busy = false;
+      searching.value = false;
       notifyListeners();
       return;
     }
@@ -172,6 +177,7 @@ class FindController extends ChangeNotifier {
     final filters = _filters;
     if (!showingResults) return;
     _busy = true;
+    searching.value = true;
     // "busy" only changes the screen while there are no results yet (the skeleton): with results on screen a
     // keystroke rebuilds them once, when the answer comes, not twice
     if (_answer.results.isEmpty) notifyListeners();
@@ -191,6 +197,7 @@ class FindController extends ChangeNotifier {
     if (a.cancelled) {
       // the engine dropped it for a newer one on this channel: keep what is on screen, say nothing
       _busy = false;
+      searching.value = false;
       notifyListeners();
       return;
     }
@@ -209,6 +216,7 @@ class FindController extends ChangeNotifier {
     _selected = 0;
     _notice = notice.isNotEmpty ? notice : a.error;
     _busy = false;
+    searching.value = false;
     notifyListeners();
   }
 
@@ -260,7 +268,16 @@ class FindController extends ChangeNotifier {
   Future<bool> revealSelected() => _act((id) => engine.reveal(id), "Couldn't show it in its folder.");
 
   /// Windows' "Open with" for the selected file (Ctrl+Shift+Enter).
-  Future<bool> openWithSelected() => _act((id) => engine.openWith(id), "Couldn't show Open with.");
+  Future<bool> openWithSelected() {
+    if (current?.isBrowser ?? false) return _refuse('Open with is for files. This one opens in its browser.');
+    return _act((id) => engine.openWith(id), "Couldn't show Open with.");
+  }
+
+  /// 1.2.0: what a browser result can't do, said instead of asking the engine.
+  Future<bool> _refuse(String why) async {
+    _say(why);
+    return false;
+  }
 
   /// The selected file's name on the clipboard.
   Future<bool> copyNameSelected() async {
@@ -313,6 +330,7 @@ class FindController extends ChangeNotifier {
   Future<bool> forgetSelected(Future<bool> Function(String question) confirm) async {
     final r = current;
     if (r == null) return false;
+    if (r.isBrowser) return _refuse('Browser items leave the index with "Clear browser data" in Settings > Privacy.');
     if (!await confirm('Forget "${r.name}" and keep it out of the index from now on?')) return false;
     var res = const ActionResult(false);
     try {
@@ -378,6 +396,7 @@ class FindController extends ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     _sub.cancel();
+    searching.dispose();
     super.dispose();
   }
 }

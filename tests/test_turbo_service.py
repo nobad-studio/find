@@ -203,6 +203,9 @@ class FakeScm:
     def describe(self, privs):
         self.privs = tuple(privs)
 
+    def privileges(self):
+        return None if self.privs is None else set(self.privs)
+
     def set_sddl(self, s):
         self.sddl = s
 
@@ -769,7 +772,7 @@ def test_the_helper_wants_hi_first():
 def _ident(**kw):
     base = dict(pid=10, pipe_session=1, token_session=1, process_session=1, sid=SID, process_sid=SID,
                 image="C:\\Users\\me\\NobadFind.exe", elevated=False, integrity=ntfs.MEDIUM, app_container=False,
-                restricted=False, active=True)
+                restricted=False, active=True, created=1, alive=True)
     base.update(kw)
     return ntfs.Identity(**base)
 
@@ -779,6 +782,7 @@ def _ident(**kw):
                                                                    "process_session": 0},
     {"token_session": 2}, {"process_session": 2}, {"active": False}, {"elevated": True}, {"integrity": 0x1000},
     {"integrity": -1}, {"app_container": True}, {"restricted": True}, {"image": "C:\\Users\\me\\evil.exe"},
+    {"alive": False},
 ])
 def test_check_client_fails_closed(bad):
     assert ntfs.check_client(_ident(), SID, "c:\\users\\ME\\NobadFind.exe")
@@ -828,5 +832,179 @@ def test_the_service_refuses_a_weak_folder(monkeypatch, tmp_path):
     os.mkdir(os.path.join(root, "bin"))
     monkeypatch.setattr(turbosvc, "protected_root", lambda: root)
     monkeypatch.setattr(ntfs, "own_image", lambda: os.path.join(root, "bin", turbosvc.EXE))
-    with pytest.raises(PermissionError):                               # a folder the user made: not protected
+    monkeypatch.setattr(sys, "_MEIPASS", os.path.join(root, "bin", "_internal"), raising=False)
+    monkeypatch.setattr(sys, "path", [os.path.join(root, "bin", "_internal")])
+    with pytest.raises(PermissionError, match="isn't protected"):      # a folder the user made: not protected
         ntfs._service(lambda code: None)
+
+
+# ---------- hardening (turbo security review, 2026-11-21) ----------
+def test_check_client_wants_the_process_that_connected_alive():
+    """A pid is only a number: the process behind it must still run and be older than the connection (a client
+    that connected and exited could have its pid taken by a new NobadFind.exe, which would pass the image check)."""
+    image = "C:\\Users\\me\\NobadFind.exe"
+    assert ntfs.check_client(_ident(created=100, alive=True), SID, image, connected_at=200)
+    with pytest.raises(PermissionError):
+        ntfs.check_client(_ident(alive=False), SID, image, connected_at=200)
+    with pytest.raises(PermissionError):
+        ntfs.check_client(_ident(created=300), SID, image, connected_at=200)
+    with pytest.raises(PermissionError):
+        ntfs.check_client(_ident(created=0), SID, image, connected_at=200)
+
+
+def test_serve_client_checks_the_client_against_when_it_connected(monkeypatch):
+    class P:
+        def __init__(self, h):
+            self.reads = [ntfs.encode({"t": "hi", "protocol": ntfs.PROTOCOL})]
+
+        def read(self):
+            return self.reads.pop(0) if self.reads else b""
+    monkeypatch.setattr(ntfs, "_Pipe", P)
+    monkeypatch.setattr(ntfs, "_serve", lambda *a, **kw: "served")
+    born = {"t": 0}
+    monkeypatch.setattr(ntfs, "client_identity", lambda h: (_ident(created=born["t"]), None, None))
+    image = "C:\\Users\\me\\NobadFind.exe"
+    born["t"] = ntfs.filetime_now() + 10 ** 9                 # the process behind the pid is newer than the connect
+    with pytest.raises(PermissionError):
+        ntfs.serve_client(None, SID, image, end=lambda code: None)
+    born["t"] = ntfs.filetime_now() - 10 ** 7
+    assert ntfs.serve_client(None, SID, image, end=lambda code: None) == "served"
+
+
+@win
+def test_client_identity_says_when_the_client_started_and_that_it_runs(svc_pipe):
+    name, h, _sid = svc_pipe
+    c = turbosvc.open_client_pipe(name, 2)
+    try:
+        assert ntfs._wait_connect(h, 2)
+        ntfs._Pipe(c).send({"t": "hi", "protocol": ntfs.PROTOCOL})
+        ntfs._Pipe(h).read()
+        ident, token, hp = ntfs.client_identity(h)
+        try:
+            assert ident.alive and 0 < ident.created == ntfs.process_created(ntfs._k32().GetCurrentProcess())
+            assert ident.created <= ntfs.filetime_now()
+        finally:
+            ntfs._k32().CloseHandle(token)
+            ntfs._k32().CloseHandle(hp)
+    finally:
+        ntfs._k32().CloseHandle(c)
+
+
+@win
+def test_the_elevated_step_refuses_a_parent_younger_than_itself(monkeypatch):
+    """The parent's pid comes from a process snapshot: if it was reused, the 'parent' started after this process."""
+    me = ntfs._k32().GetCurrentProcess()
+    monkeypatch.setattr(ntfs, "process_created", lambda h: 100 if h == me else 200)
+    with pytest.raises(PermissionError, match="started after"):
+        ntfs._parent_user()
+
+
+def test_install_checks_the_services_privileges_were_cut(tmp_path):
+    src, root, client = _setup(tmp_path)
+
+    class Ignores(FakeScm):
+        def describe(self, privs):
+            pass                                                  # the privilege list didn't take
+    with pytest.raises(turbosvc.Unsafe):
+        turbosvc.install(src, root, SID, client, Ignores(), FakeFs())
+
+    class More(FakeScm):
+        def describe(self, privs):
+            self.privs = tuple(privs) + ("SeDebugPrivilege",)
+    with pytest.raises(turbosvc.Unsafe):
+        turbosvc.install(src, root, SID, client, More(), FakeFs())
+
+
+@win
+def test_the_service_manager_reads_a_services_required_privileges():
+    """Read-only and unelevated: EventLog's required privileges (what `sc.exe qprivs EventLog` shows)."""
+    privs = turbosvc.Scm("EventLog").privileges()
+    assert "SeChangeNotifyPrivilege" in privs and "SeImpersonatePrivilege" in privs
+    assert turbosvc.Scm("NOBADFind-no-such-service").privileges() is None
+
+
+def test_privileges_ok():
+    assert turbosvc.privileges_ok({"SeChangeNotifyPrivilege", "SeManageVolumePrivilege"})
+    assert turbosvc.privileges_ok(set())
+    for p in ("SeDebugPrivilege", "SeTcbPrivilege", "SeImpersonatePrivilege", "SeBackupPrivilege",
+              "SeRestorePrivilege", "SeTakeOwnershipPrivilege", "SeLoadDriverPrivilege",
+              "SeAssignPrimaryTokenPrivilege", "SeCreateTokenPrivilege"):
+        assert not turbosvc.privileges_ok({"SeChangeNotifyPrivilege", p})
+
+
+@win
+def test_the_privileges_in_this_process_token():
+    privs = ntfs.own_privileges()
+    assert "SeChangeNotifyPrivilege" in privs and all(p.startswith("Se") for p in privs)
+
+
+def _service_env(monkeypatch, tmp_path, privs=("SeChangeNotifyPrivilege", "SeManageVolumePrivilege")):
+    root = str(tmp_path)
+    binp = os.path.join(root, "bin")
+    monkeypatch.setattr(turbosvc, "protected_root", lambda: root)
+    monkeypatch.setattr(ntfs, "own_image", lambda: os.path.join(binp, turbosvc.EXE))
+    monkeypatch.setattr(sys, "_MEIPASS", os.path.join(binp, "_internal"), raising=False)
+    monkeypatch.setattr(sys, "path", [os.path.join(binp, "_internal", "base_library.zip"),
+                                      os.path.join(binp, "_internal")])
+    monkeypatch.setattr(turbosvc, "is_reparse", lambda p: False)
+    monkeypatch.setattr(turbosvc, "path_sddl", lambda p: turbosvc.FOLDER_SDDL)
+    monkeypatch.setattr(ntfs, "own_token_sid", lambda: (turbosvc.SY, 1))
+    monkeypatch.setattr(ntfs, "own_privileges", lambda: set(privs))
+    reached = []
+
+    def read_record(r):
+        reached.append(r)
+        return None                                               # ends the service right after its checks
+    monkeypatch.setattr(turbosvc, "read_record", read_record)
+    return root, reached
+
+
+def test_the_service_runs_its_checks_then_reads_the_record(monkeypatch, tmp_path):
+    root, reached = _service_env(monkeypatch, tmp_path)
+    with pytest.raises(PermissionError, match="no record"):
+        ntfs._service(lambda code: None)
+    assert reached == [root]
+
+
+def test_the_service_refuses_privileges_it_shouldnt_have(monkeypatch, tmp_path):
+    _root, reached = _service_env(monkeypatch, tmp_path, privs=("SeChangeNotifyPrivilege", "SeImpersonatePrivilege"))
+    with pytest.raises(PermissionError, match="privileges"):
+        ntfs._service(lambda code: None)
+    assert reached == []
+
+
+@pytest.mark.parametrize("where", ["meipass", "path"])
+def test_the_service_refuses_code_from_outside_its_protected_folder(monkeypatch, tmp_path, where):
+    """A one-file build unpacks into a temp folder, and a path entry outside bin could import from anywhere: the
+    service runs only as a one-folder build whose code is all in bin."""
+    _root, reached = _service_env(monkeypatch, tmp_path)
+    temp = os.path.join(str(tmp_path.parent), "_MEI1234")
+    if where == "meipass":
+        monkeypatch.setattr(sys, "_MEIPASS", temp)
+    else:
+        monkeypatch.setattr(sys, "path", sys.path + [temp])
+    with pytest.raises(PermissionError, match="protected folder"):
+        ntfs._service(lambda code: None)
+    assert reached == []
+
+
+def test_code_is_in_bin():
+    b = "C:\\Program Files\\NOBAD Find Turbo\\bin"
+    assert ntfs.code_is_in(b, b + "\\_internal", [b + "\\_internal\\base_library.zip", b + "\\_internal"])
+    assert not ntfs.code_is_in(b, None, [b + "\\_internal"])                     # not a frozen build
+    assert not ntfs.code_is_in(b, "C:\\Windows\\Temp\\_MEI1", [b + "\\_internal"])
+    assert not ntfs.code_is_in(b, b + "\\_internal", [b + "\\_internal", ""])     # the current folder
+    assert not ntfs.code_is_in(b, b + "\\_internal", [b + "x\\_internal"])       # a lookalike sibling
+    assert not ntfs.code_is_in(b, b + "\\..\\..\\x", [b + "\\_internal"])
+
+
+def test_a_failed_install_leaves_no_half_copy(tmp_path):
+    src, root, client = _setup(tmp_path)
+
+    def swap(rel):
+        if rel == "_internal\\python311.dll":
+            with open(os.path.join(src, rel), "ab") as f:
+                f.write(b"!")
+    with pytest.raises(turbosvc.Mismatch):
+        turbosvc.install(src, root, SID, client, FakeScm(), FakeFs(), hook=swap)
+    assert not os.path.exists(os.path.join(root, "bin.new"))

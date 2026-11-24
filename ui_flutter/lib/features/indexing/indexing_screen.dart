@@ -23,6 +23,7 @@ import '../../widgets/motion.dart';
 import '../../widgets/panels.dart';
 import '../../widgets/resources_chart.dart';
 import '../consent/download_consent_dialog.dart';
+import '../settings/storage_use_card.dart';
 
 class IndexingScreen extends StatefulWidget {
   const IndexingScreen({super.key});
@@ -165,6 +166,8 @@ class _IndexingScreenState extends State<IndexingScreen> {
     final phaseLabel = s.status.status?.phaseLabel ?? '';
     // 1.1.1: the engine counts the index totals in the background; until the first count is in, it says so
     String total(int n) => d.countingTotals ? 'Counting…' : groupDigits(n);
+    final c = NbColors.of(context);
+    final freshness = freshnessLine(state: d.totalsState, at: d.totalsAt, error: d.totalsError);
     return [
       const SectionTitle('What it is doing', top: NbSpace.x4),
       TileGrid(min: 270, children: [for (final p in d.phases) _PhaseCard(p)]),
@@ -194,6 +197,7 @@ class _IndexingScreenState extends State<IndexingScreen> {
       _ProcessTable(r.processes),
       const SectionTitle('Models'),
       TileGrid(min: 250, children: [for (final m in d.models) _ModelCardView(m)]),
+      const StorageUseCard(freeUp: true),
       const SectionTitle('Recent decisions'),
       _Activity(s.status.activity),
       const SectionTitle('Index at a glance'),
@@ -239,6 +243,26 @@ class _IndexingScreenState extends State<IndexingScreen> {
               value: d.plan?.ssd == null ? '–' : (d.plan!.ssd! ? 'SSD' : 'Hard disk'), label: 'Drive type'),
         ],
       ),
+      if (freshness != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(freshness, style: NbType.text(NbSize.small, c.dim)),
+        ),
+      if (d.limits != null) ...[
+        const SectionTitle('Running at once now'),
+        TileGrid(
+          min: 200,
+          children: [
+            for (final (name, l) in [
+              ('File walk threads', d.limits!.walk),
+              ('Text readers', d.limits!.readers),
+              ('Photo threads', d.limits!.photo),
+              ('Vision streams', d.limits!.vision),
+            ])
+              NbStat(hue: NbHue.use, glyph: NbGlyph.sliders, value: '${l.effective}', label: '$name · ${l.byLabel}'),
+          ],
+        ),
+      ],
       const SectionTitle('Folders being searched'),
       _PlainList([for (final r in d.roots) (r, '')]),
       const SectionTitle('Drives'),
@@ -331,7 +355,7 @@ class _PhaseCard extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
       decoration: BoxDecoration(
         color: run ? c.orange.withValues(alpha: .06) : c.card,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(NbRadius.card),
         border: Border.all(color: run ? c.orange.withValues(alpha: .45) : c.line),
       ),
       child: Column(
@@ -340,7 +364,7 @@ class _PhaseCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: off),
+              NbAvatar(hue: hue, glyph: glyph, text: text, dim: off),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -515,7 +539,7 @@ class _ModelCardView extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
         color: m.loaded ? c.orange.withValues(alpha: .06) : c.card,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(NbRadius.card),
         border: Border.all(color: m.loaded ? c.orange.withValues(alpha: .45) : c.line),
       ),
       child: Column(
@@ -523,7 +547,7 @@ class _ModelCardView extends StatelessWidget {
         children: [
           Row(
             children: [
-              NbAvatar(hue: hue, glyph: glyph, text: text, size: 36, dim: !m.onDisk && m.id != 'ocr'),
+              NbAvatar(hue: hue, glyph: glyph, text: text, dim: !m.onDisk && m.id != 'ocr'),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -669,11 +693,11 @@ class _Loading extends StatelessWidget {
         children: [
           Skeleton(width: 160, height: 14),
           SizedBox(height: NbSpace.x3),
-          Skeleton(height: 230, radius: NbRadius.panel),
+          Skeleton(height: 230, radius: Radius.circular(NbRadius.card)),
           SizedBox(height: NbSpace.x8),
           Skeleton(width: 190, height: 14),
           SizedBox(height: NbSpace.x3),
-          Skeleton(height: 150, radius: NbRadius.panel),
+          Skeleton(height: 150, radius: Radius.circular(NbRadius.card)),
         ],
       ),
     ),

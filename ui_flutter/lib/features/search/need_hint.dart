@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../app/scope.dart';
 import '../../app/theme/colors.dart';
+import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../engine/models/result.dart';
 import '../../state/models_controller.dart';
@@ -94,7 +95,7 @@ class _NeedHintState extends State<NeedHint> {
         padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
         decoration: BoxDecoration(
           color: c.orange.withValues(alpha: .07),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: NbRadius.cardAll,
           border: Border.all(color: c.orange.withValues(alpha: .35)),
         ),
         child: Row(

@@ -46,6 +46,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
           size: s('size'),
           folder: s('folder'),
           sort: s('sort'),
+          browser: s('browser'),
+          visited: s('visited'),
         ),
       );
     case 'open' when id is int:
@@ -77,6 +79,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.resetLearned(p['exe'] as String?);
     case 'hardware':
       return c.hardware();
+    case 'storage_use':
+      return c.storageUse();
     case 'get_settings':
       return c.getSettings();
     case 'set_settings' when p['changes'] is Map:
@@ -107,8 +111,10 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.uiHidden(p['window'] as String? ?? 'main');
     case 'models':
       return c.models();
-    case 'model_use' when p['feature'] is String && p['id'] is String:
-      return c.modelUse(p['feature'] as String, p['id'] as String);
+    case 'model_use' when p['feature'] is String && p['id'] is String && (p['confirm'] == null || p['confirm'] is bool):
+      return c.modelUse(p['feature'] as String, p['id'] as String, confirm: p['confirm'] == true);
+    case 'reset_suggested' when p['confirm'] == null || p['confirm'] is bool:
+      return c.resetSuggested(confirm: p['confirm'] == true);
     case 'model_download' when p['id'] is String && p['consent'] == 'DOWNLOAD':
       return c.modelDownload(p['id'] as String);
     case 'model_remove' when p['id'] is String:
@@ -160,6 +166,14 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.visionCancel();
     case 'vision_keep' when p['file_id'] is int && p['text'] is String && (p['text'] as String).length <= 2000:
       return c.visionKeep(p['file_id'] as int, p['text'] as String);
+    case 'notifications_list':
+      return c.notificationsList();
+    case 'notifications_read' when p['all'] == true && p.length == 1:
+      return c.notificationsRead(all: true);
+    case 'notifications_read' when p['ids'] is List && (p['ids'] as List).every((i) => i is int) && p.length == 1:
+      return c.notificationsRead(ids: (p['ids'] as List).cast<int>());
+    case 'notifications_clear':
+      return c.notificationsClear();
   }
   return c.call(m, p);
 }

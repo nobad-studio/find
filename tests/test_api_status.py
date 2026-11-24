@@ -411,6 +411,29 @@ def test_the_first_status_never_waits_for_the_counts(tmp_path):
     s.close()
 
 
+def test_status_shows_the_governors_limits_and_a_default_without_them(tmp_path):
+    a, s = make(tmp_path)
+    assert set(a.status()["limits"]) == {"walk", "readers", "photo", "vision"}          # Gov has no limits yet
+    a._governor.limits = {"walk": {"effective": 3}}
+    assert a.status()["limits"] == {"walk": {"effective": 3}}
+    s.close()
+
+
+def test_capability_state_uses_the_governors_last_reading(tmp_path, monkeypatch):
+    from nobadfind.governor import Sample
+    monkeypatch.setattr(hardware, "scan", lambda: {"ram_gb": 15.7, "cores": 8, "threads": 16, "directml": False,
+                                                   "vram_gb": 0.1, "disk_free_gb": 100.0})
+    a, s = make(tmp_path)
+    r = a.capability_state()
+    assert r["budget"]["live"] is False and all(r["can_run"].values())       # no reading yet: installed facts
+    a._governor.sample = Sample(t=0.0, cpu=20.0, gpu=None, mem_load=80, free_mb=1700, find_cpu=0.0, foreground="",
+                                game=False, presentation=False, hung=False, battery=False, call=False, idle_s=0.0)
+    r = a.capability_state()
+    assert r["budget"]["free_mb"] == 1700 and r["can_run"]["multilingual-e5-base"] is False
+    assert r["can_run"]["windows-ocr"] is True
+    s.close()
+
+
 # ---------- 1.1.1: the index totals (Store.stats) are counted in the background, one count at a time ----------
 class SlowStats:
     """Store.stats as on a big index: six COUNTs that take seconds. Each count waits for `go` (when given)."""
@@ -491,4 +514,208 @@ def test_stats_refresh_after_ttl(tmp_path):
     go.set()
     stats_counted(a)
     assert a.status()["with_text"] == 200 and slow.calls == 2
+    s.close()
+
+
+# ---------- 1.2.0 S1: the snapshots say when they were counted and whether the last count worked ----------
+def snapshot(a, prefix, key):
+    st = a.status()
+    return st[prefix + "_state"], st[prefix + "_at"], st[prefix + "_error"], st
+
+
+def test_totals_state_goes_counting_ready_refreshing_ready(tmp_path):
+    a, s = make(tmp_path)
+    now, wall = [100.0], [5000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    go = threading.Event()
+    s.stats = slow = SlowStats(go)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at, err) == ("counting", None, "") and st["counting_totals"] is True
+    go.set()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at, err) == ("ready", 5000.0, "") and st["counting_totals"] is False
+    now[0] += api_mod.STATS_TTL + 1
+    wall[0] = 5100.0
+    go.clear()
+    slow.go = go
+    state, at, err, st = snapshot(a, "totals", None)
+    assert (state, at) == ("refreshing", 5000.0) and st["with_text"] == 100 and st["counting_totals"] is False
+    go.set()
+    stats_counted(a)
+    state, at, _e, st = snapshot(a, "totals", None)
+    assert (state, at, st["with_text"]) == ("ready", 5100.0, 200)
+    s.close()
+
+
+def test_a_failed_totals_count_keeps_the_values_and_the_time(tmp_path):
+    a, s = make(tmp_path)
+    now, wall = [100.0], [5000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    s.stats = SlowStats()
+    a.status()
+    stats_counted(a)
+    assert a.status()["totals_state"] == "ready"
+
+    def boom():
+        raise RuntimeError("secret text from inside")
+    s.stats = boom
+    now[0] += api_mod.STATS_TTL + 1
+    wall[0] = 5100.0
+    a.status()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert state == "failed" and at == 5000.0 and st["with_text"] == 100
+    assert err and "secret" not in err and "RuntimeError" not in err
+    assert st["counting_totals"] is False
+    s.close()
+
+
+def test_a_first_totals_count_that_fails_says_so(tmp_path):
+    a, s = make(tmp_path)
+
+    def boom():
+        raise RuntimeError("x")
+    s.stats = boom
+    a.status()
+    stats_counted(a)
+    state, at, err, st = snapshot(a, "totals", None)
+    assert state == "failed" and at is None and err and st["counting_totals"] is False
+    s.close()
+
+
+def test_counts_state_goes_counting_ready_refreshing_ready(tmp_path):
+    a, s = make(tmp_path, "watching")
+    now, wall = [100.0], [7000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    gate = threading.Event()
+    real = a._refresh
+
+    def slow(n, key):
+        gate.wait(5)
+        return real(n, key)
+    a._refresh = slow
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert (state, at, err) == ("counting", None, "")
+    gate.set()
+    a._refresher.join(5)
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert (state, at, err) == ("ready", 7000.0, "")
+    now[0] += api_mod.TOTALS_TTL + 1
+    wall[0] = 7100.0
+    gate.clear()
+    state, at, _e, _st = snapshot(a, "counts", None)
+    assert (state, at) == ("refreshing", 7000.0)
+    gate.set()
+    a._refresher.join(5)
+    state, at, _e, _st = snapshot(a, "counts", None)
+    assert (state, at) == ("ready", 7100.0)
+    s.close()
+
+
+def test_a_failed_counts_refresh_keeps_the_old_snapshot(tmp_path):
+    a, s = make(tmp_path, "watching")
+    now, wall = [100.0], [7000.0]
+    a._clock, a._wall = (lambda: now[0]), (lambda: wall[0])
+    counted(a)
+    before = a._totals[2]
+    assert before and a.status()["counts_state"] == "ready"
+
+    def boom(*_a, **_k):
+        raise RuntimeError("secret")
+    s.count_readable = boom
+    now[0] += api_mod.TOTALS_TTL + 1
+    wall[0] = 7100.0
+    counted(a)
+    state, at, err, _st = snapshot(a, "counts", None)
+    assert state == "failed" and at == 7000.0 and err and "secret" not in err
+    assert a._totals[2] == before
+    s.close()
+
+
+def test_a_phase_ending_does_not_bring_the_stats_count_forward(tmp_path):
+    a, s = make(tmp_path, "text")
+    now = [100.0]
+    a._clock = lambda: now[0]
+    s.stats = slow = SlowStats()
+    a.status()
+    stats_counted(a)
+    calls = slow.calls
+    a._stats_cache = (a._stats_cache[0], 1000.0, a._stats_cache[2])    # a slow index: the share-of-a-core wait
+    a._indexer.status["phase"] = "meaning"                      # a phase ended
+    now[0] += 1
+    a.status()
+    now[0] += api_mod.STATS_TTL                                 # past the 10 s floor, not past the full ttl
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls                                  # the mark never brings a refresh forward
+    now[0] = a._stats_cache[0] + 1000.0                         # the full ttl has passed
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls + 1
+    a.status()
+    stats_counted(a)
+    assert slow.calls == calls + 1                              # one count for one event
+
+
+def test_a_phase_ending_does_not_bring_the_phase_counts_forward(tmp_path):
+    a, s = make(tmp_path, "text")
+    now = [100.0]
+    a._clock = lambda: now[0]
+    calls = []
+    real = a._refresh
+
+    def refresh(at, key):
+        calls.append(at)
+        real(at, key)
+
+    a._refresh = refresh
+    counted(a)
+    assert len(calls) == 1
+    a._totals_took = 1000.0 / api_mod.COUNT_SHARE               # a slow index: ttl = 1000 s
+    now[0] += api_mod.TOTALS_TTL + 1                            # past the 10 s floor, not past the full ttl
+    counted(a)
+    assert len(calls) == 1
+    now[0] = a._totals[0] + 1000.0                              # the full ttl has passed
+    counted(a)
+    assert len(calls) == 2
+    counted(a)
+    assert len(calls) == 2
+
+
+def test_a_count_finishing_between_the_two_reads_is_not_reported_ready_and_empty(tmp_path):
+    a, s = make(tmp_path)
+    s.stats = SlowStats()
+    real = a._stats
+
+    def stats_then_the_count_lands():
+        got = real()                                            # None: the first count has just been started
+        assert got is None
+        stats_counted(a)                                        # ...and it finishes before status() looks at it
+        return got
+
+    a._stats = stats_then_the_count_lands
+    st = a.status()
+    assert st["totals_state"] == "ready" and st["totals_at"] is not None
+    assert st["with_text"] == 100 and st["chunks"] == 9         # the real totals, not zeros
+    assert st["counting_totals"] is False
+
+
+def test_the_status_fields_validate_against_the_schema(tmp_path):
+    # the repo's own checker (tests/schemacheck.py): jsonschema isn't in the hash-pinned lock the build and CI use
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from schemacheck import Checker
+    a, s = make(tmp_path)
+    s.stats = SlowStats()
+    a.status()
+    stats_counted(a)
+    st = a.status()
+    check = Checker(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contract"))
+    props = check.doc("methods.schema.json")["$defs"]["status_full"]["properties"]
+    for k in ("totals_at", "totals_state", "totals_error", "counts_at", "counts_state", "counts_error"):
+        assert k in props, k
+        assert not check.unknown_keywords(props[k]), k
+        errs = check.errors(st[k], props[k], "methods.schema.json")
+        assert not errs, (k, errs)
     s.close()

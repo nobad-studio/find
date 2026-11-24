@@ -57,6 +57,8 @@ coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="NobadFind
 # The turbo index's helper (nobadfind/turbosvc.py): its own small program in dist\NobadFindTurbo, which build.ps1
 # copies to dist\NobadFind\turbo. The elevated setup step copies ONLY this folder into Program Files and runs it as a
 # service, so it must stay small: the standard library and nobadfind's ntfs, turbosvc, scope, winapi and const.
+# Keep it one-folder (exclude_binaries + COLLECT): a one-file exe unpacks its code into a temp folder, and the service
+# refuses to run when sys._MEIPASS or any sys.path entry is outside its protected bin folder (ntfs.code_is_in).
 TURBO_EXCLUDES = EXCLUDES + ["numpy", "onnxruntime", "tokenizers", "sqlcipher3", "pypdf", "winrt", "PIL", "System",
                              "clr", "clr_loader", "unittest", "pydoc", "xmlrpc", "email",
                              "http", "urllib3", "ssl", "_ssl", "sqlite3", "asyncio", "concurrent"]

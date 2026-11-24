@@ -321,7 +321,9 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
     expect(find.text('Download Qwen3-VL 2B?'), findsOneWidget);
-    expect(find.textContaining('llama.cpp runtime (graphics card): 37 MB from github.com'), findsOneWidget);
+    // built-in graphics (the fake's Iris Xe): named for them, never "graphics card" (D2)
+    expect(find.textContaining('llama.cpp runtime (built-in graphics, Vulkan): 37 MB from github.com'), findsOneWidget);
+    expect(find.textContaining('(graphics card)'), findsNothing);
     expect(find.text('1518 MB, once'), findsOneWidget); // 1481 + 37
     await tester.tap(find.text('Not now'));
     await tester.pumpAndSettle();

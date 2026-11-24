@@ -12,6 +12,7 @@ import '../../widgets/controls.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/motion.dart';
 import '../../app/theme/tokens.dart';
+import 'browser_filters.dart';
 
 class FilterBar extends StatelessWidget {
   const FilterBar({super.key, this.onDone});
@@ -28,9 +29,17 @@ class FilterBar extends StatelessWidget {
       builder: (context, _) {
         final f = find.filters;
         // 0.9.5: Keys & passwords only while that category is indexed (Settings > What to index), names only
-        final kinds = s.settings.settings.flag('include_secrets') || f.kind == 'secret'
-            ? [...FilterChoices.kind, FilterChoices.secret]
-            : FilterChoices.kind;
+        final reading = s.settings.settings.text('browser_data');
+        final kinds = [
+          ...FilterChoices.kind,
+          if (s.settings.settings.flag('include_secrets') || f.kind == 'secret') FilterChoices.secret,
+          // 1.2.0 (browser spec §4): no files, only the launcher's settings and apps; the browsers' items while
+          // Settings > Privacy reads them
+          FilterChoices.launcher,
+          if ((reading.isNotEmpty && reading != 'off') || f.isBrowser) FilterChoices.browser,
+        ];
+        // a file's date, size and folder mean nothing for browser items or settings
+        final files = !f.isBrowser && !f.isLauncher;
         void set(SearchFilters next) {
           find.setFilters(next);
           onDone?.call();
@@ -51,8 +60,10 @@ class FilterBar extends StatelessWidget {
                 value: f.kind,
                 options: kinds,
                 highlight: f.kind.isNotEmpty,
-                onChanged: (v) => set(f.copyWith(kind: v)),
+                onChanged: (v) => set(f.withKind(v)),
               ),
+              ...browserChoices(context, f, logins: reading == 'history_logins', set: set),
+              if (files)
               NbSelect(
                 label: 'Changed',
                 compact: true,
@@ -61,6 +72,7 @@ class FilterBar extends StatelessWidget {
                 highlight: f.modified.isNotEmpty,
                 onChanged: (v) => set(f.copyWith(modified: v)),
               ),
+              if (files)
               NbSelect(
                 label: 'Size',
                 compact: true,
@@ -69,6 +81,7 @@ class FilterBar extends StatelessWidget {
                 highlight: f.size.isNotEmpty,
                 onChanged: (v) => set(f.copyWith(size: v)),
               ),
+              if (files)
               NbChipButton(
                 f.folder.isEmpty ? 'Any folder' : 'In ${baseName(f.folder)}',
                 icon: f.folder.isEmpty ? NbGlyph.folder : NbGlyph.close,
@@ -86,7 +99,7 @@ class FilterBar extends StatelessWidget {
                   if (p.path.isNotEmpty) set(find.filters.copyWith(folder: p.path));
                 },
               ),
-              if (find.here.isNotEmpty && f.folder != find.here)
+              if (files && find.here.isNotEmpty && f.folder != find.here)
                 Appear(
                   key: ValueKey(find.here),
                   child: NbChipButton(
@@ -98,6 +111,7 @@ class FilterBar extends StatelessWidget {
                     },
                   ),
                 ),
+              if (!f.isLauncher)
               NbSelect(
                 label: 'Order',
                 compact: true,

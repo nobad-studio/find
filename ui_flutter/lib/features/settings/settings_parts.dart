@@ -18,24 +18,42 @@ import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
 class SettingsGroup extends StatelessWidget {
-  const SettingsGroup(this.title, {super.key, required this.rows});
+  const SettingsGroup(this.title, {super.key, required this.icon, required this.rows});
   final String title;
+
+  /// What the group is about, in a small frosted tile before its title.
+  final NbGlyph icon;
   final List<Widget> rows;
+
+  /// Each group's card (the alignment test finds them by it).
+  static const cardKey = ValueKey('settings-group-card');
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    // every group's card spans the page column, so the cards of a page share their edges
     return Padding(
       padding: const EdgeInsets.only(bottom: NbSpace.x5),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 6),
-            child: Semantics(header: true, child: Text(title, style: sectionStyle(c))),
+            // the original header text; its icon tile centred beside it, 12 px from the title and 8 px above the
+            // card, so it never touches the card
+            padding: const EdgeInsets.only(left: 2, bottom: NbSpace.x2),
+            child: Row(
+              children: [
+                GlyphTile(icon),
+                const SizedBox(width: NbSpace.x3),
+                Expanded(
+                  child: Semantics(header: true, child: Text(title, style: sectionStyle(c))),
+                ),
+              ],
+            ),
           ),
           Glass(
-            radius: 18,
+            key: SettingsGroup.cardKey,
+            radius: NbRadius.card,
             child: Column(
               children: [
                 for (var i = 0; i < rows.length; i++) ...[if (i > 0) Container(height: 1, color: c.line), rows[i]],
@@ -168,6 +186,37 @@ class TextSetting extends StatelessWidget {
         number: number,
         value: number ? '${s.settings.number(k)}' : s.settings.text(k),
         onSubmit: (v) => s.set(k, number ? (int.tryParse(v) ?? -1) : v.trim()),
+      ),
+    );
+  }
+}
+
+/// A list of short names edited as one comma-separated line (`creative_apps`). The engine checks every name and
+/// drops what doesn't fit; the field then shows what it kept.
+class NamesSetting extends StatelessWidget {
+  const NamesSetting(this.k, this.label, this.help, {super.key});
+  final String k;
+  final String label;
+  final String help;
+
+  static List<String> split(String v) => [
+    for (final n in v.split(',')) if (n.trim().isNotEmpty) n.trim(),
+  ];
+
+  @override
+  Widget build(BuildContext context) =>
+      ListenableBuilder(listenable: AppScope.of(context).settings, builder: (context, _) => _build(context));
+
+  Widget _build(BuildContext context) {
+    final s = AppScope.of(context).settings;
+    return SettingRow(
+      label: label,
+      help: help,
+      below: NbField(
+        label: label,
+        width: double.infinity,
+        value: s.settings.list(k).join(', '),
+        onSubmit: (v) => s.set(k, split(v)),
       ),
     );
   }

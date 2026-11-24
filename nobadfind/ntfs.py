@@ -61,8 +61,12 @@ The pipe (2026-11-21: reversed, the elevated side is the server and trusts nothi
   equal the recorded SID; not elevated, at least medium integrity, no AppContainer, not a restricted token; the
   pipe's client session = the token's session = the process's session, not 0, and an active session (WTS); the
   process image (QueryFullProcessImageNameW) is the recorded NobadFind.exe (from source: the parent that asked for
-  elevation, which is also the only pid allowed). Any failure: the service ends (fail closed). The image check is
+  elevation, which is also the only pid allowed); the process behind the client's pid still runs and started
+  before the connection (process_created; a client that connected and ended can't lend its reused pid, and so
+  another program's image, to the check). Any failure: the service ends (fail closed). The image check is
   defence in depth only: the user's own NobadFind.exe is in a folder the user can write to.
+- The elevated install step takes the user from its parent process (_parent_user), which must have started before
+  it (a parent pid from the process snapshot that was reused is refused).
 - Both ends' checks are small functions (check_client is pure; client_identity and server_ok are tested on a real,
   unelevated pipe).
 - Messages: one JSON object per line, ASCII, capped at MAX_LINE (Lines; the first line, before the client is
@@ -556,6 +560,8 @@ def _k32():
                 ("DisconnectNamedPipe", B, [H]),
                 ("CancelIoEx", B, [H, P]),
                 ("GetCurrentThread", H, []),
+                ("GetProcessTimes", B, [H, P, P, P, P]),
+                ("GetSystemTimeAsFileTime", None, [P]),
                 ("LocalFree", P, [P])):
             f = getattr(k, name)
             f.restype, f.argtypes = res, args
@@ -710,6 +716,27 @@ def session_of(pid):
     return s.value if _k32().ProcessIdToSessionId(pid, ctypes.byref(s)) else None
 
 
+def filetime_now():
+    """The system time as a FILETIME number (100 ns since 1601, UTC): the clock process creation times use."""
+    v = ctypes.c_ulonglong()
+    _k32().GetSystemTimeAsFileTime(ctypes.byref(v))
+    return v.value
+
+
+def process_created(h):
+    """When the process at handle h started (FILETIME number), 0 when Windows can't say. A pid is only a number
+    and is reused once its process is gone; a creation time older than the moment the pid was seen proves the
+    process behind the handle is the one that was there then."""
+    c, e, kt, ut = (ctypes.c_ulonglong() for _ in range(4))
+    if not _k32().GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(kt), ctypes.byref(ut)):
+        return 0
+    return c.value
+
+
+def process_alive(h):
+    return _k32().WaitForSingleObject(h, 0) == 0x102                 # WAIT_TIMEOUT: it hasn't ended
+
+
 def _advapi():
     if "a" not in _dll:
         w = wintypes
@@ -725,7 +752,8 @@ def _advapi():
                 ("RevertToSelf", B, []),
                 ("OpenThreadToken", B, [H, D, B, ctypes.POINTER(H)]),
                 ("IsTokenRestricted", B, [H]),
-                ("AccessCheck", B, [P, H, D, P, P, ctypes.POINTER(D), ctypes.POINTER(D), ctypes.POINTER(B)])):
+                ("AccessCheck", B, [P, H, D, P, P, ctypes.POINTER(D), ctypes.POINTER(D), ctypes.POINTER(B)]),
+                ("LookupPrivilegeNameW", B, [w.LPCWSTR, P, w.LPWSTR, ctypes.POINTER(D)])):
             f = getattr(a, name)
             f.restype, f.argtypes = res, args
         _dll["a"] = a
@@ -775,6 +803,30 @@ def integrity_of(token):
     finally:
         _k32().LocalFree(s)
     return int(text.rsplit("-", 1)[1]) if text.startswith("S-1-16-") else -1
+
+
+def token_privileges(token):
+    """The names of every privilege in the token, enabled or not (a disabled one can be enabled), or None when
+    Windows can't say."""
+    a = _advapi()
+    need = wintypes.DWORD()
+    a.GetTokenInformation(token, 3, None, 0, ctypes.byref(need))                 # TokenPrivileges
+    if not need.value or need.value > 65536:
+        return None
+    buf = ctypes.create_string_buffer(need.value)
+    if not a.GetTokenInformation(token, 3, buf, need, ctypes.byref(need)):
+        return None
+    count = struct.unpack_from("<I", buf.raw, 0)[0]
+    if 4 + count * 12 > len(buf.raw):
+        return None
+    out = set()
+    for i in range(count):                                       # LUID_AND_ATTRIBUTES: LUID (8 bytes), DWORD
+        luid = ctypes.c_ulonglong(struct.unpack_from("<Q", buf.raw, 4 + i * 12)[0])
+        name, n = ctypes.create_unicode_buffer(64), wintypes.DWORD(64)
+        if not a.LookupPrivilegeNameW(None, ctypes.byref(luid), name, ctypes.byref(n)):
+            return None
+        out.add(name.value)
+    return out
 
 
 def linked_token_sid(token):
@@ -941,7 +993,7 @@ def server_ok(h, pid, session):
 
 # ---------- who is the client (helper side: the server end) ----------
 Identity = namedtuple("Identity", "pid pipe_session token_session process_session sid process_sid image elevated "
-                                  "integrity app_container restricted active")
+                                  "integrity app_container restricted active created alive")
 MEDIUM = 0x2000
 
 
@@ -990,17 +1042,24 @@ def client_identity(h):
         psid = token_sid(ptok)
         k.CloseHandle(ptok)
     ident = Identity(cpid.value, csess.value, tsess, session_of(cpid.value), sid, psid, image_of(hp),
-                     elevated != 0, integrity, appc != 0, restricted, session_active(csess.value))
+                     elevated != 0, integrity, appc != 0, restricted, session_active(csess.value),
+                     process_created(hp), process_alive(hp))
     return ident, imp, hp
 
 
-def check_client(ident, sid, image, pid=None):
+def check_client(ident, sid, image, pid=None, connected_at=None):
     """The service's decision, from Windows' answers only (client_identity) against the protected record (sid,
-    image) or, from source, the parent that asked for elevation (pid). Raises PermissionError: fail closed."""
+    image) or, from source, the parent that asked for elevation (pid). connected_at (FILETIME number, taken when
+    the client connected): the process behind the client's pid must have started before it, and still run, so a
+    pid reused after the client ended can't lend its image to the check. Raises PermissionError: fail closed."""
     if not (SID_RE.match(sid or "") and ident.sid == sid and ident.process_sid == sid):
         raise PermissionError("the client isn't the account turbo was set up for")
     if pid is not None and ident.pid != pid:
         raise PermissionError("the client isn't the process that asked")
+    if not ident.alive:
+        raise PermissionError("the client's process has ended")
+    if connected_at is not None and not (0 < ident.created <= connected_at):
+        raise PermissionError("the client's process started after it connected (its id was reused)")
     if not ident.pipe_session or not (ident.pipe_session == ident.token_session == ident.process_session):
         raise PermissionError("the client's session doesn't add up")
     if not ident.active:
@@ -1128,9 +1187,11 @@ def _wait_connect(h, timeout_s):
         k.CloseHandle(ov.hEvent)
 
 
-def serve_client(h, sid, image, pid=None, end=os._exit, own=None):
+def serve_client(h, sid, image, pid=None, end=os._exit, own=None, connected_at=None):
     """The server end, connected: read the client's hi (small), check the client with Windows' answers
-    (check_client), then serve it. Any failure ends the process (end)."""
+    (check_client; connected_at: when _wait_connect returned, default now), then serve it. Any failure ends the
+    process (end)."""
+    connected_at = connected_at or filetime_now()
     pipe = _Pipe(h)
     timer = threading.Timer(HI_WAIT, end, (0,))
     timer.daemon = True
@@ -1146,7 +1207,7 @@ def serve_client(h, sid, image, pid=None, end=os._exit, own=None):
     if hi.get("t") != "hi" or hi.get("protocol") != PROTOCOL:
         raise ValueError("the client didn't say hi")
     ident, token, hp = client_identity(h)
-    check_client(ident, sid, image, pid)
+    check_client(ident, sid, image, pid, connected_at)
     timer.cancel()
     lines.max_line = MAX_LINE
     return _serve(pipe, lines, pending, sid, token, hp, end, own)
@@ -1311,9 +1372,34 @@ def own_token_sid():
         _k32().CloseHandle(tok)
 
 
+def own_privileges():
+    """The privileges in this process's token (names), or None."""
+    tok = wintypes.HANDLE()
+    if not _advapi().OpenProcessToken(_k32().GetCurrentProcess(), 0x8, ctypes.byref(tok)):
+        return None
+    try:
+        return token_privileges(tok)
+    finally:
+        _k32().CloseHandle(tok)
+
+
+def _inside(folder, path):
+    if not (isinstance(path, str) and path):
+        return False
+    f, p = os.path.normcase(os.path.normpath(folder)), os.path.normcase(os.path.normpath(path))
+    return p == f or p.startswith(f.rstrip("\\") + "\\")
+
+
+def code_is_in(folder, meipass, paths):
+    """True only for a one-folder PyInstaller build whose code is all in folder: sys._MEIPASS (a one-file build
+    unpacks into a temp folder instead) and every sys.path entry (an empty entry is the current folder)."""
+    return _inside(folder, meipass) and bool(paths) and all(_inside(folder, p) for p in paths)
+
+
 def _parent_user(expected_image=None):
-    """The process that asked for elevation (the engine): (pid, its image, its token's SID), checked: same session,
-    a user account, not elevated, and (when given) the expected program. From Windows, never the command line."""
+    """The process that asked for elevation (the engine): (pid, its image, its token's SID), checked: started before
+    this process (its pid wasn't reused), same session, a user account, not elevated, and (when given) the expected
+    program. From Windows, never the command line."""
     k, a = _k32(), _advapi()
     me = k.GetCurrentProcessId()
     ppid = parent_pid(me)
@@ -1323,6 +1409,8 @@ def _parent_user(expected_image=None):
     if not hp:
         raise PermissionError("parent process can't be opened")
     try:
+        if not 0 < process_created(hp) <= process_created(k.GetCurrentProcess()):
+            raise PermissionError("the parent started after this process (its id was reused)")
         img = image_of(hp)
         if expected_image is not None and not turbosvc.same_path(img, expected_image):
             raise PermissionError("the parent isn't NOBAD Find")
@@ -1350,19 +1438,27 @@ def _serve_dev():
     h = turbosvc.make_server_pipe(pipe_name(sid, ppid), turbosvc.pipe_sddl(sid))
     if not _wait_connect(h, 60):
         return 0
-    return serve_client(h, sid, img, pid=ppid)
+    return serve_client(h, sid, img, pid=ppid, connected_at=filetime_now())
 
 
 def _service(end):
-    """`--turbo service` under the service manager, from the protected copy only."""
+    """`--turbo service` under the service manager, from the protected copy only: its exe and all its code in bin
+    (a one-folder build: nothing unpacked to a temp folder, no import path outside), the folders protected,
+    LocalSystem, and none of the powerful privileges the service's REQUIRED_PRIVILEGES took away. Any doubt: end."""
     root = turbosvc.protected_root()
-    if not turbosvc.same_path(own_image(), os.path.join(root, turbosvc.BIN, turbosvc.EXE)):
+    binp = os.path.join(root, turbosvc.BIN)
+    if not turbosvc.same_path(own_image(), os.path.join(binp, turbosvc.EXE)):
         raise PermissionError("the service runs only from its protected folder")
-    for d in (root, os.path.join(root, turbosvc.BIN)):
+    if not code_is_in(binp, getattr(sys, "_MEIPASS", None), list(sys.path)):
+        raise PermissionError("the service's code isn't all in its protected folder")
+    for d in (root, binp):
         if turbosvc.is_reparse(d) or not turbosvc.dacl_is_strong(turbosvc.path_sddl(d)):
             raise PermissionError("the protected folder isn't protected")
     if own_token_sid()[0] != turbosvc.SY:
         raise PermissionError("the service runs as LocalSystem only")
+    privs = own_privileges()
+    if privs is None or not turbosvc.privileges_ok(privs):
+        raise PermissionError("the service has privileges it must not have (its privilege list didn't take)")
     rec = turbosvc.read_record(root)
     if rec is None:
         raise PermissionError("no record of who set turbo up")
@@ -1371,7 +1467,7 @@ def _service(end):
     h = turbosvc.make_server_pipe(turbosvc.service_pipe_name(rec.user_sid), turbosvc.pipe_sddl(rec.user_sid))
     if not _wait_connect(h, turbosvc.IDLE_S):
         return 0                                          # nobody came: end
-    return serve_client(h, rec.user_sid, rec.client_image, end=end, own=own)
+    return serve_client(h, rec.user_sid, rec.client_image, end=end, own=own, connected_at=filetime_now())
 
 
 def _install():

@@ -11,9 +11,13 @@ import threading
 import time
 from collections import deque
 
-from . import embed, jobs, models, ocr, photo, procs, scope, thumbs, wsearch, winapi
+from . import capability, embed, jobs, models, ocr, performance, photo, procs, scope, thumbs, wsearch, winapi
+from . import firstrun, modelsuggest
+from . import profile as profile_mod
+from .settings import goal as settings_goal
+from . import governor as governor_mod
 from . import hardware as hw
-from .const import APP_VER, COUNT_SHARE
+from .const import APP_VER, COUNT_SHARE, DEFAULTS, SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
 from .indexer import NAME_KINDS
 from .kinds import READABLE_EXT
 from .log import log
@@ -35,6 +39,16 @@ PHASES = (("names", "Finding file names"), ("text", "Reading documents"), ("ocr"
           ("photos", "Looking at photos"), ("watching", "Watching for changes"))
 
 
+def count_reason(e):
+    """A short plain reason a count failed (status totals_error / counts_error); never the exception's own text."""
+    kind = type(e).__name__
+    if kind == "OperationalError" and ("lock" in str(e).lower() or "busy" in str(e).lower()):
+        return "the index was busy"
+    if kind.endswith("Error") and type(e).__module__.split(".")[0] in ("sqlite3", "sqlcipher3"):
+        return "the index couldn't be read"
+    return "something went wrong"
+
+
 class Api:
     def __init__(self, store, settings, indexer, vindex):
         self._store = store
@@ -53,6 +67,9 @@ class Api:
         self._stats_cache = (None, 0.0, None)   # (counted at, reused for seconds, Store.stats) for status()
         self._stats_thread = None         # the one Store.stats count running (_stats)
         self._stats_lock = threading.Lock()
+        self._wall = time.time            # epoch seconds for totals_at / counts_at (tests replace it)
+        self._stats_info = (None, "")     # (epoch seconds of the last successful count, why the last one failed)
+        self._counts_info = (None, "")
         self._clock = time.monotonic      # tests replace it
         self._prev = None                 # (time, cpu_seconds, read_bytes) of the last status() call
         self._sampler = procs.Sampler()   # Find's own processes, what each is and what it uses
@@ -63,12 +80,15 @@ class Api:
         self._on_show = None              # engine.py: the UI's main window came up (indexing resumes)
         self._folder_dialog = None        # engine.py: Windows' own folder dialog
         self._turbo = None                # engine.py: turbo.Turbo, the optional elevated NTFS index helper
+        self._notify = None               # engine.py: notify.Center, the notifications (None: none kept)
         self._timer, self._exit = threading.Timer, os._exit     # tests replace them
         self._talk = None                 # vlm.worker.Talker, made on the first talk-about-a-photo question
         self._talk_lock = threading.Lock()
+        self._talk_gpu_for = {}           # talk model id -> (on Vulkan, why not) as decided for its last load
         self._on_vision = None            # engine.py: push one `vision` event to the UI
         self._on_talk_budget = None       # engine.py: jobs.set_talk_allowance (the talk model's memory)
         self._migrate_forgotten()         # once: forgotten paths out of settings.json (fix round 1, I5)
+        self._migrate_goal()              # once: 1.2.0's performance_goal from power (spec 4.2)
 
     # ---------- search ----------
     def search(self, text, filters=None, client=None, channel="main"):
@@ -89,6 +109,8 @@ class Api:
         listing = any(filters.get(k) for k in ("kind", "modified", "size", "folder")) or filters.get("sort") in SORTS - {""}
         if not text and not listing:
             return empty
+        if filters.get("kind") == "launcher":
+            return self._launcher_only(text)
         try:
             asks = {}
             # the settings and apps first (a few ms): "open windows update" + Enter waits for this answer, so a
@@ -101,7 +123,8 @@ class Api:
                        roots=self._indexer.roots(self._indexer.drive_list),
                        photo_text=None if quick else self._indexer.photo_text,
                        pindex=None if quick else self._indexer.pindex, cancelled=cancelled,
-                       romanized=self._romanized(), asks=asks)
+                       romanized=self._romanized(), asks=asks, photo_next=None if quick else self._photo_next(),
+                       browser=self._browser_kinds())
             if not r.get("cancelled"):
                 needs = [] if quick else self._needs(asks, len(r.get("results") or ()))
                 if needs:
@@ -113,13 +136,31 @@ class Api:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
 
+    def _browser_kinds(self):
+        """The browser kinds search may show (browser spec §4): none while browser_data is off."""
+        from .browserdata import MODE_KINDS
+        return MODE_KINDS.get(self._settings.get("browser_data"), ())
+
+    LAUNCHER_LIMIT = 12             # the "Settings & apps" filter lists this many
+
+    def _launcher_only(self, text):
+        """The "Settings & apps" filter (browser spec decision 1): only the launcher's settings pages, Control Panel
+        items, tools and apps; never a file."""
+        t0 = time.perf_counter()
+        acts = self.actions_for(text, limit=self.LAUNCHER_LIMIT, launch=True)
+        r = {"results": [], "understood": ["settings & apps"], "terms": [], "notes": [], "more": False,
+             "parts": [], "best": None, "ms": round((time.perf_counter() - t0) * 1000)}
+        if acts:
+            r["actions"] = acts
+        return r
+
     # ---------- Windows settings and apps from the search box (0.9.1, launcher.py) ----------
-    def actions_for(self, text):
+    def actions_for(self, text, limit=4, launch=None):
         lch = getattr(self, "_launcher", None)
         if lch is None or not text:
             return []
         try:
-            return lch.actions(text)
+            return lch.actions(text, limit=limit, launch=launch)
         except Exception as e:
             log(f"actions failed: {type(e).__name__}", "warn")
             return []
@@ -137,6 +178,14 @@ class Api:
         if lch is None:
             return {"ok": False, "error": "Opening apps and settings isn't available in this copy of NOBAD Find."}
         return lch.run(action_id)
+
+    def _photo_next(self):
+        """(question encoder, vectors) of the photo identity being rebuilt beside the searched one, or None."""
+        ix = self._indexer
+        text, idx = getattr(ix, "photo_text_next", None), getattr(ix, "pindex_next", None)
+        if text is None or idx is None or getattr(ix, "photo_text", None) is None or not getattr(idx, "n", 0):
+            return None
+        return text, idx
 
     def _needs(self, asks, found):
         """What this search would need that isn't ready (0.9.0), for a hint above the results. Cheap: the photo
@@ -161,6 +210,19 @@ class Api:
                 out.append({"model": "photo", "state": "off", "id": pid, "size_mb": mb, "done": 0, "total": 0,
                             "text": "Photo search is off, so only names and words in pictures are matched. "
                                     "Turn it on to search what is in them."})
+            elif getattr(self._indexer, "photo_model_next", None) and \
+                    (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))[1] > 0:
+                # another photo identity is being built beside the old one (_counts counts that set): the old
+                # vectors answer meanwhile
+                nxt = self._indexer.photo_model_next
+                total, todo = self._totals[2]["photos"]
+                done = max(0, total - todo)
+                name = (models.get(nxt) or {}).get("short") or (models.get(nxt) or {}).get("name") or nxt
+                until = ("the old results answer until then" if getattr(self._indexer, "photo_old_answers", True)
+                         else "until then only those photos can be found by what is in them")
+                out.append({"model": "photo", "state": "analyzing", "id": nxt, "size_mb": mb, "done": done,
+                            "total": total, "text": f"Looking at your photos again with {name}: {done:,} of "
+                                                    f"{total:,}; {until}"})
             else:
                 total, todo = (getattr(self, "_totals", (0, None, {}))[2] or {}).get("photos", (0, 0))
                 where = asks.get("where")
@@ -244,9 +306,14 @@ class Api:
         return p if p and os.path.exists(p) else None
 
     def open(self, file_id):
+        if isinstance(file_id, int) and not isinstance(file_id, bool) and file_id < 0:
+            return self._browser_open(-file_id)          # a browser result (browsersearch: id -row)
         p = self._path(file_id)
         if not p:
             return {"ok": False, "error": "That file isn't there any more."}
+        return self._open_path(p)
+
+    def _open_path(self, p):
         try:
             winapi.open_outside_job(p)    # the default program, outside Find's job: it survives Quit
             return {"ok": True}
@@ -272,7 +339,50 @@ class Api:
             log(f"could not start the Open with picker (error {e.winerror or e.errno})", "warn")
             return {"ok": False, "error": "Windows couldn't show the Open with list."}
 
+    def _browser_row(self, bid):
+        """(browser, kind, url) of one browser item while browser data is read, else None."""
+        if not self._browser_kinds():
+            return None
+        rows = self._store.q("SELECT browser, kind, url FROM browser_items WHERE id = ?", (bid,))
+        return rows[0] if rows and rows[0][1] in self._browser_kinds() else None
+
+    def _browser_open(self, bid):
+        """Open a browser result by its id (browser spec §4): a page or bookmark in the default browser, a saved login
+        in its browser's password manager (the launcher's fixed table), a download's file or else its folder."""
+        from . import browsersearch
+        row = self._browser_row(bid)
+        if row is None:
+            return {"ok": False, "error": "That isn't in the index any more."}
+        browser, kind, url = row
+        if kind == "login":
+            from .launcher import password_action
+            aid = password_action(browser)
+            if aid is None or getattr(self, "_launcher", None) is None:
+                return {"ok": False, "error": f"NOBAD Find can't open {browser}'s password manager."}
+            return self._launcher.run(aid)
+        if kind == "download":
+            p = browsersearch.download_path(url)
+            if p and os.path.isfile(p):
+                return self._open_path(p)
+            if p and os.path.isdir(os.path.dirname(p)):
+                return {"ok": bool(open_folder(os.path.dirname(p)))}
+            return {"ok": False, "error": "That download isn't there any more."}
+        web = browsersearch.web_address(url)
+        if web is None:
+            return {"ok": False, "error": "That isn't a web address NOBAD Find opens."}
+        return self._open_path(web)                      # explorer.exe hands it to the default browser
+
     def reveal(self, file_id):
+        if isinstance(file_id, int) and not isinstance(file_id, bool) and file_id < 0:
+            from . import browsersearch
+            row = self._browser_row(-file_id)
+            p = browsersearch.download_path(row[2]) if row and row[1] == "download" else None
+            if p and os.path.isfile(p):
+                return {"ok": reveal_in_explorer(p)}
+            if p and os.path.isdir(os.path.dirname(p)):
+                return {"ok": bool(open_folder(os.path.dirname(p)))}
+            return {"ok": False, "error": "A web page has no folder." if row and row[1] != "download"
+                    else "That download isn't there any more."}
         p = self._path(file_id)
         if not p:
             return {"ok": False, "error": "That file isn't there any more."}
@@ -349,19 +459,43 @@ class Api:
         except Exception as e:
             log(f"forgotten list move failed: {type(e).__name__}", "warn")
 
+    def _migrate_goal(self):
+        """Once (1.2.0, spec 4.2, A18): performance_goal is taken from power (boost -> fast, else balanced; done by
+        Settings when it reads a file without the goal), saved, and recorded as meta goal_migrated. After that
+        the goal is the only setting that decides; power only mirrors it for older UIs."""
+        if self._store is None or not hasattr(self._settings, "settle_goal"):
+            return                                       # (tests that make an Api without an index)
+        try:
+            if self._store.meta("goal_migrated") == "1":
+                return
+            if not self._settings.settle_goal():
+                log("performance goal: settings couldn't be read or saved; taken from power again at the next start", "warn")
+                return
+            self._store.set_meta("goal_migrated", "1")
+            log(f"performance goal {self._settings.get('performance_goal')} (from power)")
+        except Exception as e:
+            log(f"performance goal move failed: {type(e).__name__}", "warn")
+
     # ---------- status and settings ----------
     def status(self):
         st = dict(self._indexer.status)
         counted = self._stats()
         if counted is None:
-            # the first count is still running: the indexer's own numbers (its live files count, and its own last
-            # count of the index if it made one), 0 for the rest, and the UI says "Counting..." for those
-            st["counting_totals"] = "with_text" not in st
+            # no count is in yet: the indexer's own numbers (its live files count, and its own last count of the
+            # index if it made one), 0 for the rest, and the UI says "Counting..." for those
             for k in STATS_KEYS:
                 st.setdefault(k, 0)
         else:
             st.update(counted)
-            st["counting_totals"] = False
+        t = self._stats_thread
+        running = bool(t and t.is_alive())
+        if counted is None and not running:
+            # the first count may have landed between the cache read and the thread check: one consistent view
+            counted = self._stats_cache[2]
+            if counted is not None:
+                st.update(counted)
+        totals = self._snapshot_fields(st, "totals", running, self._stats_info, counted is not None)
+        st["counting_totals"] = totals == "counting"
         st["encrypted"] = bool(getattr(self._store, "encrypted", False))
         st["db_bytes"] = self._db_bytes()                   # two getsize calls: always current
         st["version"] = APP_VER
@@ -375,6 +509,8 @@ class Api:
         st["drives"] = self._indexer.drive_list
         with self._slock:
             self._transparency(st)
+        r = self._refresher
+        self._snapshot_fields(st, "counts", bool(r and r.is_alive()), self._counts_info, self._counts_info[0] is not None)
         self._retry_forgotten()
         return st
 
@@ -402,6 +538,8 @@ class Api:
         so searches timed out. One count runs at a time, in its own thread; a poll returns what is known at once."""
         at, ttl, cached = self._stats_cache
         now = self._clock()
+        # the full ttl (the floor or COUNT_SHARE times the last count, whichever is longer) always holds, so the
+        # 5 %-of-a-core rule does too, whatever just happened (a phase ended, a rescan or wipe)
         if at is None or now - at >= ttl:
             with self._stats_lock:
                 if not (self._stats_thread and self._stats_thread.is_alive()):
@@ -414,10 +552,27 @@ class Api:
         t0 = self._clock()
         try:
             cached = self._store.stats()
+            self._stats_info = (self._wall(), "")
         except Exception as e:
             log(f"index totals count failed: {type(e).__name__}", "warn")       # the old totals stay; again later
+            self._stats_info = (self._stats_info[0], count_reason(e))
         took = self._clock() - t0
         self._stats_cache = (t0, max(STATS_TTL, COUNT_SHARE * took), cached)
+
+    def _snapshot_fields(self, st, prefix, running, info, have):
+        """{prefix}_at / _state / _error for a snapshot: the last successful count (epoch seconds or None), whether
+        a count is running and whether the last one failed (counting_totals reads the totals' state)."""
+        at, error = info
+        if running:
+            state = "refreshing" if have else "counting"
+        elif error:
+            state = "failed"
+        elif at is None:
+            state = "counting"                     # not counted yet; the next poll starts it
+        else:
+            state = "ready"
+        st[prefix + "_at"], st[prefix + "_state"], st[prefix + "_error"] = at, state, error
+        return state
 
     def _db_bytes(self):
         path = getattr(self._store, "db_path", None)
@@ -450,6 +605,9 @@ class Api:
             st["history"] = gov.history
         else:
             st["level"], st["reason"], st["history"] = st.get("level", ""), st.get("reason", ""), []
+        limits = getattr(gov, "limits", None)
+        st["limits"] = limits if limits else governor_mod.op_limits(
+            st["level"] if st["level"] in governor_mod.ORDER else governor_mod.GENTLE, st.get("plan"))
         history = st["history"]
         st["resources"] = self._resources(now, history[-1].get("gpu") if history else None)
         st["phases"] = self._phases(now, st)
@@ -504,7 +662,8 @@ class Api:
         # Never inline, not even the first time (0.9.0): on a million-entry index the counts take seconds, and every
         # status poll that waited for them held one of the pipe's few request threads, so the Index page and then
         # the Settings pages stayed blank. Until the first count is in, the phases say "waiting" with no total.
-        if (not counts or k != key or now - at >= ttl) and not (self._refresher and self._refresher.is_alive()):
+        due = not counts or k != key or now - at >= ttl
+        if due and not (self._refresher and self._refresher.is_alive()):
             self._refresher = threading.Thread(target=self._refresh, args=(now, key), daemon=True, name="counts")
             self._refresher.start()                         # the COUNT queries never hold up a status poll
         return counts
@@ -518,20 +677,25 @@ class Api:
         mx = s.get("content_max_mb") * 1024 * 1024
         t0 = time.monotonic()
         try:
+            # a photo rebuild (pvecs_next): the photos phase counts the set being built, the one the photo step works on
+            pnext = bool(st.meta("pvec_next_model"))
             counts = {"text": (st.count_readable(text_ext, mx), st.count_needs_text(text_ext, mx)),
                       "ocr": (st.count_readable(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES),
                               st.count_needs_text(ocr.OCR_EXT, mx, ocr.MIN_IMAGE_BYTES)),
                       "meaning": ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                   st.count_chunks_without_vectors() + st.count_names_without_vectors(NAME_KINDS)),
                       "photos": (st.count_photos(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES),
-                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES))}
+                                 st.count_photos_to_read(photo.PHOTO_EXT, photo.MIN_PHOTO_BYTES, photo.MAX_PHOTO_BYTES,
+                                                         next=pnext))}
             if st.meta("vec_model_next"):
                 counts["rebuild"] = ((st.one("SELECT count(*) FROM chunks") or 0) + st.count_names(NAME_KINDS),
                                      st.count_chunks_without_vectors(next=True)
                                      + st.count_names_without_vectors(NAME_KINDS, next=True))
+            self._counts_info = (self._wall(), "")
         except Exception as e:
             log(f"status counts failed: {type(e).__name__}", "warn")
-            counts = counts or {p: (0, 0) for p in ("text", "ocr", "meaning", "photos")}
+            counts = self._totals[2] or {p: (0, 0) for p in ("text", "ocr", "meaning", "photos")}   # a failure keeps the old
+            self._counts_info = (self._counts_info[0], count_reason(e))
         self._totals_took = time.monotonic() - t0
         self._totals = (now, key, counts)
         return counts
@@ -639,6 +803,22 @@ class Api:
              "download": None},
         ]
 
+    # ---------- notifications (notify.py) ----------
+    def notifications_list(self):
+        if self._notify is None:
+            return {"items": [], "unread": 0}
+        return self._notify.list()
+
+    def notifications_read(self, ids=None, all=False):
+        if self._notify is None:
+            return {"ok": True, "error": "", "unread": 0}
+        return self._notify.read(ids=ids, all=all)
+
+    def notifications_clear(self):
+        if self._notify is None:
+            return {"ok": True, "error": ""}
+        return self._notify.clear()
+
     # ---------- governor controls ----------
     def pause_for(self, seconds):
         if self._governor is None or not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0:
@@ -664,6 +844,71 @@ class Api:
     def hardware(self):
         return hw.scan()
 
+    def reset_safe_defaults(self):
+        """Settings > Performance "Reset to safe defaults" (spec 8b rule 3): the goal back to balanced, every
+        override to auto and the GPU reserve minimum to 512 MB; the governor and the plan follow at once. Keeps
+        the index, the chosen models, privacy settings, folders and the learned per-app game levels. (The learned
+        per-adapter reserve increases of spec 6.1 don't exist yet; when they do, they are cleared here too.)"""
+        self.set_settings({k: DEFAULTS[k] for k in SAFE_DEFAULTS})
+        return {"ok": True, "reset": list(SAFE_DEFAULTS), "kept": list(SAFE_DEFAULTS_KEEP)}
+
+    def performance_state(self):
+        """Settings > Performance: what auto would pick for each override right now, and why (performance.state)."""
+        pc = hw.scan() or {}
+        plan_ = (getattr(self._indexer, "status", None) or {}).get("plan") or {}
+        now = {"text": getattr(self._indexer, "text_gpu_why", "") or "", "talk": getattr(self, "_talk_gpu_why", "")}
+        return performance.state(self._settings, pc, plan_, models.talk_runtime(pc, self._mdir()), gpu_now=now)
+
+    def capability_state(self):
+        """Settings -> Models "Your PC, now": what this PC can run right now (capability.assess) from the
+        governor's last reading. measured: per-model numbers from this PC (an in-app benchmark, later)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}),
+                                 settings=self._settings)
+
+    def storage_use(self):
+        """What NOBAD Find keeps on this PC, measured from file sizes on disk (read only, nothing is changed):
+        {"index_mb", "wal_mb", "models": [{id, mb}], "runtime_mb", "tmp_mb", "total_mb"}. The index and its -wal
+        file sit beside the store; models (only those with files on disk, the llama.cpp runtimes counted apart),
+        the temporary folder (<data>\tmp) and the rest are under the data folder."""
+        def size(path):
+            try:
+                if os.path.isfile(path):
+                    return os.path.getsize(path)
+            except OSError:
+                return 0
+            total = 0
+            for root, _dirs, files in os.walk(path):
+                for n in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, n))
+                    except OSError:
+                        pass
+            return total
+
+        def mb(n):
+            return round(n / 1048576, 1)
+
+        db = os.path.abspath(getattr(self._store, "db_path", "") or os.path.join(self._mdir(), "index.db"))
+        index, wal = size(db), size(db + "-wal")
+        tmp = size(os.path.join(os.path.dirname(db), "tmp"))
+        mine, runtime, seen = [], 0, set()
+        for m in models.CATALOG:
+            if m["builtin"]:
+                continue
+            d = os.path.realpath(models.model_dir(m["id"], self._mdir()))
+            if d in seen or not os.path.isdir(d):
+                continue
+            seen.add(d)
+            n = size(d)
+            if m["feature"] == "runtime":
+                runtime += n
+            elif n:
+                mine.append({"id": m["id"], "mb": mb(n)})
+        total = index + wal + tmp + runtime + sum(round(x["mb"] * 1048576) for x in mine)
+        return {"index_mb": mb(index), "wal_mb": mb(wal), "models": mine, "runtime_mb": mb(runtime),
+                "tmp_mb": mb(tmp), "total_mb": mb(total)}
+
     def get_settings(self):
         return self._settings.all()
 
@@ -672,21 +917,32 @@ class Api:
             return {"changed": []}
         changes = {k: v for k, v in changes.items()
                    if k not in ("wsearch_prev", "turbo", "settings_rev")}   # turbo: turbo_set (UAC); rev: engine only
-        from .const import APP_FILES_CONSENT
+        from .const import APP_FILES_CONSENT, BROWSER_CONSENT
         if changes.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del changes["secret_app_files"]          # on only with the confirm dialog's word (fix round 1, M7)
+        if "browser_data" in changes and self._browser_reads_more(changes["browser_data"]) \
+                and consent != BROWSER_CONSENT:
+            del changes["browser_data"]              # reading more only after the dialog that shows what is read
         changes = scope.derive_changes(changes, self._settings.all())     # an older UI only sends roots
         changed = self._settings.update(changes)
         if "autostart" in changed:
             set_autostart(self._settings.get("autostart"))
         # 0.9.3: work on the index waits for its write lock (an indexing batch can hold it for seconds), so it
         # runs after the answer: the switch takes at once and the work follows in order (self._later).
+        if ("notify_show_names" in changed and not self._settings.get("notify_show_names")
+                and self._notify is not None):
+            self._notify.forget_names()              # off: the file names kept so far go too
         if "search_history" in changed and not self._settings.get("search_history"):
             self._later(self.history_clear)          # off: what was kept goes now, not later
         if "include_secrets" in changed and not self._settings.get("include_secrets"):
             self._later(self._remove_secrets)        # off: their names leave the index now, not at the next walk
         if "secret_app_files" in changed:            # 1.1.0: off takes out what was read, on reads them again
             self._later(self._app_files_on if self._settings.get("secret_app_files") else self._purge_app_files)
+        if "browser_data" in changed:                # 1.2.0: off deletes every row, narrowing the logins' rows
+            self._later(self._browser_narrowed)
+            wake = getattr(self._indexer, "wake", None)
+            if wake is not None:
+                wake.set()
         if set(changed) & {"roots", "exclude", "scope", "include_system", "include_caches", "include_secrets",
                            "secret_app_files"}:
             self._indexer.rescan()
@@ -699,9 +955,10 @@ class Api:
         if "photo_model" in changed and self._settings.get("photo_meaning") and "photo_meaning" not in changed:
             threading.Thread(target=self._indexer._load_photo, daemon=True).start()
             self._indexer.wake.set()
-        if set(changed) & {"workers", "power"} and hasattr(self._indexer, "replan"):
+        if set(changed) & {"workers", "power", "performance_goal"} and hasattr(self._indexer, "replan"):
             self._indexer.replan()                     # 0.9.3: the new workers now, no restart
-        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call"}:
+        if set(changed) & {"safety_net", "games_mode", "pause_on_battery", "pause_on_call", "creative_apps",
+                           "gpu_background", "backend_text", "gpu_reserve_min_mb"}:
             g = getattr(self._indexer, "governor", None)
             if g is not None and hasattr(g, "now"):
                 g.now()
@@ -734,6 +991,53 @@ class Api:
         if hotkeys is not None:
             out["hotkeys"] = hotkeys
         return out
+
+    def _browser_reads_more(self, value):
+        from .const import BROWSER_DATA
+        from .settings import coerce
+        cur = self._settings.get("browser_data")
+        return BROWSER_DATA.index(coerce("browser_data", value)) > BROWSER_DATA.index(
+            cur if cur in BROWSER_DATA else "off")
+
+    def browser_clear(self):
+        """Settings > Privacy, "Clear browser data": every browser_items row goes (and any temporary copy). The
+        setting stays as it is: while it's on, a browser's data comes back when it is next read (its files changed)."""
+        from . import browserdata
+        n = self._store.browser_clear()
+        browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        log(f"browser data cleared ({n} rows)")
+        return {"ok": True}
+
+    def browser_data_state(self):
+        """Per browser profile: when it was last read, its rows per kind and its last problem (browserdata.Schedule
+        and the index). Never looks at the browsers' folders itself."""
+        from . import browserdata
+        sched = getattr(self._indexer, "_browser_sched", None)
+        states = sched.states() if isinstance(sched, browserdata.Schedule) else {}
+        counts = self._store.browser_counts_by_profile()
+        out = []
+        for key in sorted(set(states) | set(counts)):
+            st = states.get(key) or {}
+            c = counts.get(key) or {}
+            out.append({"browser": key[0], "profile": key[1], "last_read": st.get("read_at"),
+                        "error": str(st.get("error") or ""), "counts": {k: int(c.get(k, 0)) for k in browserdata.KINDS}})
+        return {"setting": self._settings.get("browser_data"), "profiles": out}
+
+    def _browser_narrowed(self):
+        """browser_data changed: the rows of the kinds it no longer reads go (all of them when off), and so do the
+        temporary copies (browserdata.wipe_tmp). Returns how many rows went."""
+        from . import browserdata
+        mode = self._settings.get("browser_data")
+        sched = getattr(self._indexer, "_browser_sched", None)
+        if isinstance(sched, browserdata.Schedule):
+            sched.reset()                    # on again or wider: every profile is read again, not "unchanged"
+        gone = [k for k in browserdata.KINDS if not browserdata.allowed(mode, k)]
+        n = self._store.browser_clear(None if mode == "off" else gone) if gone else 0
+        if mode == "off":
+            browserdata.wipe_tmp(os.path.dirname(os.path.abspath(self._store.db_path)))
+        if n:
+            log(f"browser data: {n} rows out of the index ({mode})")
+        return n
 
     def _later(self, fn):
         """Settings work on the index, after the answer, one at a time in order (tests: at once)."""
@@ -916,7 +1220,8 @@ class Api:
         """Delete the whole index and start over. Security review 2026-11-22 (L10): nothing of the old index stays
         in plain text either: the Never index entries Forget added (noted in the index; from before that, the ones
         that are files) leave settings.json, the log is emptied, the index copies set aside after a key problem
-        (*.unreadable-*) and the previews in memory go. What the app needs to start stays: the settings, the
+        (*.unreadable-*), the settings.json.unreadable-* copies (they hold folder paths) and the previews in memory
+        go. What the app needs to start stays: the settings, the
         user's own Never index folders, the index key, downloaded models."""
         if confirm != "DELETE":
             return {"ok": False}
@@ -927,6 +1232,8 @@ class Api:
         if keep != exclude:                     # of exclude with the old index still there (review N7)
             self._settings.update({"exclude": keep})
         self._store.remove_aside_copies()
+        if hasattr(self._settings, "remove_aside_copies"):      # S0: settings.json.unreadable-* hold folder paths
+            self._settings.remove_aside_copies()
         thumbs.clear()
         from . import log as log_mod
         log_mod.clear()
@@ -1029,11 +1336,31 @@ class Api:
             return "active" if self._settings.get("semantic") and in_use == m["id"] else "ready"
         return "active" if models.selected(self._settings, "photo") == m["id"] else "ready"
 
+    def _suggestions(self, pc, focus):
+        """modelsuggest.for_pc for this PC: its classes (with the user's overrides), the governor's last reading of
+        free memory and graphics memory, the goal, and the talk runtime this PC uses (or would download)."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        b = capability.budget(sample, pc)
+        live = {"runtime": {"photo_talk": "vulkan" if models.talk_runtime(pc, self._mdir()) == "llama-vulkan"
+                            else "cpu"}}
+        if b["free_mb"]:
+            live["free_ram_mb"] = b["free_mb"]
+        if b["gpu_kind"] == "dedicated" and b["gpu_free_mb"] is not None:
+            live["gpu_free_mb"] = b["gpu_free_mb"]
+        live["settings"] = {"gpu_reserve_min_mb": self._settings.get("gpu_reserve_min_mb")}    # a safety limit
+        counts = self._first_scan_counts()          # what the first scan found: the re-index time of each model
+        if counts:
+            live["photos"], live["files"] = counts["photos"], counts["documents"]
+        classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
+        return modelsuggest.for_pc(pc, classes, live, settings_goal(self._settings), focus)
+
     def models(self):
         pc = hw.scan()
         focus = self._focus()
         rec = models.recommend(pc)
-        choice = models.tier_choice(rec, focus)
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        entries = modelsuggest.by_model(sugg)
         out = []
         rid = models.talk_runtime(pc, self._mdir())
         for m in models.CATALOG:
@@ -1043,7 +1370,13 @@ class Api:
             # 1.1: the talk models also say their graphics memory and the runtime they need on this PC (its
             # download is offered with theirs, in one consent)
             talk = {"vram_mb": int(m.get("vram_mb") or 0), "runtime": rid} if m["feature"] == "talk" else {}
-            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            # 1.2: the suggestion's verdict on it (modelsuggest.fields), whether it is the one in use, and whether using
+            # it would make other vectors (a re-index, with the time shown first)
+            fit = {**modelsuggest.fields(entries.get(m["id"])),
+                   "chosen": m["feature"] in ("text", "photo", "ocr")
+                   and models.selected(self._settings, m["feature"]) == m["id"],
+                   "vectors_change": models.vectors_change(self._settings, m["feature"], m["id"])}
+            out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": models.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -1054,17 +1387,66 @@ class Api:
         return {"pc": pc, "tier_recommended": rec, "tier_current": models.tier_current(self._settings, focus),
                 "language_focus": focus, "models": out}
 
-    def model_use(self, feature, mid):
+    def model_use(self, feature, mid, confirm=False):
+        """Choose the model for a feature. A model above what is suggested for this PC (an upgrade, or one not
+        recommended) is chosen only with confirm: the UI sends it after the measured-cost screen, so nothing changes
+        without it. Once chosen it stays chosen: when it doesn't fit right now it waits and says why (models:
+        fits_now, why), it is never swapped for the suggestion."""
         m = models.get(mid) if isinstance(mid, str) else None
         if m is None or m["feature"] != feature:
-            return {"ok": False, "error": "There's no such model for that.", "needs_download": False}
+            return {"ok": False, "error": "There's no such model for that.", "needs_download": False,
+                    "needs_confirm": False}
+        if not confirm and feature in ("text", "photo") and models.selected(self._settings, feature) != mid:
+            pc = hw.scan()
+            e = modelsuggest.by_model(self._suggestions(pc, self._focus())).get(mid)
+            if e is not None and e["outcome"] in modelsuggest.ABOVE:
+                return {"ok": False, "needs_download": False, "needs_confirm": True,
+                        "error": "That is above what is suggested for this PC: its measured cost comes first."}
         changes = {"text": {"text_model": mid, "semantic": True}, "photo": {"photo_model": mid, "photo_meaning": True},
                    "ocr": {"ocr": True}}[feature]
         self.set_settings(changes)
         wake = getattr(self._indexer, "wake", None)
         if wake is not None:
             wake.set()                          # a switched text model is rebuilt by the indexer (phase rebuild)
-        return {"ok": True, "error": "", "needs_download": not models.ready(mid, self._mdir())}
+        return {"ok": True, "error": "", "needs_download": not models.ready(mid, self._mdir()),
+                "needs_confirm": False}
+
+    def reset_suggested(self, confirm=False):
+        """Back to what is suggested for this PC: each of meaning search and photo search that is ON goes to the
+        suggested model (the one the floors pick; for text the tier's pick, which has no measured floor yet). A
+        feature that is off stays off; nothing suggested (no photo model meets the floor) leaves it as it is.
+        {"ok", "error", "applied", "changes": [{feature, id, name, from, from_name, vectors_change, index_h,
+        measured_on, needs_download}]}. Another model means other vectors, so without `confirm` nothing is changed
+        and the changes come back with each one's re-index time (null: not measured); the UI shows them, then asks
+        again with confirm."""
+        pc, focus = hw.scan(), self._focus()
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        entries = modelsuggest.by_model(sugg)
+        changes = []
+        for feature in ("text", "photo"):
+            have, want = models.selected(self._settings, feature), choice.get(feature) or ""
+            if feature == "photo":      # only a measured suggestion: the tier's pick of an unmeasured PC is no suggestion
+                want = next((e["model"] for e in sugg.get("photo_search") or [] if e["outcome"] == "suggested"), "")
+            m = models.get(want) if want else None
+            if not have or not want or have == want or m is None:
+                continue
+            cost = (entries.get(want) or {}).get("cost_here") or {}
+            changes.append({"feature": feature, "id": want, "name": m["name"], "from": have,
+                            "from_name": (models.get(have) or {}).get("name") or have,
+                            "vectors_change": models.vectors_change(self._settings, feature, want),
+                            "index_h": cost.get("index_h"),
+                            "measured_on": cost.get("measured_on", "") if cost.get("index_h") is not None else "",
+                            "needs_download": not models.ready(want, self._mdir())})
+        if not changes:
+            return {"ok": True, "error": "", "applied": False, "changes": []}
+        if not confirm and any(c["vectors_change"] for c in changes):
+            return {"ok": True, "error": "", "applied": False, "changes": changes}
+        self.set_settings({("text_model" if c["feature"] == "text" else "photo_model"): c["id"] for c in changes})
+        wake = getattr(self._indexer, "wake", None)
+        if wake is not None:
+            wake.set()
+        return {"ok": True, "error": "", "applied": True, "changes": changes}
 
     def model_download(self, mid, consent):
         m = models.get(mid) if isinstance(mid, str) else None
@@ -1084,6 +1466,13 @@ class Api:
         st = self._mdl[mid] = {"state": "downloading", "got": 0, "size": sum(f[1] for f in m["files"].values()),
                                "error": ""}
         d = models.model_dir(mid, self._mdir())
+        t0 = time.monotonic()
+
+        def measure():
+            """This PC's download speed (first-run setup's est_download), once a download ran for a while."""
+            took = time.monotonic() - t0
+            if took >= 2 and st["got"] >= 1048576:
+                self._dl_bps = st["got"] / took
 
         def run():
             done = {}
@@ -1091,6 +1480,7 @@ class Api:
                 if m["feature"] == "runtime":                   # the pinned zip, then only its pinned DLLs
                     def zprogress(_n, got, _size):
                         st["got"] = got
+                        measure()
                     # the folder is swapped by rename: the talk worker must not hold its DLLs (it refuses new
                     # questions while this runtime downloads, _vision_not_now)
                     self.vision_stop("Stopped: the picture runtime is being updated.")
@@ -1101,10 +1491,12 @@ class Api:
                         def progress(_n, got, _size, name=name):
                             done[name] = got
                             st["got"] = sum(done.values())
+                            measure()
                         embed._fetch_verified(models.url(m, path), os.path.join(d, name), size, sha, name, progress,
                                               part=".dl.part")      # not the 0.7.0 download's file names
                         done[name] = size
                         st["got"] = sum(done.values())
+                measure()
                 st["state"] = "ready"
                 log(f"model {mid} downloaded and verified")
                 wake = getattr(self._indexer, "wake", None)
@@ -1178,7 +1570,8 @@ class Api:
         m = talk[1] if deeper and len(talk) > 1 else talk[0]
         gov = self._governor
         sample = getattr(gov, "sample", None)
-        ok, why = talk_assess(m, sample, hw.scan()) if deeper else talk_fits(m, sample)
+        pc = hw.scan()
+        ok, why = talk_assess(m, sample, pc, models.talk_runtime(pc, self._mdir()))
         return (m, "") if ok else (None, why or f"Not now: {m['name']} can't run on this PC right now.")
 
     def _vision_job(self, op, ids, question, deeper):
@@ -1214,16 +1607,52 @@ class Api:
                           "error": f"To talk about photos, download {names} first ({mb} MB, once).",
                           "download": [{"id": x["id"], "name": x["name"], "size_mb": models.missing_mb(x["id"], d)}
                                        for x in need]}
-        vulkan = rid == "llama-vulkan"
+        vulkan = rid == "llama-vulkan" and self._settings.get("backend_talk") != "cpu"    # 1.2.0: processor only
+        talk = self._talker()
+        # The worker reloads only for another model (vlm/worker.py: a changed gpu_layers doesn't reload), so the
+        # fit check is for the next load only: a model already loaded keeps the layers it was loaded with, and
+        # its own graphics memory (in the sample's "used") can't make it "run on the processor".
+        on = self._talk_gpu_for
+        resident = m["id"] in on and (talk.state() or {}).get("loaded") == m["id"]
+        if vulkan and resident:
+            vulkan, self._talk_gpu_why = on[m["id"]]        # the reason of that load, not another model's check
+        elif vulkan:
+            vulkan = self._talk_gpu_fits(m, pc)
+            on[m["id"]] = (vulkan, self._talk_gpu_why)
+        elif not resident:
+            on[m["id"]] = (False, "")                       # the processor by choice: nothing to explain
         settings = dict(m["talk"])
         settings["need_mb"] = models.talk_need_mb(m, rid) or None
         mdir = models.model_dir(m["id"], d)
-        talk = self._talker()
         job = {"job": talk.next_id(), "op": op, "paths": paths, "question": question or "",
                "model": {"id": m["id"], "model": os.path.join(mdir, "model.gguf"),
                          "mmproj": os.path.join(mdir, "mmproj.gguf"), "runtime": models.model_dir(rid, d)},
                "settings": settings, "gpu_layers": 99 if vulkan else 0, "files": list(ids)}
         return (job, m["name"]), None
+
+    _talk_gpu_why = ""                  # why talk runs on the processor though Vulkan was chosen (last load)
+
+    def _talk_gpu_fits(self, m, pc):
+        """Talk on Vulkan with a graphics card of its own: only when its free memory less the reserve holds the
+        model's measured vram_mb (governor.gpu_fit on the governor's last sample; unknown never fits), else
+        gpu_layers 0 with the reason (activity log, Settings > Performance). Built-in graphics use shared memory,
+        which talk_assess counts against system RAM, so they keep Vulkan."""
+        sample = getattr(self._governor, "sample", None) if self._governor is not None else None
+        gm = getattr(sample, "gpu_mem", None) if not isinstance(sample, dict) else sample.get("gpu_mem")
+        kind = (gm or {}).get("kind")
+        discrete = kind == "dedicated" or (kind is None and float((pc or {}).get("vram_gb") or 0) * 1024
+                                           >= hw.INTEGRATED_MB)
+        if not discrete:
+            self._talk_gpu_why = ""
+            return True
+        fits, why = governor_mod.gpu_fit(gm, int(m.get("vram_mb") or 0), self._settings)
+        new = "" if fits else f"Talk about a photo runs on the processor for now: {why}."
+        if new and new != self._talk_gpu_why:
+            log(new)
+            if self._activity is not None:
+                self._activity.add("info", new)
+        self._talk_gpu_why = new
+        return fits
 
     def _vision_start(self, op, ids, question=None, deeper=False):
         got, refused = self._vision_job(op, ids, question, deeper)
@@ -1293,14 +1722,15 @@ class Api:
 
     def vision_state(self):
         d = self._mdir()
-        rid = models.talk_runtime(hw.scan(), d)          # the one a question would use (or ask to download)
+        pc = hw.scan()
+        rid = models.talk_runtime(pc, d)                 # the one a question would use (or ask to download)
         sample = getattr(self._governor, "sample", None)
         # the talk worker runs in the worker group under the level's CPU cap (and efficiency mode at Light): the
         # seconds are the ones measured at that level (docs/measurements.md, tools/measure_talk.py)
         level = getattr(getattr(self._governor, "decision", None), "level", None) or "full"
         out = []
         for i, m in enumerate(models.talk_models()):
-            ok, why = talk_assess(m, sample, hw.scan()) if i else talk_fits(m, sample)
+            ok, why = talk_assess(m, sample, pc, rid)
             load_s, answer_s = models.talk_timing(m, rid, level)    # measured: this runtime, this level
             out.append({"id": m["id"], "name": m["name"], "deeper": bool(i), "ready": models.ready(m["id"], d),
                         "missing_mb": models.missing_mb(m["id"], d), "ram_mb": int(m.get("ram_mb") or 0),
@@ -1421,8 +1851,9 @@ class Api:
         return {"ok": True, "error": ""}
 
     def auto_configure(self):
-        tier = models.recommend(hw.scan())
-        choice = models.tier_choice(tier, self._focus())
+        pc, focus = hw.scan(), self._focus()
+        tier = models.recommend(pc)
+        choice = models.recommend_choice(pc, focus, self._suggestions(pc, focus))     # never a talk model
         changes = {"text_model": choice["text"], "semantic": True, "ocr": True}
         changes.update({"photo_model": choice["photo"], "photo_meaning": True} if choice["photo"] else
                        {"photo_meaning": False})
@@ -1431,6 +1862,138 @@ class Api:
                   "needs_download": bool(choice[f]) and not models.ready(choice[f], self._mdir())}
                  for f in ("text", "photo", "ocr")]
         return {"tier": tier, "steps": steps}
+
+    # ---------- first-run setup (plan Task 6, firstrun.py; contract: setup_offer, setup_accept, setup_later) ----------
+    _dl_bps = None                      # this PC's download speed, bytes a second, once a download measured it
+    _setup_ids = ()                     # what setup_accept was asked for this run
+    _scan_counts = None
+
+    def _first_scan_counts(self):
+        """{"photos", "documents"} the first walk counted (one GROUP BY on the kind index, kept for the run), or None
+        before the first walk is done."""
+        if not (getattr(self._indexer, "status", None) or {}).get("last_scan"):
+            return None
+        if self._scan_counts is None:
+            try:
+                rows = self._store.q("SELECT kind, count(*) FROM files GROUP BY kind")
+            except Exception as e:
+                log(f"setup counts failed: {type(e).__name__}", "warn")
+                return None
+            by = {k: n for k, n in rows}
+            self._scan_counts = {"photos": int(by.get("image") or 0),
+                                 "documents": sum(int(by.get(k) or 0) for k in firstrun.TEXT_KINDS)}
+        return self._scan_counts
+
+    def _setup_states(self):
+        """{model id: (downloading | failed, error)} of this run's downloads."""
+        out = {}
+        for mid, st in list(getattr(self, "_mdl", {}).items()):
+            if st.get("state") == "downloading":
+                out[mid] = ("downloading", "")
+            elif st.get("error"):
+                out[mid] = ("failed", str(st["error"]))
+        return out
+
+    def _setup_items(self):
+        pc, focus = hw.scan(), self._focus()
+        sugg = self._suggestions(pc, focus)
+        choice = models.recommend_choice(pc, focus, sugg)
+        counts = self._first_scan_counts()
+        items = firstrun.items(sugg, choice, pc, counts, self._mdir(), models.talk_runtime(pc, self._mdir()),
+                               self._setup_states())
+        return pc, choice, counts, items, firstrun.notes(sugg)
+
+    def setup_offer(self):
+        """The first-run window's offer (firstrun.py): whether to show it now (once, after the first scan, until it
+        is answered; again after a failed download), this PC, the listed models, the total of the ticked ones and,
+        once a download measured this PC's speed, how long they take to download."""
+        pc, _choice, counts, items, notes = self._setup_items()
+        state = self._settings.get("setup_offer")
+        if state == "accepted":
+            ids = set(self._setup_ids) or {i["model"] for i in items if i["checked"]}
+            mine = [i for i in items if i["model"] in ids]
+            if all(i["on_disk"] for i in mine):
+                self._settings.update({"setup_offer": "done"})
+                state = "done"
+            else:
+                for i in mine:                          # what was asked for stays ticked, to try again
+                    i["checked"] = not i["on_disk"] or i["checked"]
+        walked = counts is not None
+        busy = any(i["state"] == "downloading" for i in items)
+        retry = state == "accepted" and any(i["checked"] and not i["on_disk"] for i in items)
+        show = walked and not busy and (state == "pending" or retry)
+        total = firstrun.total_mb(items)
+        est = None
+        left = sum(max(0, st.get("size", 0) - st.get("got", 0)) for st in getattr(self, "_mdl", {}).values()
+                   if st.get("state") == "downloading")
+        if self._dl_bps and (left or total):
+            est = firstrun.duration((left or total * 1048576) / self._dl_bps)
+        classes = profile_mod.effective(profile_mod.classify(pc), self._settings)
+        lk = modelsuggest.like(pc, classes)
+        return {"show": bool(show), "state": state, "walked": walked,
+                "pc": {"like": lk["profile"], "similar": bool(lk["similar"]), "summary": f"{lk['text']}: {lk['why']}",
+                       "classes": {k: classes.get(k) for k in ("gpu", "cpu", "storage", "memory")},
+                       "hardware": pc},
+                "items": items, "notes": notes, "total_mb": int(total), "est_download": est}
+
+    def setup_accept(self, ids, consent):
+        """Download in the first-run window: the consent itself (consent "DOWNLOAD"; nothing happens without it),
+        for exactly the models in `ids`, each one the offer lists. Sets what auto_configure sets for them (meaning
+        search and the text model, photo meaning and the photo model, OCR on), then downloads the ones not on disk
+        (a talk model with the runtime this PC needs, in the same consent)."""
+        if consent != "DOWNLOAD":
+            return {"ok": False, "error": "Nothing is downloaded until you choose Download.", "started": []}
+        _pc, choice, _counts, items, _notes = self._setup_items()
+        by = {i["model"]: i for i in items}
+        ids = list(dict.fromkeys(ids or []))
+        if any(mid not in by for mid in ids):
+            return {"ok": False, "error": "That model isn't one suggested for this PC.", "started": []}
+        changes = {"ocr": True}
+        for mid in ids:
+            w = by[mid]["workload"]
+            if w == "text":
+                changes.update(text_model=mid, semantic=True)
+            elif w == "photo_search":
+                changes.update(photo_model=mid, photo_meaning=True)
+        if not choice.get("photo") and not any(i["workload"] == "photo_search" for i in items):
+            changes["photo_meaning"] = False            # as auto_configure: no photo model for this PC
+        self.set_settings(changes)
+        todo = []
+        for mid in ids:
+            todo.append(mid)
+            if by[mid]["runtime"]:
+                todo.append(by[mid]["runtime"]["id"])
+        started, error = [], ""
+        for mid in todo:
+            if models.ready(mid, self._mdir()):
+                continue
+            r = self.model_download(mid, "DOWNLOAD")
+            if r.get("ok"):
+                started.append(mid)
+            elif not error:
+                error = r.get("error") or "The download did not start."
+        self._setup_ids = tuple(ids)
+        self._settings.update({"setup_offer": "accepted" if started else "done"})
+        return {"ok": not error, "error": error, "started": started}
+
+    def setup_later(self, remind=True):
+        """Later in the first-run window (and Details, with remind False: the user is going to Settings > Models):
+        not shown again by itself; with remind, one reminder says where the suggestions are. After a Download whose
+        models are all on disk it changes nothing; after one that didn't finish (the retry window), it is Later too."""
+        state = self._settings.get("setup_offer")
+        if state == "accepted":
+            state = self.setup_offer()["state"]         # "done" once every model asked for is on disk
+        if state == "done":
+            return {"ok": True, "error": ""}
+        self._settings.update({"setup_offer": "later"})
+        if remind and self._notify is not None:
+            body = ("They are in Settings > Models, under Suggested for this PC. Nothing was downloaded."
+                    if state != "accepted" else
+                    "They are in Settings > Models, under Suggested for this PC. What didn't download can be tried "
+                    "again there.")
+            self._notify.post("suggestion", "Suggested models for this PC", body,
+                              action="open_models", key="setup_later", once=True)
+        return {"ok": True, "error": ""}
 
     def model_language(self, focus):
         if focus not in models.FOCUSES:
@@ -1506,38 +2069,18 @@ class Api:
 
 MAX_READ_TEXT = 4000             # characters of a photo's read text (OCR) shown first for a question about writing
 MAX_KEPT = 2000                  # characters of a kept description
-TALK_MARGIN_MB, TALK_MARGIN_SHARE = 256, 0.25       # as capability.MARGIN_MB / MARGIN_SHARE (PR #16)
 
 
-def talk_fits(m, sample):
-    """(True, "") when the talk model's measured need (catalog ram_mb) plus the margin fits in free RAM now (the
-    governor's last sample, else Windows now); unknown free memory never refuses."""
-    free = getattr(sample, "free_mb", None) if sample is not None else None
-    if not free:
+def talk_assess(m, sample, pc, runtime):
+    """(can run now, why) for a talk model: capability.assess (the governor's last sample, the installed PC) with
+    the model's measured need on the runtime this PC uses (models.talk_need_mb: max(ram_mb, vram_mb) on Vulkan,
+    counted against system RAM, since shared graphics memory is never separate capacity; ram_mb on the processor).
+    Before the governor's first reading, free memory is Windows' now."""
+    if sample is None:
         free = winapi.memory_status()[1]
-    need = int(m.get("ram_mb") or 0)
-    if free and need + TALK_MARGIN_MB + TALK_MARGIN_SHARE * need > free:
-        short = m["name"].split()[0]
-        return False, (f"Not now: only {free / 1024:.1f} GB free, {short} needs about {need / 1024:.1f} GB "
-                       "plus margin")
-    return True, ""
-
-
-def talk_assess(m, sample, pc):
-    """(can run now, why) for the deeper talk model. capability.assess (PR #16) when it is there; until it merges,
-    this fallback: models.capable (the installed PC) and talk_fits (free memory now).
-    TEMPORARY (find 1.1 release fix, maintainer ruling): the fallback, talk_fits' use here and TALK_MARGIN_* go
-    when PR #16 merges; tests/test_vlm_progress.py::test_talk_assess_uses_capability_assess_when_the_module_is_there
-    proves the capability path is taken (and the fallback isn't) as soon as nobadfind.capability exists."""
-    try:
-        from . import capability
-    except ImportError:
-        capability = None
-    if capability is not None:
-        r = capability.assess(sample, pc, catalog=[m])
-        return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
-    ok, why = models.capable(m, pc)
-    return (ok, why) if not ok else talk_fits(m, sample)
+        sample = {"free_mb": free} if free else None
+    r = capability.assess(sample, pc, {m["id"]: {"ram_mb": models.talk_need_mb(m, runtime)}}, catalog=[m])
+    return bool(r["can_run"].get(m["id"])), r["why"].get(m["id"]) or ""
 
 
 class DownloadRate:

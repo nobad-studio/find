@@ -141,11 +141,20 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
             src = os.path.join(models_dir, sub)
             if os.path.isdir(src):
                 shutil.copytree(src, os.path.join(data_dir, sub))
-        # neutral camera-style names: the set's names ("dog-01.jpg") would hand the name channel the answer
+        # neutral camera-style names: the set's names ("dog-01.jpg") would hand the name channel the answer.
+        # A set may give its own display names (manifest.json): neutral IMG_ names for most photos and true,
+        # descriptive names for a few (lease_agreement_scan.jpg), so name evidence can be measured honestly.
         alias = {}
+        man = os.path.join(folder, "manifest.json")
+        shown = {}
+        if os.path.exists(man):
+            with open(man, encoding="utf-8") as f:
+                shown = {n: p["display_name"] for n, p in json.load(f)["photos"].items()}
         for i, name in enumerate(sorted(photos)):
-            alias[f"IMG_{i + 1:04}.jpg"] = name
-            shutil.copy2(os.path.join(folder, "photos", name), os.path.join(pics, f"IMG_{i + 1:04}.jpg"))
+            disp = shown.get(name) or f"IMG_{i + 1:04}.jpg"
+            assert disp not in alias, f"two photos shown as {disp}"
+            alias[disp] = name
+            shutil.copy2(os.path.join(folder, "photos", name), os.path.join(pics, disp))
         t0 = time.perf_counter()
         ctx = build(root, home, data_dir, ocr=ocr, photo_model=photo_model, photo_dir=photo_dir)
         build_s = time.perf_counter() - t0
@@ -220,8 +229,11 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
                               if n in photos]
                     rec, ndcg, mrr = metrics(ranked, qrels.get(item["id"], {}))
                     why = {alias.get(os.path.basename(x["path"]), ""): x["why"] for x in r["results"]}
+                    weak = {alias.get(os.path.basename(x["path"]), ""): bool(x.get("weak")) for x in r["results"]}
                     vrows.append(dict(id=item["id"], recall=rec, ndcg=ndcg, mrr=mrr, found=len(ranked),
-                                      top=[(n, why.get(n)) for n in ranked[:10]]))
+                                      top=[(n, why.get(n)) for n in ranked[:10]],
+                                      n_weak=sum(1 for n in ranked if weak.get(n)),
+                                      n_sure=sum(1 for n in ranked if not weak.get(n)), ranked=ranked[:60]))
             finally:
                 search.VARIANTS.clear()
                 search.VARIANTS.update(old)
@@ -230,6 +242,8 @@ def run(folder, models_dir, ocr=True, features_out=None, variant_sets=None, phot
             a.update(vs_siglip_better=sum(x > 0.005 for x in d), vs_siglip_worse=sum(x < -0.005 for x in d),
                      empty=sum(1 for r in vrows if not r["found"]), per_query={r["id"]: r["ndcg"] for r in vrows},
                      tops={r["id"]: r["top"] for r in vrows},
+                     detail={r["id"]: {"n_weak": r["n_weak"], "n_sure": r["n_sure"], "ranked": r["ranked"]}
+                             for r in vrows},
                      lat_p50_ms=round(statistics.median(vlat), 1), lat_max_ms=round(max(vlat), 1),
                      results_p50=statistics.median(r["found"] for r in vrows))
             rep["variants"]["+".join(sorted(vs)) or "today"] = a

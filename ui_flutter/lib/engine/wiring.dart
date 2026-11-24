@@ -56,11 +56,13 @@ class PipeEngine implements EngineApi {
     _letEngineToFront(); // 0.9.5: what it opens may come to the front (Windows' foreground rule)
     return _pipe.open(id);
   }
+
   @override
   Future<ActionResult> reveal(int id) {
     _letEngineToFront();
     return _pipe.reveal(id);
   }
+
   @override
   Future<Uint8List?> thumbnail(int id) => _pipe.thumbnail(id);
 
@@ -110,6 +112,15 @@ class PipeEngine implements EngineApi {
   Future<ActionResult> resetLearned([String? exe]) => _pipe.resetLearned(exe);
   @override
   Future<Hardware?> hardware() => _pipe.hardware();
+  @override
+  Future<PerformanceState> performanceState() => _pipe.performanceState();
+  @override
+  Future<ResetResult> resetSafeDefaults() => _pipe.resetSafeDefaults();
+  @override
+  Future<BrowserDataState> browserDataState() async =>
+      _pipe.serves('browser_data_state') ? _pipe.browserDataState() : BrowserDataState.none;
+  @override
+  Future<ActionResult> browserClear() => _pipe.browserClear();
 
   // ---- settings and the index ----
   @override
@@ -156,7 +167,14 @@ class PipeEngine implements EngineApi {
   @override
   Future<ModelsInfo> models() => _pipe.models();
   @override
-  Future<ModelUse> modelUse(String feature, String id) => _pipe.modelUse(feature, id);
+  Future<CapabilityState> capabilityState() => _pipe.capabilityState();
+  @override
+  Future<StorageUse?> storageUse() async => _pipe.serves('storage_use') ? _pipe.storageUse() : null;
+  @override
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) =>
+      _pipe.modelUse(feature, id, confirm: confirm);
+  @override
+  Future<ResetSuggested> resetSuggested({bool confirm = false}) => _pipe.resetSuggested(confirm: confirm);
   @override
   Future<ActionResult> modelDownload(String id) => _pipe.modelDownload(id);
   @override
@@ -172,6 +190,7 @@ class PipeEngine implements EngineApi {
   void _letEngineToFront() {
     if (_pipe.enginePid != 0) beforeDialog?.call(_pipe.enginePid);
   }
+
   @override
   Future<UpdateState> updateState() => _pipe.updateState();
   @override
@@ -180,6 +199,12 @@ class PipeEngine implements EngineApi {
   Future<ActionResult> updateInstall() => _pipe.updateInstall();
   @override
   Future<AutoConfig> autoConfigure() => _pipe.autoConfigure();
+  @override
+  Future<SetupOffer> setupOffer() => _pipe.setupOffer();
+  @override
+  Future<SetupAccept> setupAccept(List<String> models) => _pipe.setupAccept(models);
+  @override
+  Future<ActionResult> setupLater({bool remind = true}) => _pipe.setupLater(remind: remind);
   @override
   Future<ActionResult> modelLanguage(String focus) => _pipe.modelLanguage(focus);
   @override
@@ -217,6 +242,18 @@ class PipeEngine implements EngineApi {
   Future<VisionAnswer> visionCancel() => _pipe.visionCancel();
   @override
   Future<VisionAnswer> visionKeep(int fileId, String text) => _pipe.visionKeep(fileId, text);
+
+  @override
+  Future<NotificationList> notificationsList() async =>
+      _pipe.serves('notifications_list') ? _pipe.notificationsList() : NotificationList.empty;
+
+  @override
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false}) async =>
+      _pipe.serves('notifications_read') ? _pipe.notificationsRead(ids: ids, all: all) : 0;
+
+  @override
+  Future<ActionResult> notificationsClear() async =>
+      _pipe.serves('notifications_clear') ? _pipe.notificationsClear() : const ActionResult(true);
 
   @override
   void dispose() => _pipe.dispose();

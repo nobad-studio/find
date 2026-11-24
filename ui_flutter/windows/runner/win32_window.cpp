@@ -29,7 +29,7 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
 // The main window's designed size range (logical px, client area): no maximize, no full screen.
-constexpr int kMinW = 720, kMinH = 500, kMaxW = 1280, kMaxH = 820;  // 0.9.0: smaller (maintainer); 0.8.5 was 860x600
+constexpr int kMinW = 960, kMinH = 500, kMaxW = 1280, kMaxH = 820;  // 1.2: 960 wide (was 720); 0.8.5 was 860x600
 constexpr const wchar_t kPlacementKey[] = L"Software\\NOBAD\\Find\\UIWindow";
 
 // Development runs next to a demo (NOBAD_FIND_UI_ALLOW_SECOND=1) neither read nor write the saved placement.
@@ -299,7 +299,15 @@ Win32Window::MessageHandler(HWND hwnd,
       const double scale = dpi / 96.0;
       const SIZE extra = FrameExtra(static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_STYLE)),
                                     static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_EXSTYLE)), dpi);
-      mm->ptMinTrackSize = POINT{static_cast<LONG>(kMinW * scale) + extra.cx, static_cast<LONG>(kMinH * scale) + extra.cy};
+      LONG min_w = static_cast<LONG>(kMinW * scale) + extra.cx, min_h = static_cast<LONG>(kMinH * scale) + extra.cy;
+      // never more than the screen it is on holds (960 wide at 150% on a 1366 or 1280 px screen would not fit)
+      MONITORINFO mi{};
+      mi.cbSize = sizeof(mi);
+      if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) {
+        if (mi.rcWork.right - mi.rcWork.left < min_w) min_w = mi.rcWork.right - mi.rcWork.left;
+        if (mi.rcWork.bottom - mi.rcWork.top < min_h) min_h = mi.rcWork.bottom - mi.rcWork.top;
+      }
+      mm->ptMinTrackSize = POINT{min_w, min_h};
       mm->ptMaxTrackSize = POINT{static_cast<LONG>(kMaxW * scale) + extra.cx, static_cast<LONG>(kMaxH * scale) + extra.cy};
       mm->ptMaxSize = mm->ptMaxTrackSize;
       return 0;

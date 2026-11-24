@@ -44,6 +44,12 @@ ASKING = {"list", "give", "get", "search", "inside", "folder", "folders", "locat
 # search asks again with them as words (search.search, "No file of that kind matched").
 SOFT_KINDS = {"letter", "essay", "book", "clip", "deck", "program", "source", "sheet", "script", "scripts"}
 
+# 1.2.0 (browser spec §4): words that ask for the browsers' items, read only while browser data is on
+# (parse(browser_words=True)). Soft like SOFT_KINDS: when no browser item matches, search reads them as words.
+BROWSER_WORDS = [(r"\bsaved (?:logins?|passwords?)\b", "login"), (r"\b(?:passwords?|logins?) for\b", "login"),
+                 (r"\bbookmark(?:s|ed)?\b", "bookmark"), (r"\b(?:browser |browsing |web )?history\b", "history"),
+                 (r"\bvisited\b", "history")]
+
 # The user's own folders: "in my downloads", "download folder pdf", "on the desktop", "in documents folder"
 _FOLDER_WORDS = {"download": "downloads", "downloads": "downloads", "desktop": "desktop", "documents": "documents",
                  "document": "documents", "docs": "documents", "pictures": "pictures", "picture": "pictures",
@@ -99,6 +105,9 @@ class Query:
     # yesterday"): list them (with the filters), don't rank them by meaning.
     visual: str = ""
     collection: bool = False
+    # 1.2.0: the browser kinds asked for (browsersearch.KINDS: history, bookmark, login, download), by the words or
+    # the Browser filter; files are left out then
+    browser: set = field(default_factory=set)
 
     @property
     def text(self):
@@ -125,6 +134,9 @@ class Query:
             out.append(", ".join(f"{language_label(x)} code" for x in sorted(self.langs)))
         if self.exts:
             out.append(", ".join(sorted(self.exts)))
+        if self.browser:
+            from .browsersearch import KINDS, LABELS
+            out.append(", ".join(LABELS[k].lower() for k in KINDS if k in self.browser))
         if self.when:
             out.append(self.when)
         if self.place:
@@ -143,7 +155,7 @@ class Query:
         return out
 
     def has_filters(self):
-        return bool(self.kinds or getattr(self, "secrets", False) or self.all_exts() or self.t0 is not None or self.place or self.folder or self.path
+        return bool(self.kinds or self.browser or getattr(self, "secrets", False) or self.all_exts() or self.t0 is not None or self.place or self.folder or self.path
                     or self.dirs or self.min_size is not None or self.max_size is not None or bool(self.sort))
 
 
@@ -321,11 +333,14 @@ _BIG_MB = {"image": 10, "pdf": 20, "document": 20, "spreadsheet": 20, "slides": 
            "email": 20, "audio": 50, "ebook": 50}
 
 
-def parse(text, now=None, labels=(), is_dir=None, times=True, romanized=False, find_folder=None, soft_kinds=True):
+def parse(text, now=None, labels=(), is_dir=None, times=True, romanized=False, find_folder=None, soft_kinds=True,
+          browser_words=False):
     """labels: names of drives this PC knows ("SANDISK"), so "on sandisk" means that drive.
     is_dir: checks whether a typed path is a real folder (so "C:\\Work" in a question is understood).
     find_folder: words -> (folder name, [paths]) of indexed folders with that name ("notes in projects"), or None.
-    soft_kinds=False: words that only hint at a kind (SOFT_KINDS: "letter", "essay") are words to look for."""
+    soft_kinds=False: words that only hint at a kind (SOFT_KINDS: "letter", "essay") are words to look for.
+    browser_words: browser data is on, so "history", "visited", "bookmark", "saved login", "password for" ask for
+    browser kinds (soft: with soft_kinds=False they are words again)."""
     now = now or dt.datetime.now()
     q = Query(raw=text)
     s = text.strip()
@@ -483,6 +498,16 @@ def parse(text, now=None, labels=(), is_dir=None, times=True, romanized=False, f
     # a folder of the index named in the question: "notes in projects", "pdf inside the tax papers folder"
     if find_folder is not None and not q.path:
         low = _take_dir(q, low, find_folder)
+
+    # 1.2.0: the browsers' history, bookmarks and saved logins
+    if browser_words and soft_kinds:
+        for pattern, kind in BROWSER_WORDS:
+            m = re.search(pattern, low)
+            if m:
+                q.browser.add(kind)
+                q.soft.append(m.group(0).strip())
+                q.cuts.append(("browser:" + kind, m.group(0).strip()))
+                low = low[:m.start()] + " " + low[m.end():]
 
     # apps, kinds and extensions
     for phrase, joined in APP_PHRASES.items():

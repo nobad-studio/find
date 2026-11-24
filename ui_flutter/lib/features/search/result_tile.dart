@@ -50,8 +50,8 @@ class _CardShell extends StatelessWidget {
       builder: (context, lift, parallax) => Glass(
         radius: radius,
         lift: selected ? 1 : lift,
-        fill: selected ? c.orangeA(c.isDark ? .13 : .10) : (lift > .05 ? Color.lerp(c.card, c.cardHover, lift) : null),
-        rim: selected ? c.orangeA(.55) : null,
+        fill: selected ? c.pick : (lift > .05 ? Color.lerp(c.card, c.cardLift, lift) : null),
+        rim: selected ? (c.smoke ? c.text.withValues(alpha: .38) : c.orangeA(.55)) : null,
         padding: padding,
         child: builder(context, parallax, selected || lift > .5),
       ),
@@ -188,7 +188,7 @@ class ResultTile extends StatelessWidget {
                     child: AnimatedOpacity(
                       opacity: lit ? 1 : 0,
                       duration: NbMotion.of(context, NbMotion.fast),
-                      child: InlineActions(compact: true, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos)),
+                      child: InlineActions(compact: true, result: r, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos)),
                     ),
                   ),
               ],
@@ -241,7 +241,7 @@ class _FlatRowState extends State<_FlatRow> {
             child: AnimatedContainer(
               duration: NbMotion.of(context, NbMotion.fast),
               decoration: BoxDecoration(
-                color: sel ? c.selected : (_hover ? c.cardHover : const Color(0x00000000)),
+                color: sel ? (c.smoke ? c.pick : c.selected) : (_hover ? c.cardHover : const Color(0x00000000)),
                 borderRadius: NbRadius.rowAll,
               ),
             ),
@@ -252,7 +252,7 @@ class _FlatRowState extends State<_FlatRow> {
             bottom: 18,
             width: 3,
             child: AnimatedOpacity(
-              opacity: sel ? 1 : 0,
+              opacity: sel && !c.smoke ? 1 : 0, // Nocturne marks the selected row by its lift alone
               duration: NbMotion.of(context, NbMotion.fast),
               child: DecoratedBox(
                 decoration: BoxDecoration(color: c.orange, borderRadius: const BorderRadius.all(Radius.circular(2))),
@@ -307,7 +307,7 @@ class ResultCard extends StatelessWidget {
       selected: selected,
       onTap: onTap,
       onSecondary: onSecondary,
-      radius: 18,
+      radius: NbRadius.card,
       padding: const EdgeInsets.all(14),
       builder: (context, parallax, lit) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -327,7 +327,7 @@ class ResultCard extends StatelessWidget {
           TailText(r.dir, textAlign: TextAlign.left, style: NbType.data(NbSize.micro + .5, c.dim, height: 1.4)),
           const SizedBox(height: 6),
           if (lit && onAction != null)
-            InlineActions(compact: true, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos))
+            InlineActions(compact: true, result: r, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos))
           else
             Text(
               [r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
@@ -373,7 +373,7 @@ class DetailPane extends StatelessWidget {
     final r = result;
     return Glass(
       level: GlassLevel.panel,
-      radius: 18,
+      radius: NbRadius.card,
       child: AnimatedSwitcher(
         duration: NbMotion.of(context, const Duration(milliseconds: 240)),
         switchInCurve: const SpringCurve(),
@@ -437,24 +437,28 @@ class DetailPane extends StatelessWidget {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          NbButton('Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
-                          if (onOpenWith != null)
+                          // 1.2.0: a browser result opens through the engine by its id (a page, a password
+                          // manager, a download); it has no Open with or Forget, and only a download has a folder
+                          NbButton(r.browser?.openLabel ?? 'Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
+                          if (onOpenWith != null && !r.isBrowser)
                             NbButton('Open with…', small: true, kind: NbButtonKind.ghost, onPressed: onOpenWith),
+                          if (r.browser?.hasFolder ?? true)
+                            NbButton(
+                              'Show in folder',
+                              small: true,
+                              kind: NbButtonKind.ghost,
+                              icon: NbGlyph.folder,
+                              onPressed: onReveal,
+                            ),
                           NbButton(
-                            'Show in folder',
-                            small: true,
-                            kind: NbButtonKind.ghost,
-                            icon: NbGlyph.folder,
-                            onPressed: onReveal,
-                          ),
-                          NbButton(
-                            'Copy path',
+                            r.isBrowser && !r.browser!.hasFolder ? 'Copy address' : 'Copy path',
                             small: true,
                             kind: NbButtonKind.ghost,
                             icon: NbGlyph.copy,
                             onPressed: onCopy,
                           ),
-                          NbButton('Forget…', small: true, kind: NbButtonKind.quiet, onPressed: onForget),
+                          if (!r.isBrowser)
+                            NbButton('Forget…', small: true, kind: NbButtonKind.quiet, onPressed: onForget),
                         ],
                       ),
                       if (talk != null && r.kind == 'image') ...[

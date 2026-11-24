@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/theme/colors.dart';
 import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
+import '../../engine/models/result.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
@@ -28,11 +29,32 @@ enum ResultAction {
   /// The buttons a row or card shows when it is selected or hovered; the rest are behind "⋯".
   static const inline = [open, openWith, reveal, copyPath];
   static const more = [copyName, details, forget];
+
+  /// 1.2.0: a browser result has no Open with or Forget, and only a download has a folder.
+  bool appliesTo(FileResult? r) {
+    final b = r?.browser;
+    if (b == null) return true;
+    return switch (this) {
+      openWith || forget => false,
+      reveal => b.hasFolder,
+      _ => true,
+    };
+  }
+
+  /// The label for [r]: a browser page, bookmark or login copies its web address, not a path.
+  String labelFor(FileResult? r) =>
+      this == copyPath && r?.browser != null && !r!.browser!.hasFolder ? 'Copy address' : label;
 }
 
-/// The menu (right-click, the menu key, "⋯"): every action with its shortcut. [details] false when the detail
-/// pane is already on screen.
-List<Widget> resultMenuItems(BuildContext context, void Function(ResultAction) onAction, {bool details = true}) {
+/// The menu (right-click, the menu key, "⋯"): every action that applies to [result] with its shortcut (a browser
+/// result has no Open with or Forget, and only a download has a folder). [details] false when the detail pane is
+/// already on screen.
+List<Widget> resultMenuItems(
+  BuildContext context,
+  void Function(ResultAction) onAction, {
+  bool details = true,
+  FileResult? result,
+}) {
   final c = NbColors.of(context);
   Widget item(ResultAction a) => MenuItemButton(
     onPressed: () => onAction(a),
@@ -46,21 +68,26 @@ List<Widget> resultMenuItems(BuildContext context, void Function(ResultAction) o
       ),
       overlayColor: const WidgetStatePropertyAll(Color(0x00000000)),
     ),
-    child: Text(a.label, style: NbType.text(13, a == ResultAction.forget ? c.danger : c.text)),
+    child: Text(a.labelFor(result), style: NbType.text(13, a == ResultAction.forget ? c.danger : c.text)),
   );
+  final forget = ResultAction.forget.appliesTo(result);
   return [
-    for (final a in ResultAction.inline) item(a),
+    for (final a in ResultAction.inline)
+      if (a.appliesTo(result)) item(a),
     item(ResultAction.copyName),
     if (details) item(ResultAction.details),
-    Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), color: c.line),
-    item(ResultAction.forget),
+    if (forget) Container(height: 1, margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), color: c.line),
+    if (forget) item(ResultAction.forget),
   ];
 }
 
 /// The row of small glass buttons on a selected or hovered result, and "⋯" for the rest.
 class InlineActions extends StatelessWidget {
-  const InlineActions({super.key, required this.onAction, required this.onMore, this.compact = false});
+  const InlineActions({super.key, required this.onAction, required this.onMore, this.compact = false, this.result});
   final void Function(ResultAction) onAction;
+
+  /// The result they act on (only what applies to it is shown).
+  final FileResult? result;
 
   /// "⋯": opens the menu at this button.
   final void Function(Offset globalPosition) onMore;
@@ -75,8 +102,9 @@ class InlineActions extends StatelessWidget {
       runSpacing: 4,
       children: [
         for (final a in ResultAction.inline)
+          if (a.appliesTo(result))
           _ActionChip(
-            label: a.label,
+            label: a.labelFor(result),
             glyph: a.glyph,
             compact: compact,
             onTap: () => onAction(a),
@@ -125,14 +153,14 @@ class _ActionChip extends StatelessWidget {
         height: 28,
         padding: EdgeInsets.symmetric(horizontal: compact || glyph == null ? 8 : 10),
         decoration: BoxDecoration(
-          color: primary ? (p.lit ? c.orange : c.orangeA(.85)) : (p.lit ? c.cardHover : c.card),
-          border: Border.all(color: primary ? c.orange : c.line2),
+          color: primary ? (p.lit ? c.action : c.action.withValues(alpha: .85)) : (p.lit ? c.cardLift : c.card),
+          border: Border.all(color: primary ? c.action : c.line2),
           borderRadius: NbRadius.pillAll,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (glyph != null) NbIcon(glyph!, size: 14, color: primary ? c.onOrange : (p.lit ? c.text : c.muted)),
+            if (glyph != null) NbIcon(glyph!, size: 14, color: primary ? c.onAction : (p.lit ? c.text : c.muted)),
             if (glyph == null) NbIcon(NbGlyph.more, size: 14, color: p.lit ? c.text : c.muted),
             if (!compact && glyph != null) ...[
               const SizedBox(width: 6),
@@ -140,7 +168,7 @@ class _ActionChip extends StatelessWidget {
                 label,
                 style: NbType.text(
                   NbSize.small,
-                  primary ? c.onOrange : (p.lit ? c.text : c.muted),
+                  primary ? c.onAction : (p.lit ? c.text : c.muted),
                   weight: FontWeight.w600,
                   height: 1.2,
                 ),

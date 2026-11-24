@@ -13,6 +13,7 @@ import '../../app/theme/typography.dart';
 import '../../widgets/smooth_scroll.dart';
 import '../../widgets/common.dart';
 import '../../widgets/controls.dart';
+import '../../widgets/glass.dart';
 import '../../widgets/panels.dart';
 import '../../engine/models/models_info.dart';
 import '../consent/download_consent_dialog.dart';
@@ -29,117 +30,164 @@ class Welcome extends StatelessWidget {
     final s = AppScope.of(context);
     final c = NbColors.of(context);
     final st = s.settings.settings;
-    return ColoredBox(
-      color: c.bg,
-      child: SmoothScroll(builder: (sc) => SingleChildScrollView(controller: sc, 
-        padding: const EdgeInsets.fromLTRB(48, 32, 48, 24),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const NbMark(size: 40),
-                const SizedBox(height: NbSpace.x6),
-                Semantics(
-                  header: true,
-                  child: Text(
-                    'Your files.\nFound in a moment.\nNever sent anywhere.'.toUpperCase(),
-                    style: NbType.display(24, c.text),
-                  ),
-                ),
-                const SizedBox(height: NbSpace.x5),
-                const SignalRule(),
-                const SizedBox(height: NbSpace.x5),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 580),
-                  child: Text(
-                    'NOBAD Find reads the names and the text inside the files on this PC and keeps an encrypted '
-                    'index in your own profile folder. Searching never uses the internet: your files, your index '
-                    'and your searches stay on this PC.',
-                    style: NbType.text(14, c.muted, height: 1.55),
-                  ),
-                ),
-                const SizedBox(height: NbSpace.x6),
-                if (st.text('hotkey').isNotEmpty)
-                  _Fact(
-                    keys: keysOf(st.text('hotkey')),
-                    text: st.flag('bar')
-                        ? 'Search from anywhere: a small search bar over whatever you are doing, or this window '
-                              'when it is open.'
-                        : 'Opens this window from anywhere.',
-                  ),
-                const _Fact(
-                  text:
-                      'It slows down or pauses while you play, present, take a call or run on battery, and '
-                      'shows you why on the Index page.',
-                ),
-                const _YourPc(),
-                const SizedBox(height: NbSpace.x3),
-                NbPanel(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Search by meaning (optional)',
-                              style: NbType.text(14, c.text, weight: FontWeight.w600),
+    final facts = <Widget>[
+      if (st.text('hotkey').isNotEmpty)
+        _Fact(
+          keys: keysOf(st.text('hotkey')),
+          text: st.flag('bar')
+              ? 'Search from anywhere: a small search bar over whatever you are doing, or this window '
+                    'when it is open.'
+              : 'Opens this window from anywhere.',
+        ),
+      const _Fact(
+        text:
+            'It slows down or pauses while you play, present, take a call or run on battery, and '
+            'shows you why on the Index page.',
+      ),
+    ];
+    // it covers the whole window (the app is behind it): a solid base, and over glass the cold backdrop's light
+    return Stack(
+      children: [
+        Positioned.fill(child: ColoredBox(color: c.bg)),
+        if (c.glass) const Positioned.fill(child: Backdrop()),
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, box) => SmoothScroll(
+              builder: (sc) => SingleChildScrollView(
+                controller: sc,
+                padding: const EdgeInsets.fromLTRB(40, 16, 40, 16),
+                child: ConstrainedBox(
+                  // centred in the window when it fits, scrolls when it doesn't
+                  constraints: BoxConstraints(minHeight: (box.maxHeight - 32).clamp(0, double.infinity)),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 720),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const NbMark(size: 36),
+                          const SizedBox(height: NbSpace.x3),
+                          Semantics(
+                            header: true,
+                            child: Text(
+                              'Your files.\nFound in a moment.\nNever sent anywhere.'.toUpperCase(),
+                              textAlign: TextAlign.center,
+                              style: NbType.display(24, c.text),
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              'Finds “lease agreement” when you type “rent”. A one-time download of the model recommended '
-                              'for this PC (its size is shown before you agree), then it runs on this PC only.',
-                              style: NbType.text(NbSize.small, c.dim, height: 1.5),
+                          ),
+                          const SizedBox(height: NbSpace.x3),
+                          const SignalRule(),
+                          const SizedBox(height: NbSpace.x3),
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 580),
+                            child: Text(
+                              'NOBAD Find reads the names and the text inside the files on this PC and keeps an encrypted '
+                              'index in your own profile folder. Searching never uses the internet: your files, your index '
+                              'and your searches stay on this PC.',
+                              textAlign: TextAlign.center,
+                              style: NbType.text(14, c.muted, height: 1.55),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: NbSpace.x5),
+                          LayoutBuilder(
+                            builder: (context, row) => row.maxWidth < 560 || facts.length < 2
+                                // narrow (or only one): stacked, full width
+                                ? Column(
+                                    children: [
+                                      for (final (i, f) in facts.indexed) ...[
+                                        if (i > 0) const SizedBox(height: NbSpace.x3),
+                                        SizedBox(width: double.infinity, child: f),
+                                      ],
+                                    ],
+                                  )
+                                // two equal cards side by side
+                                : IntrinsicHeight(
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        Expanded(child: facts[0]),
+                                        const SizedBox(width: NbSpace.x3),
+                                        Expanded(child: facts[1]),
+                                      ],
+                                    ),
+                                  ),
+                          ),
+                          const _YourPc(),
+                          const SizedBox(height: NbSpace.x3),
+                          NbPanel(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Search by meaning (optional)',
+                                        style: NbType.text(14, c.text, weight: FontWeight.w600),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        'Finds “lease agreement” when you type “rent”. A one-time download of the model '
+                                        'recommended for this PC (its size is shown before you agree), then it runs on '
+                                        'this PC only.',
+                                        style: NbType.text(NbSize.small, c.dim, height: 1.5),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: NbSpace.x4),
+                                ListenableBuilder(
+                                  listenable: s.status,
+                                  builder: (context, _) {
+                                    final m = s.status.model('meaning');
+                                    if (m.ready) {
+                                      return Text('Ready', style: NbType.text(13, c.orange, weight: FontWeight.w600));
+                                    }
+                                    if (m.downloading) {
+                                      return Text('Downloading… ${m.percent}%', style: NbType.data(12, c.orange));
+                                    }
+                                    return NbButton(
+                                      'Download…',
+                                      kind: NbButtonKind.ghost,
+                                      small: true,
+                                      onPressed: () {
+                                        unawaited(
+                                          s.settings.download(
+                                            'meaning',
+                                            consent: (x) => askConsentFor(context, 'meaning', x),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: NbSpace.x5),
+                          NbButton(
+                            'Start searching',
+                            autofocus: true,
+                            onPressed: () => s.settings.set('welcome_seen', true),
+                          ),
+                          const SizedBox(height: NbSpace.x2),
+                          Text('Software with a point of view.', style: NbType.text(NbSize.small, c.dim)),
+                        ],
                       ),
-                      const SizedBox(width: NbSpace.x4),
-                      ListenableBuilder(
-                        listenable: s.status,
-                        builder: (context, _) {
-                          final m = s.status.model('meaning');
-                          if (m.ready) return Text('Ready', style: NbType.text(13, c.orange, weight: FontWeight.w600));
-                          if (m.downloading) {
-                            return Text('Downloading… ${m.percent}%', style: NbType.data(12, c.orange));
-                          }
-                          return NbButton(
-                            'Download…',
-                            kind: NbButtonKind.ghost,
-                            small: true,
-                            onPressed: () {
-                              unawaited(
-                                s.settings.download('meaning', consent: (x) => askConsentFor(context, 'meaning', x)),
-                              );
-                            },
-                          );
-                        },
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: NbSpace.x6),
-                Row(
-                  children: [
-                    NbButton('Start searching', autofocus: true, onPressed: () => s.settings.set('welcome_seen', true)),
-                    const Spacer(),
-                    Text('Software with a point of view.', style: NbType.text(NbSize.small, c.dim)),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
         ),
-      )),
+      ],
     );
   }
 }
 
-/// One line of what NOBAD Find does: the key caps that do it (if any), then the sentence.
+/// One thing NOBAD Find does, as a frosted card: the key caps that do it (or the orange mark), then the sentence.
 class _Fact extends StatelessWidget {
   const _Fact({this.keys, required this.text});
   final String? keys;
@@ -148,26 +196,23 @@ class _Fact extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: NbSpace.x3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return NbPanel(
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
+      child: Column(
         children: [
           SizedBox(
-            width: 190,
+            height: 22,
             child: keys == null
-                ? Align(
-                    alignment: Alignment.topLeft,
-                    child: Container(
-                      width: 22,
-                      height: 2,
-                      margin: const EdgeInsets.only(top: 10, left: 2),
-                      color: c.orange,
-                    ),
-                  )
-                : Wrap(spacing: 3, runSpacing: 3, children: [for (final k in keys!.split('+')) Kbd(k)]),
+                ? Center(child: Container(width: 22, height: 2, color: c.orange))
+                : Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 3,
+                    runSpacing: 3,
+                    children: [for (final k in keys!.split('+')) Kbd(k)],
+                  ),
           ),
-          Expanded(child: Text(text, style: NbType.text(13.5, c.text, height: 1.5))),
+          const SizedBox(height: 6),
+          Text(text, textAlign: TextAlign.center, style: NbType.text(13.5, c.text, height: 1.45)),
         ],
       ),
     );
@@ -209,18 +254,25 @@ class _YourPcState extends State<_YourPc> {
     if (info == null || info.pc == null) return const SizedBox(height: NbSpace.x3);
     final s = AppScope.of(context);
     final c = NbColors.of(context);
+    // built-in graphics take 2 lines for the name and 2 for "Built-in graphics, shares memory": 4 px less above
+    // and below the tiles keep the whole column, the main action included, in the main window's 760 px
     return Padding(
       padding: const EdgeInsets.only(top: NbSpace.x3),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('Your PC', top: 0),
-          HardwareTiles(info.pc),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Semantics(header: true, child: Text('Your PC', style: sectionStyle(c))),
+          ),
+          // a graphics card's name in at most 2 lines, so the column fits the main window's 760 px
+          HardwareTiles(info.pc, compact: true),
           if (info.tierRecommended.isNotEmpty) ...[
             const SizedBox(height: NbSpace.x2),
+            // the recommendation and its action on one centred line
             Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Expanded(
+                Flexible(
                   child: Text.rich(
                     TextSpan(
                       children: [
@@ -231,6 +283,7 @@ class _YourPcState extends State<_YourPc> {
                         TextSpan(text: tierWhy(info.tierRecommended)),
                       ],
                     ),
+                    textAlign: TextAlign.center,
                     style: NbType.text(12, c.dim, height: 1.45),
                   ),
                 ),

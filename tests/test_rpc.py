@@ -1,4 +1,5 @@
 """The engine's pipe for the Flutter UI: protocol, handlers, and a real named pipe (Windows only)."""
+import os
 import json
 import sys
 import threading
@@ -574,3 +575,157 @@ def test_a_refused_client_is_dropped_before_anything_is_read():
         assert asked and asked[0] > 0 and s.clients() == []
     finally:
         s.stop()
+
+
+# ---------- the status lane (1.2.0 S2) ----------
+# What each lane method may do besides reporting (pinned: a new effect must be named here, on purpose).
+LANE_KNOWN_EFFECTS = {
+    "status": "none (dict reads)",
+    "status_full": "may retry saving the protected forgotten list; may start the background phase count",
+    "scope_info": "may start a background count",
+    "hardware": "first call may run the blocking hardware scan",
+    "capability_state": "first call may run the blocking hardware scan",
+    "storage_use": "reads file sizes under the data folder",
+    "models": "first call may run the blocking hardware scan",
+    "performance_state": "first call may run the blocking hardware scan",
+    "turbo_state": "reads the turbo service state",
+    "wsearch_state": "runs sc queries",
+}
+
+
+def test_state_reports_lane_names_match_contract_and_dart():
+    """The lane is "state reports", not "pure functions": each name is a contract method, has its known effects
+    written down above, is never a slow (user-waiting) method, and the Dart retry list is the same set."""
+    import re
+    contract = json.load(open(os.path.join(os.path.dirname(__file__), "..", "contract", "methods.schema.json"),
+                              encoding="utf-8"))
+    assert handlers.STATUS_LANE <= set(contract["methods"])
+    assert handlers.STATUS_LANE == set(LANE_KNOWN_EFFECTS)
+    assert "search" not in handlers.STATUS_LANE and not handlers.STATUS_LANE & handlers.SLOW
+    dart = open(os.path.join(os.path.dirname(__file__), "..", "ui_flutter", "lib", "engine", "rpc.dart"),
+                encoding="utf-8").read()
+    block = dart[dart.index("const statusLane"):]
+    block = block[:block.index("};")]
+    assert set(re.findall(r"'([a-z_]+)'", block)) == handlers.STATUS_LANE
+
+
+def test_state_reports_never_write_settings_download_or_change_the_index(tmp_path, monkeypatch):
+    """Whatever a lane method does on a fresh engine, it must not save settings, download, or write the index."""
+    from nobadfind import api as api_mod, embed, settings
+    from nobadfind.store import Store
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    st = settings.Settings(str(tmp_path / "s.json"))
+    a = api_mod.Api(s, st, FakeIx(), None)
+    boom = []
+
+    def forbid(what):
+        def f(*args, **kw):
+            boom.append(what)
+            raise AssertionError(f"a state report called {what}")
+        return f
+    monkeypatch.setattr(settings.Settings, "update", forbid("Settings.update"))
+    monkeypatch.setattr(settings.Settings, "_save", forbid("Settings._save"))
+    monkeypatch.setattr(embed, "_fetch_verified", forbid("embed._fetch_verified"))
+    for name in dir(Store):
+        if name.startswith(("set_", "upsert_", "remove_", "add_", "reset_", "delete_", "clear_", "drop_",
+                            "put_", "write_")):
+            monkeypatch.setattr(Store, name, forbid("Store." + name))
+    api_methods = handlers.methods(a, None)
+    failed = []
+    for m in sorted(handlers.STATUS_LANE):
+        try:
+            api_methods[m]({}, None)
+        except AssertionError:
+            raise
+        except Exception as e:         # a fake engine may lack parts; only the forbidden writes matter here
+            failed.append(f"{m}: {type(e).__name__}")
+        if getattr(a, "_refresher", None) is not None:
+            a._refresher.join(10)
+    assert not boom
+    assert len(failed) <= 3, failed        # most of them really ran
+    s.close()
+
+
+class FakeIx:
+    embedder = photo_text = pindex = None
+    drive_list = []
+    status = {"phase": "text", "files": 3, "texts": 0, "vectors": 0, "paused": "", "rate": 0, "errors": 0,
+              "plan": {}, "last_scan": 0}
+
+    def models_loaded(self):
+        return []
+
+    def roots(self, drives=None):
+        return []
+
+    def worker_names(self):
+        return {}
+
+
+@win_only
+def test_search_answers_while_status_is_slow(served):
+    rpc, name, api = served
+    gate = threading.Event()
+    api.status = lambda: (gate.wait(10), {"files": 1})[1]
+    c = Client(name)
+    try:
+        for i in range(6):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "status_full", "params": {}})
+        time.sleep(0.2)
+        t0 = time.time()
+        c.send({"jsonrpc": "2.0", "id": 99, "method": "search", "params": {"text": "x"}})
+        assert "result" in c.reply(99)
+        assert time.time() - t0 < 0.5
+    finally:
+        gate.set()
+        c.close()
+
+
+@win_only
+def test_status_lane_is_bounded(served):
+    """One client may have 2 running + 4 waiting status-lane calls; the next ones get a "busy" error at once and
+    the ones accepted are all answered."""
+    rpc, name, api = served
+    gate = threading.Event()
+    api.status = lambda: (gate.wait(10), {"files": 1})[1]
+    c = Client(name)
+    try:
+        for i in range(9):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "status_full", "params": {}})
+        busy = {}
+        t0 = time.time()
+        while len(busy) < 3:
+            m = c.line()
+            assert "error" in m
+            busy[m["id"]] = m["error"]["message"]
+        assert time.time() - t0 < 2
+        assert set(busy) == {6, 7, 8} and all(v.startswith("busy") for v in busy.values())
+        gate.set()
+        assert {c.line()["id"] for _ in range(6)} == set(range(6))
+    finally:
+        gate.set()
+        c.close()
+
+
+@win_only
+def test_the_cheap_status_beat_is_never_refused_or_delayed(served):
+    """`status` (the liveness beat, dict reads only) is answered even while the lane's workers and its per-client
+    budget are used up by slow reports."""
+    rpc, name, api = served
+    gate = threading.Event()
+    api.status = lambda: (gate.wait(10), {"files": 1})[1]
+    c = Client(name)
+    try:
+        for i in range(9):
+            c.send({"jsonrpc": "2.0", "id": i, "method": "status_full", "params": {}})
+        time.sleep(0.2)
+        c.send({"jsonrpc": "2.0", "id": 99, "method": "status", "params": {}})
+        t0 = time.time()
+        while True:
+            m = c.line()
+            if m["id"] == 99:
+                break
+        assert "result" in m and time.time() - t0 < 0.5
+    finally:
+        gate.set()
+        c.close()

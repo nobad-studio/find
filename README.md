@@ -19,6 +19,10 @@ they're about, and tells you why each result matched.
   `electricity-bill-march.pdf`.
 - **Photos by what's in them (optional).** "Dog on a beach" finds `IMG_0042.jpg` even with no words in it, with
   a local image model you download once (about 211 MB) and only if you want it.
+- **Models suggested for your PC (1.2).** At first start, and in Settings → Models, NOBAD Find suggests the models
+  that were measured to suit a PC like yours, with their size, memory and why; one consent downloads the ones you
+  keep ticked. A model above the suggestion shows its measured cost first; Reset to suggested goes back. Only a
+  mid-range PC has been measured so far, so on others many models say "Not measured" ([measurements](docs/measurements.md)).
 - **Talk about a photo (optional, 1.1).** Describe a photo, ask about it ("what's written here?") or compare
   two, with a small vision model that runs on your PC (SmolVLM2 500M, 520 MB; Qwen3-VL 2B, 1,481 MB, for deeper
   answers). One consent covers the model and the llama.cpp runtime it runs on. On the reference PC (i5-12500H,
@@ -33,6 +37,10 @@ they're about, and tells you why each result matched.
 - **Filters and folders.** A filter bar (kind, date, size, folder, order) next to the search box. Type a path
   ("pdf in D:\Work\Taxes") or say "here" for the File Explorer folder you opened NOBAD Find from:
   "list all pdf here".
+- **Your browsers (optional, 1.2, off by default).** Turn on Settings → Privacy → Browsers → Search my browsers and
+  your Chrome, Edge, Brave, Vivaldi, Opera and Firefox history, bookmarks and downloads (and, if you choose, the site
+  and user name of saved logins, never passwords) show up as results, with a Browser filter (History with dates,
+  Bookmarks, Saved logins, Downloads). A **Settings & apps** filter shows only settings pages and apps.
 - **USB, external and network drives** (optional). Indexed while plugged in; when you unplug one, its files
   stay findable and are marked "not connected".
 - **Always current.** Folder-change notifications put new, changed and deleted files in the index within seconds.
@@ -42,18 +50,21 @@ they're about, and tells you why each result matched.
   apps that lagged (by program name only) and gives them room next time. It pauses on battery, during
   presentations and during calls. Its worker processes run at low CPU, memory and disk priority inside one Windows job, so
   quitting or a crash ends every one of them; a watchdog ends its own stuck or oversized workers.
+  Settings → Performance has a goal (1.2): Quiet, Balanced or Fast.
 - **Full transparency.** The Indexing page shows each phase with progress and time left, NOBAD Find's own CPU,
   memory, disk and graphics use per process, every model (size, licence, in memory or not, CPU or GPU) and
   every decision it made.
 - **Optional: turn off Windows Search indexing**, with one-click undo (see below).
 - Hotkey **Win+Shift+Space** from anywhere. ↑ ↓ to move, Enter to open, Ctrl+Enter to show in its folder, Ctrl+C
-  to copy the path, Shift+Delete to forget a result. The window stays up after Enter (Settings → Launch → Hide after
+  to copy the path, Shift+Delete to forget a result. A click previews a result (1.2), a double-click opens it. The window stays up after Enter (Settings → Launch → Hide after
   opening a file hides it, like a launcher).
   Closing the window (or Esc) stops indexing and every worker; one small idle process stays so the hotkey works.
   **Settings → Performance → Keep indexing in the background** keeps indexing after closing; **Settings → About →
   Quit** stops it completely.
 - **Quick find bar** on **Ctrl+Alt+Space**: a small floating search bar with up to 8 results. Enter opens,
   Ctrl+Enter shows in its folder, Alt+Enter moves the search into the full window, Esc hides it.
+- **Three looks (1.2):** Classic, Minimal ice and Nocturne (Settings → General → Theme style), all see-through over
+  Windows 11's Acrylic glass when Windows' Transparency effects are on.
 
 ## Privacy and security
 - **Nothing leaves your PC.** No account, no cloud, no telemetry.
@@ -64,6 +75,9 @@ they're about, and tells you why each result matched.
 - **Never indexed:** other people's profiles, Windows itself, `AppData`, and secret material such as `.ssh`,
   `.gnupg`, cloud credential folders, password-manager folders and key files (`.pem`, `.key`, `.pfx`, `.kdbx`, ...).
   Add your own folders to *Never search*; *Forget* removes a result and keeps it out.
+- **Browsers only if you say so (1.2).** Search my browsers is off by default and asks before it reads anything. It
+  reads a copy of the browser's files (it never closes your browser), keeps what it read in the encrypted index and
+  never reads passwords, page contents, cookies or open tabs. Turning it off removes everything it read.
 - **Files are untrusted.** Office files are checked for zip bombs, XML is parsed without external entities,
   files are size-limited and read in separate low-priority processes, images are decoded only by Windows' own
   decoders, and nothing is ever run.

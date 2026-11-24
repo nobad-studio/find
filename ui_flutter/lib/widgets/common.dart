@@ -52,6 +52,7 @@ class KindBadge extends StatelessWidget {
     'ebook': 0xE8F1,
     'app': 0xE7B8,
     'folder': 0xE8B7,
+    'browser': 0xE774, // Globe: one of the browsers' items (1.2.0)
   };
 
   @override
@@ -72,7 +73,7 @@ class KindBadge extends StatelessWidget {
                 colors: [c.orangeA(c.isDark ? .12 : .08), c.card],
               ),
         border: Border.all(color: c.line),
-        borderRadius: BorderRadius.circular(small ? 6 : 8),
+        borderRadius: BorderRadius.circular(small ? NbRadius.key.x : NbRadius.tile),
       ),
       child: small
           ? ExcludeSemantics(

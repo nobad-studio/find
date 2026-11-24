@@ -103,7 +103,7 @@ class SuggestionList extends StatelessWidget {
         final c = NbColors.of(context);
         return Glass(
           level: GlassLevel.blur,
-          radius: 12,
+          radius: NbRadius.card,
           fill: c.surface.withValues(alpha: c.isDark ? .9 : .94),
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: list,
@@ -329,7 +329,7 @@ class BestGuessCard extends StatelessWidget {
         label: 'Best guess. $reason',
         child: Glass(
           level: GlassLevel.card,
-          radius: 18,
+          radius: NbRadius.card,
           fill: c.orangeA(c.isDark ? (selected ? .10 : .07) : (selected ? .08 : .05)),
           rim: c.orangeA(selected ? .7 : .38),
           padding: const EdgeInsets.fromLTRB(4, 8, 4, 2),

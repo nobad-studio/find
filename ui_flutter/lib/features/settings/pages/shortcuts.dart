@@ -7,6 +7,7 @@ import '../../../app/scope.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/theme/typography.dart';
 import '../../../widgets/controls.dart';
+import '../../../widgets/icons.dart';
 import '../hotkey_setting.dart';
 import '../settings_parts.dart';
 
@@ -41,6 +42,7 @@ class ShortcutsPage extends StatelessWidget {
           listenable: AppScope.of(context).settings,
           builder: (context, _) => SettingsGroup(
             'Anywhere in Windows',
+            icon: NbGlyph.keyboard,
             rows: [
               const HotkeySetting('hotkey', 'Open NOBAD Find'),
               // 0.9.3: the search bar, like Spotlight: the shortcut opens it when the window isn't open
@@ -57,6 +59,7 @@ class ShortcutsPage extends StatelessWidget {
         ),
         SettingsGroup(
           'In this window',
+          icon: NbGlyph.window,
           rows: [
             for (final (keys, what) in _keys)
               SizedBox(

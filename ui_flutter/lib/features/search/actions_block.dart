@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../app/scope.dart';
 import '../../app/theme/colors.dart';
+import '../../app/theme/tokens.dart';
 import '../../app/theme/typography.dart';
 import '../../engine/models/result.dart';
 import '../../widgets/controls.dart';
@@ -15,8 +16,11 @@ import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
 class ActionsBlock extends StatelessWidget {
-  const ActionsBlock(this.actions, {super.key});
+  const ActionsBlock(this.actions, {super.key, this.max = 3});
   final List<SearchAction> actions;
+
+  /// How many are shown (beside files: 3; the Settings & apps filter: all the engine sent).
+  final int max;
 
   @override
   Widget build(BuildContext context) {
@@ -24,12 +28,12 @@ class ActionsBlock extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: c.card,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: NbRadius.cardAll,
         border: Border.all(color: c.line),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: [for (final (i, a) in actions.take(3).indexed) _ActionRow(a, first: i == 0)],
+        children: [for (final (i, a) in actions.take(max).indexed) _ActionRow(a, first: i == 0)],
       ),
     );
   }

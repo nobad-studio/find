@@ -6,6 +6,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nobad_find/engine/events.dart';
+import 'package:nobad_find/engine/models/models_info.dart';
+import 'package:nobad_find/engine/models/notification.dart';
 import 'package:nobad_find/engine/models/result.dart';
 import 'package:nobad_find/engine/models/settings.dart';
 import 'package:nobad_find/engine/models/status.dart';
@@ -81,6 +83,10 @@ void main() {
           case VisionEvent():
             expect(e.job, greaterThan(0));
             if (e.state == 'error') expect(e.note, isNotEmpty); // the message is in the note
+          case NotificationEvent(:final item, :final unread):
+            expect(item.title, isNotEmpty);
+            expect(unread, greaterThan(0));
+            expect('${item.title} ${item.body}', isNot(contains(r':'))); // never a path in the text
           default:
         }
       }
@@ -89,7 +95,7 @@ void main() {
       seen,
       containsAll([
         'status', 'status_full', 'level', 'activity', 'download', 'notice', 'show', 'here', 'quitting', //
-        'models', 'turbo', 'update', 'vision',
+        'models', 'turbo', 'update', 'vision', 'notification',
       ]),
     );
   });
@@ -114,7 +120,19 @@ void main() {
           for (final i in sg.items) {
             expect(i.text, isNotEmpty);
           }
-        case 'history_forget' || 'history_clear':
+        case 'notifications_list':
+          final l = NotificationList.fromJson(r);
+          expect(l.items.length, (((r as Map)['items']) as List).length); // every one the engine sends is read
+          expect(l.unread, l.items.where((n) => !n.read).length);
+        case 'notifications_read':
+          expect(((r as Map)['unread']) as int, greaterThanOrEqualTo(0));
+        case 'notifications_clear':
+          expect(ActionResult.fromJson(r).ok, isTrue);
+        case 'browser_data_state':
+          final st = BrowserDataState.fromJson(r);
+          expect(st.profiles.length, (((r as Map)['profiles']) as List).length); // every profile is read
+          expect(st.summary(DateTime.now()), isNotEmpty);
+        case 'history_forget' || 'history_clear' || 'browser_clear':
           expect(ActionResult.fromJson(r).error, isA<String>());
         case 'status':
           expect(EngineStatus.fromJson(r).levelLabel, isNotEmpty);
@@ -123,6 +141,24 @@ void main() {
           expect(d.phases.map((p) => p.id), containsAll(['names', 'text', 'watching']));
           expect(d.models.map((m) => m.id), containsAll(['meaning', 'photo', 'ocr']));
           expect(d.history, isNotEmpty);
+          // 2026-11-21: how many of each operation may run at once, and what set it
+          expect(d.limits, isNotNull);
+          expect(d.limits!.readers.effective, greaterThan(0));
+          expect(d.limits!.walk.byLabel, startsWith('set by '));
+        case 'capability_state':
+          final cap = CapabilityState.fromJson(r);
+          expect(cap.budget.live, isTrue);
+          expect(cap.budget.freeMb, 2200);
+          expect(cap.budget.gpuKind, 'shared'); // the demo PC's Intel iGPU: shared memory only
+          expect(cap.runsNow('gte-small'), isTrue);
+          expect(cap.runsNow('multilingual-e5-base'), isFalse);
+          expect(cap.why['multilingual-e5-base'], startsWith('Not now'));
+          expect(cap.runsNow('no-such-model'), isNull);
+        case 'storage_use':
+          final u = StorageUse.fromJson(r);
+          expect(u.indexMb, greaterThan(0));
+          expect(u.models.map((m) => m.id), contains('minilm-l6-v2'));
+          expect(u.totalMb, closeTo(u.indexMb + u.walMb + u.modelsMb + u.runtimeMb + u.tmpMb, .2));
         case 'get_settings':
           final s = Settings.fromJson(r);
           expect(s.text('theme'), anyOf('dark', 'light'));
@@ -174,6 +210,21 @@ void main() {
     }
   });
 
+  test('browser search (1.2.0): a browser result and the Settings & apps actions read as the engine sent them', () {
+    final lines = readTranscript('12-browser-search.jsonl');
+    Map<String, Object?> reply(int id) => (lines.firstWhere((l) => l['recv'] is Map && (l['recv'] as Map)['id'] == id)['recv']
+        as Map)['result'] as Map<String, Object?>;
+    final apps = SearchAnswer.fromJson(reply(1));
+    expect(apps.results, isEmpty);
+    expect(apps.actions.single.id, 'set:display');
+    final web = SearchAnswer.fromJson(reply(2)).results.single;
+    expect(web.id, isNegative);
+    expect(web.isBrowser, isTrue);
+    expect((web.browser!.browser, web.browser!.profile, web.browser!.kind), ('Edge', 'Work', 'history'));
+    expect(web.browser!.openLabel, 'Open page');
+    expect(web.dir, 'Edge (Work) · github.com');
+  });
+
   test('smart search (0.8.5): parts, the best guess and suggestions read as the engine sent them', () {
     final lines = readTranscript('07-smart-search.jsonl');
     final search = SearchAnswer.fromJson(((lines[2]['recv'] as Map)['result']));
@@ -191,6 +242,25 @@ void main() {
     expect(sug[1].items.first.isHistory, isTrue);
     expect(sug[1].items[1].id, 7);
     expect(sug[1].complete, 'tax pdf');
+  });
+
+  test('notifications (08): the list, the events, the action buttons and no paths', () {
+    final lines = readTranscript('09-notifications.jsonl');
+    final events = [
+      for (final l in lines)
+        if (l['recv'] is Map && (l['recv'] as Map)['method'] == 'notification')
+          EngineEvent.parse('notification', (l['recv'] as Map)['params']) as NotificationEvent,
+    ];
+    expect(events.map((e) => e.unread), [1, 2, 3]); // the duplicate key wasn't posted
+    expect(events.first.item.action!.id, 'open_indexing');
+    expect(events.first.item.severity, NotifySeverity.warning);
+    expect(events[1].item.body, contains('on a file'));
+    expect(events[1].item.detail, isEmpty);
+    expect(events.last.item.action!.label, 'Update');
+    final full = NotificationList.fromJson(
+      (lines.firstWhere((l) => l['recv'] is Map && (l['recv'] as Map)['id'] == 3)['recv'] as Map)['result'],
+    );
+    expect(full.items.map((n) => n.id), [3, 2, 1]);
   });
 
   test('the pipe client asks the way the contract says and reads what comes back', () async {

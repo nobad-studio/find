@@ -19,6 +19,8 @@ class Rpc:
         self.server.methods = handlers.methods(api, self.events)
         self.server.on_drop = self._dropped
         self.server.slow = set(handlers.SLOW)
+        self.server.status_lane = set(handlers.STATUS_LANE)
+        self.server.inline = set(handlers.STATUS_INLINE)
         self.events.on_show = self.server.allow_foreground
         if activity is not None:
             activity.listen(self.events.activity)

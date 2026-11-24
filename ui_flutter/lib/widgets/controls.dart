@@ -8,6 +8,7 @@ import '../app/theme/colors.dart';
 import '../app/theme/tokens.dart';
 import '../app/theme/typography.dart';
 import 'icons.dart';
+import 'menu_glass.dart';
 import 'pressable.dart';
 
 enum NbButtonKind { primary, ghost, danger, quiet }
@@ -44,7 +45,7 @@ class NbButton extends StatelessWidget {
       builder: (context, s) {
         final enabled = s.enabled;
         final (Color bg, Color fg, Color edge) = switch (kind) {
-          NbButtonKind.primary => (s.down ? Color.lerp(c.orange, c.shadow, .12)! : c.orange, c.onOrange, c.orange),
+          NbButtonKind.primary => (s.down ? Color.lerp(c.action, c.shadow, .12)! : c.action, c.onAction, c.action),
           NbButtonKind.ghost => (
             s.lit ? c.orangeA(.06) : const Color(0x00000000),
             c.text,
@@ -67,15 +68,17 @@ class NbButton extends StatelessWidget {
           child: AnimatedContainer(
             duration: NbMotion.of(context, NbMotion.fast),
             curve: NbMotion.curve,
-            height: small ? 28 : 32,
-            padding: EdgeInsets.symmetric(horizontal: small ? 10 : 14),
+            height: c.smoke ? (small ? 30 : 36) : (small ? 28 : 32),
+            padding: EdgeInsets.symmetric(horizontal: (small ? 10 : 14) + (c.smoke ? 3 : 0)),
             decoration: BoxDecoration(
               color: bg,
               border: Border.all(color: edge),
               borderRadius: NbRadius.controlAll,
               boxShadow: [
                 if (kind == NbButtonKind.primary && s.lit && enabled)
-                  BoxShadow(color: c.orangeA(.3), blurRadius: 10, offset: const Offset(0, 3), spreadRadius: -5),
+                  c.smoke
+                      ? BoxShadow(color: c.float, blurRadius: 18, offset: const Offset(0, 6), spreadRadius: -6)
+                      : BoxShadow(color: c.orangeA(.3), blurRadius: 10, offset: const Offset(0, 3), spreadRadius: -5),
               ],
             ),
             child: Row(
@@ -123,8 +126,8 @@ class NbSwitch extends StatelessWidget {
           height: 20,
           decoration: BoxDecoration(
             // Fluent: on is the accent (the NOBAD orange) filled, off an outline
-            color: value ? (s.lit ? Color.lerp(c.orange, c.text, .12) : c.orange) : (s.lit ? c.cardHover : c.raised),
-            border: Border.all(color: value ? c.orange : (s.lit ? c.text.withValues(alpha: .7) : c.muted)),
+            color: value ? (s.lit ? Color.lerp(c.action, c.text, .12) : c.action) : (s.lit ? c.cardHover : c.raised),
+            border: Border.all(color: value ? c.action : (s.lit ? c.text.withValues(alpha: .7) : c.muted)),
             borderRadius: NbRadius.pillAll,
           ),
           child: AnimatedAlign(
@@ -135,7 +138,7 @@ class NbSwitch extends StatelessWidget {
               width: 12,
               height: 12,
               margin: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: BoxDecoration(shape: BoxShape.circle, color: value ? c.onOrange : c.muted),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: value ? c.onAction : c.muted),
             ),
           ),
         ),
@@ -177,8 +180,8 @@ class _NbSelectState extends State<NbSelect> {
     final current = widget.options.firstWhere((o) => o.$1 == widget.value, orElse: () => widget.options.first);
     return MenuAnchor(
       controller: _menu,
-      alignmentOffset: const Offset(0, 4),
-      menuChildren: [
+      alignmentOffset: MenuGlass.at(const Offset(0, 4)),
+      menuChildren: MenuGlass.wrap([
         for (final o in widget.options)
           MenuItemButton(
             onPressed: () => widget.onChanged(o.$1),
@@ -203,7 +206,7 @@ class _NbSelectState extends State<NbSelect> {
               ),
             ),
           ),
-      ],
+      ]),
       builder: (context, menu, _) => Pressable(
         onTap: () => menu.isOpen ? menu.close() : menu.open(),
         semanticLabel: widget.label == null ? current.$2 : '${widget.label}: ${current.$2}',
@@ -353,12 +356,16 @@ class NbField extends StatefulWidget {
     this.number = false,
     this.width = 190,
     required this.label,
+    this.enabled = true,
   });
   final String value;
   final ValueChanged<String> onSubmit;
   final bool number;
   final double width;
   final String label;
+
+  /// false: greyed out and not editable (the row says why).
+  final bool enabled;
 
   @override
   State<NbField> createState() => _NbFieldState();
@@ -384,7 +391,7 @@ class _NbFieldState extends State<NbField> {
   }
 
   void _submit() {
-    if (_ctl.text != widget.value) widget.onSubmit(_ctl.text);
+    if (widget.enabled && _ctl.text != widget.value) widget.onSubmit(_ctl.text);
   }
 
   @override
@@ -406,13 +413,15 @@ class _NbFieldState extends State<NbField> {
       child: Semantics(
         label: widget.label,
         textField: true,
+        enabled: widget.enabled,
         child: TextField(
           controller: _ctl,
           focusNode: _focus,
+          enabled: widget.enabled,
           onSubmitted: (_) => _submit(),
           keyboardType: widget.number ? TextInputType.number : TextInputType.text,
           inputFormatters: widget.number ? [FilteringTextInputFormatter.digitsOnly] : null,
-          style: NbType.data(13, c.text),
+          style: NbType.data(13, widget.enabled ? c.text : c.dim),
           cursorColor: c.orange,
           decoration: InputDecoration(
             isDense: true,
@@ -420,6 +429,7 @@ class _NbFieldState extends State<NbField> {
             fillColor: c.raised,
             contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             enabledBorder: edge(c.line2),
+            disabledBorder: edge(c.line),
             focusedBorder: edge(c.orange),
           ),
         ),

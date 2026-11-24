@@ -34,14 +34,37 @@ abstract class Transport {
 
 typedef Connector = Future<Transport> Function();
 
+/// The state reports the engine answers on its own small lane (contract/README.md; mirrors `STATUS_LANE` in
+/// nobadfind/rpc/handlers/__init__.py, tests/test_rpc.py keeps the two equal). Past a few waiting at once the
+/// engine answers one with "busy: try again": [RpcSession.call] asks again for these, a little later.
+const statusLane = {
+  'status',
+  'status_full',
+  'hardware',
+  'capability_state',
+  'storage_use',
+  'models',
+  'scope_info',
+  'turbo_state',
+  'wsearch_state',
+  'performance_state',
+};
+
+const _defaultBusyRetry = [Duration(milliseconds: 250), Duration(milliseconds: 500), Duration(milliseconds: 1000)];
+
 /// One connection's request/response bookkeeping.
 class RpcSession {
   // ignore: prefer_initializing_formals
-  RpcSession(this._t, {required void Function(EngineEvent) onEvent}) : _onEvent = onEvent {
+  RpcSession(this._t, {required void Function(EngineEvent) onEvent, List<Duration> busyRetry = _defaultBusyRetry})
+    // ignore: prefer_initializing_formals
+    : _onEvent = onEvent,
+      // ignore: prefer_initializing_formals
+      _busyRetry = busyRetry {
     _sub = _t.lines.listen(_line, onDone: _closed, onError: (_) => _closed());
   }
 
   final Transport _t;
+  final List<Duration> _busyRetry;
   final void Function(EngineEvent) _onEvent;
   late final StreamSubscription<String> _sub;
   final _pending = <int, Completer<Object?>>{};
@@ -51,7 +74,19 @@ class RpcSession {
   Future<void> get done => _done.future;
   bool get isOpen => !_done.isCompleted;
 
-  Future<Object?> call(String method, [Map<String, Object?> params = const {}, Duration? timeout]) {
+  Future<Object?> call(String method, [Map<String, Object?> params = const {}, Duration? timeout]) async {
+    if (!statusLane.contains(method)) return _call(method, params, timeout);
+    for (var i = 0;; i++) {
+      try {
+        return await _call(method, params, timeout);
+      } on RpcException catch (e) {
+        if (e.code != -32603 || e.message != 'busy: try again' || i >= _busyRetry.length) rethrow;
+        await Future<void>.delayed(_busyRetry[i]);
+      }
+    }
+  }
+
+  Future<Object?> _call(String method, Map<String, Object?> params, Duration? timeout) {
     if (!isOpen) return Future.error(const EngineOffline());
     final id = _next++;
     final String line;
@@ -327,6 +362,14 @@ class EngineClient {
   Future<ActionResult> historyForget(String text) => _ok('history_forget', {'text': _cap(text)});
   Future<ActionResult> historyClear() => _ok('history_clear');
 
+  // ---- notifications (the bell) ----
+  Future<NotificationList> notificationsList() async => NotificationList.fromJson(await call('notifications_list'));
+
+  /// Marks [ids] read, or every one with [all]. The engine's unread count after it.
+  Future<int> notificationsRead({List<int> ids = const [], bool all = false}) async =>
+      jInt(jMap(await call('notifications_read', all ? {'all': true} : {'ids': ids.take(200).toList()}))['unread']);
+  Future<ActionResult> notificationsClear() => _ok('notifications_clear');
+
   /// The engine refuses longer text (-32602): cut it, never at half a character.
   static String _cap(String s) {
     if (s.length <= maxTextLength) return s;
@@ -363,6 +406,10 @@ class EngineClient {
   Future<List<LearnedApp>> learnedApps() async => LearnedApp.listFromJson(await call('learned_apps'));
   Future<ActionResult> resetLearned([String? exe]) => _ok('reset_learned', {'exe': exe});
   Future<Hardware?> hardware() async => Hardware.fromJson(await call('hardware'));
+  Future<PerformanceState> performanceState() async => PerformanceState.fromJson(await call('performance_state'));
+  Future<ResetResult> resetSafeDefaults() async => ResetResult.fromJson(await call('reset_safe_defaults'));
+  Future<BrowserDataState> browserDataState() async => BrowserDataState.fromJson(await call('browser_data_state'));
+  Future<ActionResult> browserClear() => _ok('browser_clear');
 
   // ---- settings and the index ----
   Future<Settings> getSettings() async => Settings.fromJson(await call('get_settings'));
@@ -405,8 +452,12 @@ class EngineClient {
 
   // ---- 0.8 ----
   Future<ModelsInfo> models() async => ModelsInfo.fromJson(await call('models'));
-  Future<ModelUse> modelUse(String feature, String id) async =>
-      ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id}));
+  Future<CapabilityState> capabilityState() async => CapabilityState.fromJson(await call('capability_state'));
+  Future<StorageUse> storageUse() async => StorageUse.fromJson(await call('storage_use'));
+  Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) async =>
+      ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id, if (confirm) 'confirm': true}));
+  Future<ResetSuggested> resetSuggested({bool confirm = false}) async =>
+      ResetSuggested.fromJson(await call('reset_suggested', {if (confirm) 'confirm': true}));
   Future<ActionResult> modelDownload(String id) => _ok('model_download', {'id': id, 'consent': 'DOWNLOAD'});
   Future<ActionResult> modelRemove(String id) => _ok('model_remove', {'id': id});
   Future<ActionResult> modelFolder(String id) => _ok('model_folder', {'id': id});
@@ -415,6 +466,10 @@ class EngineClient {
   Future<ActionResult> updateCheck() => _ok('update_check');
   Future<ActionResult> updateInstall() => _ok('update_install', {'consent': 'INSTALL'});
   Future<AutoConfig> autoConfigure() async => AutoConfig.fromJson(await call('auto_configure'));
+  Future<SetupOffer> setupOffer() async => SetupOffer.fromJson(await call('setup_offer'));
+  Future<SetupAccept> setupAccept(List<String> models) async =>
+      SetupAccept.fromJson(await call('setup_accept', {'models': models, 'consent': 'DOWNLOAD'}));
+  Future<ActionResult> setupLater({bool remind = true}) => _ok('setup_later', {if (!remind) 'remind': false});
   Future<ActionResult> modelLanguage(String focus) => _ok('model_language', {'focus': focus});
   Future<ActionResult> openWith(int id) => _ok('open_with', {'id': id}, false);
   Future<ScopeInfo> scopeInfo() async => ScopeInfo.fromJson(await call('scope_info'));

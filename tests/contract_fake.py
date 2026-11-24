@@ -6,12 +6,19 @@ from nobadfind.activity import Activity
 from nobadfind.const import DEFAULTS
 from nobadfind.rpc import handlers
 from nobadfind.rpc.events import Events
-from nobadfind.settings import coerce
+from nobadfind.settings import coerce, power_compat
 
 UPDATE_NOTES = "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0"
 RESULT = {"id": 7, "path": "C:\\Users\\me\\Documents\\tax 2025.pdf", "name": "tax 2025.pdf",
           "dir": "C:\\Users\\me\\Documents", "kind": "pdf", "size": 48213, "mtime": 1763400000.0,
           "ago": "2 days ago", "why": ["name matches"], "snippet": "", "weak": False}
+# 1.2.0: one browser result (browsersearch.result): a negative id, never a file's
+BROWSER_RESULT = {"id": -3, "path": "https://github.com/pulls", "name": "GitHub: pull requests",
+                  "dir": "Edge (Work) · github.com", "kind": "browser", "size": None, "mtime": 1763300000.0,
+                  "ago": "3 days ago", "why": ["title matches", "visited 3 days ago"], "snippet": "", "weak": False,
+                  "browser": {"browser": "Edge", "profile": "Work", "kind": "history", "title": "GitHub: pull requests",
+                              "url": "https://github.com/pulls", "host": "github.com", "at": 1763300000.0,
+                              "visits": 9, "folder": ""}}
 
 
 class FakeGov:
@@ -36,14 +43,40 @@ class FakeApi:
         self.turbo = {"available": True, "enabled": False, "running": False, "error": "", "helper": "not_installed",
                       "volumes": [{"drive": "C:\\", "ntfs": True, "files": 0, "usn_ok": False, "last_scan": None}]}
 
+        from nobadfind.notify import Center
+        # the real notification center, in memory, on a fixed clock, with no Windows toast
+        self.notify = Center(self.settings, toast=None, clock=lambda: 1763400000.0, run=lambda fn: fn())
+
     def _note(self, *call):
         self.calls.append(call)
+
+    # notifications
+    def notifications_list(self):
+        return self.notify.list()
+
+    def notifications_read(self, ids=None, all=False):
+        self._note("notifications_read", ids, all)
+        return self.notify.read(ids=ids, all=all)
+
+    def notifications_clear(self):
+        self._note("notifications_clear")
+        return self.notify.clear()
 
     # search
     def search(self, text, filters=None, client=None, channel="main"):
         self._note("search", text, filters)
         if not text.strip() and not filters:
             return {"results": [], "understood": [], "terms": [], "notes": [], "ms": 0}
+        if (filters or {}).get("kind") == "launcher":          # Settings & apps: actions only, never a file
+            return {"results": [], "understood": ["settings & apps"], "terms": [], "notes": [], "ms": 1,
+                    "parts": [], "best": None,
+                    "actions": [{"id": "set:display", "kind": "setting", "title": "Display",
+                                 "subtitle": "Windows Settings"}]}
+        if (filters or {}).get("kind") == "browser":
+            return {"results": [dict(BROWSER_RESULT, browser=dict(BROWSER_RESULT["browser"]))],
+                    "understood": ["browser history", "visited in the last 7 days"], "terms": [], "notes": [],
+                    "more": False, "ms": 2, "parts": [{"kind": "kind", "label": "Browser history", "without": ""}],
+                    "best": None}
         return {"results": [dict(RESULT)], "understood": ["pdf"], "terms": ["tax"], "notes": [], "more": False,
                 "ms": 4, "parts": [{"kind": "kind", "label": "PDFs", "without": "tax"},
                                    {"kind": "words", "label": "tax", "without": "pdf"}],
@@ -75,6 +108,21 @@ class FakeApi:
         self.history.discard(text.strip().lower())
         return {"ok": known}
 
+    def browser_clear(self):
+        self._note("browser_clear")
+        self.browser_rows = 0
+        return {"ok": True}
+
+    def browser_data_state(self):
+        """A fixed picture: one Edge profile read, one Firefox profile its browser holds."""
+        n = getattr(self, "browser_rows", 120)
+        return {"setting": self.settings["browser_data"], "profiles": [
+            {"browser": "Edge", "profile": "Work", "last_read": 1700000000.0, "error": "",
+             "counts": {"history": n, "bookmark": 0 if not n else 8, "download": 0 if not n else 3, "login": 0}},
+            {"browser": "Firefox", "profile": "default-release", "last_read": None,
+             "error": "in use by the browser; trying again in 5 min",
+             "counts": {"history": 0, "bookmark": 0, "download": 0, "login": 0}}]}
+
     def history_clear(self):
         self._note("history_clear")
         self.history.clear()
@@ -82,7 +130,7 @@ class FakeApi:
 
     def open(self, file_id):
         self._note("open", file_id)
-        return {"ok": True} if file_id == 7 else {"ok": False, "error": "That file isn't there any more."}
+        return {"ok": True} if file_id in (7, BROWSER_RESULT["id"]) else {"ok": False, "error": "That file isn't there any more."}
 
     def open_with(self, file_id):
         self._note("open_with", file_id)
@@ -111,7 +159,11 @@ class FakeApi:
                 "paused": self.paused}
 
     def status(self):
-        return dict(STATUS_FULL, level=self.gov.level, reason=self.gov.reason, paused=self.paused)
+        from types import SimpleNamespace
+        from nobadfind import governor
+        limits = governor.op_limits(self.gov.level, STATUS_FULL["plan"], SimpleNamespace(free_mb=8000, gpu_mem=None),
+                                    None, self.settings)
+        return dict(STATUS_FULL, level=self.gov.level, reason=self.gov.reason, paused=self.paused, limits=limits)
 
     def downloads(self):
         return {k: dict(v) for k, v in self.dl.items()}
@@ -139,7 +191,10 @@ class FakeApi:
     def hardware(self):
         return {"ram_gb": 15.7, "cores": 8, "threads": 16, "avx2": True, "avx512_vnni": False,
                 "gpu": "Intel(R) Iris(R) Xe Graphics", "vram_gb": 0.1, "directml": False, "disk_free_gb": 120.5,
-                "ssd": True}
+                "ssd": True,
+                "gpus": [{"vendor": "intel", "name": "Intel(R) Iris(R) Xe Graphics", "dedicated_mb": 128,
+                          "shared_mb": 8038, "integrated": True}],
+                "backends": {"onnx": ["cpu"], "llamacpp": ["vulkan", "cpu"]}}
 
     # settings
     def get_settings(self):
@@ -148,17 +203,33 @@ class FakeApi:
     def set_settings(self, changes, consent=None):
         """Like Settings.update: every value through the real settings.coerce; secret_app_files goes on only with
         the consent word, like Api.set_settings."""
-        from nobadfind.const import APP_FILES_CONSENT
+        from nobadfind.const import APP_FILES_CONSENT, BROWSER_CONSENT, BROWSER_DATA
         new = {k: coerce(k, v) for k, v in changes.items()
                if k in DEFAULTS and k not in ("wsearch_prev", "turbo", "settings_rev")}
         if new.get("secret_app_files") is True and consent != APP_FILES_CONSENT:
             del new["secret_app_files"]
+        if "browser_data" in new and consent != BROWSER_CONSENT and \
+                BROWSER_DATA.index(new["browser_data"]) > BROWSER_DATA.index(self.settings["browser_data"]):
+            del new["browser_data"]                   # reading more only with the dialog's word
+        power_compat(new, self.settings)
         changed = [k for k, v in new.items() if self.settings[k] != v]
         self.settings.update(new)
         out = {"changed": changed}
         if set(changed) & {"hotkey", "bar_hotkey", "bar"}:
             out["hotkeys"] = self.hotkey_state()
         return out
+
+    def performance_state(self):
+        """The real performance.state over the fixed PC (Iris Xe, no DirectML, the Vulkan runtime), a 16-thread plan."""
+        from nobadfind import performance
+        plan = {"cpu": 16, "text_workers": 8, "text_workers_idle": 15}
+        return performance.state(self.settings, self.hardware(), plan, "llama-vulkan")
+
+    def reset_safe_defaults(self):
+        from nobadfind.const import SAFE_DEFAULTS, SAFE_DEFAULTS_KEEP
+        self._note("reset_safe_defaults")
+        self.set_settings({k: DEFAULTS[k] for k in SAFE_DEFAULTS})
+        return {"ok": True, "reset": list(SAFE_DEFAULTS), "kept": list(SAFE_DEFAULTS_KEEP)}
 
     def hotkey_state(self):
         """Both registered, except the bar's when the bar is off (no Windows here: nothing is ever taken)."""
@@ -206,13 +277,32 @@ class FakeApi:
         self.dl["photo"].update(state="downloading", got=0, size=0)
         return {"ok": True}
 
+    def capability_state(self):
+        """The real capability.assess over a fixed reading: 2.2 GB free on the 15.7 GB PC, so the bigger models
+        are "not now"."""
+        from nobadfind import capability
+        return capability.assess(CAPABILITY_SAMPLE, self.hardware(), {})
+
+    def storage_use(self):
+        """Fixed figures: nothing is read from disk."""
+        return {"index_mb": 412.5, "wal_mb": 3.2, "models": [{"id": "minilm-l6-v2", "mb": 23.0},
+                {"id": "siglip-base", "mb": 211.0}], "runtime_mb": 0.0, "tmp_mb": 0.0, "total_mb": 649.7}
+
     # model tiers: the real catalog, a fixed PC, nothing downloaded unless the transcript downloads it
+    def _suggestions(self, pc, focus):
+        """modelsuggest.for_pc on the fixed PC, with what the first scan counted (the re-index times)."""
+        from nobadfind import modelsuggest, profile
+        classes = profile.effective(profile.classify(pc), self.settings)
+        live = {"runtime": {"photo_talk": "vulkan"}, "photos": self.scanned["photos"], "files": self.scanned["documents"]}
+        return modelsuggest.for_pc(pc, classes, live, "balanced", focus)
+
     def models(self):
-        from nobadfind import models as cat
+        from nobadfind import models as cat, modelsuggest
         pc = self.hardware()
         focus = self.settings.get("language_focus") or "english"
         rec = cat.recommend(pc)
         choice = cat.tier_choice(rec, focus)
+        entries = modelsuggest.by_model(self._suggestions(pc, focus))
         out = []
         rid = "llama-vulkan" if pc.get("gpu") else "llama-cpu"
         for m in cat.CATALOG:
@@ -226,7 +316,10 @@ class FakeApi:
                 state = "active" if cat.selected(self.settings, m["feature"]) == m["id"] else "ready"
             else:
                 state = "not_downloaded"
-            out.append({**talk, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
+            fit = {**modelsuggest.fields(entries.get(m["id"])), "chosen": m["feature"] in ("text", "photo", "ocr")
+                   and cat.selected(self.settings, m["feature"]) == m["id"],
+                   "vectors_change": cat.vectors_change(self.settings, m["feature"], m["id"])}
+            out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": cat.size_mb(m),
                         "ram_mb": int(m.get("ram_mb") or 0), "speed_note": m.get("speed_note") or "",
                         "languages": list(m.get("languages") or []), "improves": m.get("improves") or "",
@@ -238,14 +331,44 @@ class FakeApi:
         return {"pc": pc, "tier_recommended": rec, "tier_current": cat.tier_current(self.settings, focus),
                 "language_focus": focus, "models": out}
 
-    def model_use(self, feature, mid):
-        from nobadfind import models as cat
+    def model_use(self, feature, mid, confirm=False):
+        from nobadfind import models as cat, modelsuggest
         m = cat.get(mid)
         if m is None or m["feature"] != feature:
-            return {"ok": False, "error": "There's no such model for that.", "needs_download": False}
+            return {"ok": False, "error": "There's no such model for that.", "needs_download": False,
+                    "needs_confirm": False}
+        if not confirm and feature in ("text", "photo") and cat.selected(self.settings, feature) != mid:
+            e = modelsuggest.by_model(self._suggestions(self.hardware(), self.settings.get("language_focus") or "english")).get(mid)
+            if e is not None and e["outcome"] in modelsuggest.ABOVE:
+                return {"ok": False, "needs_download": False, "needs_confirm": True,
+                        "error": "That is above what is suggested for this PC: its measured cost comes first."}
         self.set_settings({"text": {"text_model": mid, "semantic": True}, "photo": {"photo_model": mid,
                            "photo_meaning": True}, "ocr": {"ocr": True}}[feature])
-        return {"ok": True, "error": "", "needs_download": not m["builtin"] and mid not in self.ready}
+        return {"ok": True, "error": "", "needs_download": not m["builtin"] and mid not in self.ready,
+                "needs_confirm": False}
+
+    def reset_suggested(self, confirm=False):
+        from nobadfind import models as cat, modelsuggest
+        pc, focus = self.hardware(), self.settings.get("language_focus") or "english"
+        sugg = self._suggestions(pc, focus)
+        choice, entries, changes = cat.recommend_choice(pc, focus, sugg), modelsuggest.by_model(sugg), []
+        for feature in ("text", "photo"):
+            have, want = cat.selected(self.settings, feature), choice.get(feature) or ""
+            if feature == "photo":
+                want = next((e["model"] for e in sugg.get("photo_search") or [] if e["outcome"] == "suggested"), "")
+            if not have or not want or have == want:
+                continue
+            cost = (entries.get(want) or {}).get("cost_here") or {}
+            changes.append({"feature": feature, "id": want, "name": cat.get(want)["name"], "from": have,
+                            "from_name": (cat.get(have) or {}).get("name") or have,
+                            "vectors_change": cat.vectors_change(self.settings, feature, want),
+                            "index_h": cost.get("index_h"),
+                            "measured_on": cost.get("measured_on", "") if cost.get("index_h") is not None else "",
+                            "needs_download": want not in self.ready})
+        if not changes or (not confirm and any(c["vectors_change"] for c in changes)):
+            return {"ok": True, "error": "", "applied": False, "changes": changes}
+        self.set_settings({("text_model" if c["feature"] == "text" else "photo_model"): c["id"] for c in changes})
+        return {"ok": True, "error": "", "applied": True, "changes": changes}
 
     def model_download(self, mid, consent):
         from nobadfind import models as cat
@@ -261,6 +384,8 @@ class FakeApi:
         """Like Api.run_action: ids from the launcher's table only (nothing is opened here)."""
         from nobadfind import launcher
         if action_id.startswith("set:") and any("set:" + x[0] == action_id for x in launcher.SETTINGS):
+            return {"ok": True, "error": ""}
+        if action_id in {launcher.password_action(b) for b in launcher.PASSWORD_PAGES}:
             return {"ok": True, "error": ""}
         return {"ok": False, "error": "That isn't something NOBAD Find can open."}
 
@@ -306,6 +431,69 @@ class FakeApi:
         return {"tier": tier, "steps": [{"feature": f, "id": choice[f],
                                          "needs_download": bool(choice[f]) and f != "ocr" and choice[f] not in self.ready}
                                         for f in ("text", "photo", "ocr")]}
+
+    # first-run setup (Api.setup_offer / setup_accept / setup_later, the real firstrun and modelsuggest on the fixed PC)
+    scanned = {"photos": 1240, "documents": 3180}           # what the fake's first scan counted
+
+    def _setup_items(self):
+        from nobadfind import firstrun, models as cat, modelsuggest, profile
+        pc = self.hardware()
+        focus = self.settings.get("language_focus") or "english"
+        classes = profile.effective(profile.classify(pc), self.settings)
+        sugg = modelsuggest.for_pc(pc, classes, {"runtime": {"photo_talk": "vulkan"}}, "balanced", focus)
+        choice = cat.recommend_choice(pc, focus, sugg)
+        states = {mid: ("downloading", "") if d["state"] == "downloading" else ("failed", d["error"])
+                  for mid, d in self.dl.items() if cat.get(mid) and (d["state"] == "downloading" or d["error"])}
+        items = firstrun.items(sugg, choice, pc, self.scanned, "C:\\nobad-contract-no-models", "llama-vulkan", states)
+        for i in items:
+            rt = i["runtime"]
+            if rt and rt["id"] in self.ready:
+                rt["size_mb"] = 0
+            mine = 0 if i["model"] in self.ready else cat.missing_mb(i["model"], "C:\\nobad-contract-no-models")
+            i["size_mb"] = mine + (rt["size_mb"] if rt else 0)
+            i["on_disk"] = i["size_mb"] == 0
+            if i["on_disk"] and i["state"] == "not_downloaded":
+                i["state"] = "ready"
+        return pc, classes, choice, items, firstrun.notes(sugg)
+
+    def setup_offer(self):
+        from nobadfind import firstrun, modelsuggest
+        pc, classes, _choice, items, notes = self._setup_items()
+        state = self.settings["setup_offer"]
+        lk = modelsuggest.like(pc, classes)
+        busy = any(i["state"] == "downloading" for i in items)
+        retry = state == "accepted" and any(i["state"] == "failed" for i in items)
+        for i in items:
+            i["checked"] = i["checked"] or i["state"] == "failed"       # what failed stays ticked, to try again
+        return {"show": not busy and (state == "pending" or retry), "state": state, "walked": True,
+                "pc": {"like": lk["profile"], "similar": lk["similar"], "summary": f"{lk['text']}: {lk['why']}",
+                       "classes": {k: classes.get(k) for k in ("gpu", "cpu", "storage", "memory")}, "hardware": pc},
+                "items": items, "notes": notes, "total_mb": firstrun.total_mb(items),
+                "est_download": None}
+
+    def setup_accept(self, ids, consent):
+        if consent != "DOWNLOAD":
+            return {"ok": False, "error": "Nothing is downloaded until you choose Download.", "started": []}
+        by = {i["model"]: i for i in self._setup_items()[3]}
+        if any(mid not in by for mid in ids):
+            return {"ok": False, "error": "That model isn't one suggested for this PC.", "started": []}
+        started = []
+        for mid in ids:
+            for x in [mid] + ([by[mid]["runtime"]["id"]] if by[mid]["runtime"] else []):
+                if x not in self.ready and self.model_download(x, "DOWNLOAD").get("ok"):
+                    started.append(x)
+        self.settings["setup_offer"] = "accepted" if started else "done"
+        return {"ok": True, "error": "", "started": started}
+
+    def setup_later(self, remind=True):
+        if self.settings["setup_offer"] == "done":
+            return {"ok": True, "error": ""}
+        self.settings["setup_offer"] = "later"
+        if remind:
+            self.notify.post("suggestion", "Suggested models for this PC",
+                             "They are in Settings > Models, under Suggested for this PC. Nothing was downloaded.",
+                             action="open_models", key="setup_later", once=True)
+        return {"ok": True, "error": ""}
 
     def model_language(self, focus):
         if focus not in ("english", "multilingual", "hindi"):
@@ -456,12 +644,18 @@ SCOPE_INFO = {
          "names_only": "none", "why": "Mapped network drives.", "examples": ["Z:\\"],
          "included": False, "locked": False, "count": None}]}
 
+CAPABILITY_SAMPLE = {"free_mb": 2200, "commit_pct": 62.0, "commit_free_mb": 9000, "cpu": 24.0, "find_cpu": 4.0,
+                     "gpu": 3.0, "battery": False, "battery_saver": False,
+                     "gpu_mem": {"kind": "shared", "free_mb": 7300, "used_mb": 700, "budget_mb": 8000}}
+
 STATUS_FULL = {
     "phase": "text", "files": 1200, "texts": 310, "vectors": 0, "paused": "", "rate": 0, "errors": 0,
     "plan": {"cpu": 16, "ssd": True, "walk_threads": 32, "text_workers": 8, "text_workers_idle": 15},
     "last_scan": 1763400000.0,
     "with_text": 310, "chunks": 900, "name_vectors": 0, "photo_vectors": 0, "encrypted": True, "db_bytes": 5242880,
     "counting_totals": False,
+    "totals_at": 1763400000.0, "totals_state": "ready", "totals_error": "",
+    "counts_at": 1763400000.0, "counts_state": "ready", "counts_error": "",
     "version": "0.7.0",
     "model": {"state": "missing", "got": 0, "size": 0, "error": ""},
     "photo_model": {"state": "missing", "got": 0, "size": 0, "error": ""},
@@ -521,6 +715,7 @@ class Engine:
         self.events = Events(lambda: [self.conn], lambda c: None, self.api, every=2.0)
         self.activity.listen(self.events.activity)
         self.api.on_quit = self.events.quitting
+        self.api.notify.listen(self.events.notification)
         self.methods = handlers.methods(self.api, self.events,
                                         lambda: {"app": "NOBAD Find", "version": "0.0.0-contract", "pid": 4242})
 
@@ -580,5 +775,8 @@ class Engine:
                 u._progress(t["got"])
             elif "state" in t:
                 u._set(t["state"])
+        elif do == "notify":
+            self.api.notify.post(t["kind"], t["title"], t["body"], t.get("severity", "info"),
+                                 action=t.get("action"), key=t.get("key"), detail=t.get("detail", ""))
         else:
             raise ValueError(f"unknown engine trigger {do!r}")

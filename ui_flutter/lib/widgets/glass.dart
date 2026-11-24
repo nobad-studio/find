@@ -1,12 +1,13 @@
 /// Frosted spatial glass: the backdrop and the three layers that float over it.
 ///
-/// - [Backdrop]: the window's deep (or pale) base with two soft glows, painted once into its own layer. Over the
-///   Windows Mica system backdrop (composited by Windows, free for this process) it is translucent.
+/// - [Backdrop]: the window's deep (or pale) base with soft glows, painted once into its own layer. Over Windows'
+///   Acrylic system backdrop (both styles; Mica if Windows refuses Acrylic; composited by Windows, free for this
+///   process) it is translucent.
 /// - [Glass]: a floating layer with continuous (superellipse) corners, a translucent fill, a 1 px light rim on the
 ///   top edge fading down the sides, and a soft large shadow. Real blur ([GlassLevel.blur]) only for dialogs,
 ///   which float over content. Measured (docs/measurements.md): a blurred palette cost 40-135 MB at 1080p while
 ///   only the still backdrop was behind it, so the palette, the detail pane and the cards take their frost from
-///   Windows' Mica, the fill and the rim instead.
+///   Windows' backdrop, the fill and the rim instead.
 library;
 
 import 'dart:ui' as ui;
@@ -14,6 +15,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/widgets.dart';
 
 import '../app/theme/colors.dart';
+import '../app/theme/tokens.dart';
 
 enum GlassLevel {
   /// Results and tiles on the backdrop: fill and rim, no blur, a small shadow.
@@ -47,8 +49,8 @@ class _BackdropPainter extends CustomPainter {
     final r = Offset.zero & size;
     canvas.drawRect(r, Paint()..color = c.canvas);
     final big = size.longestSide;
-    // soft coloured light behind the glass (like a macOS wallpaper seen through frosted panes): the NOBAD orange
-    // high on the left, a magenta in the middle, an indigo low on the right. Painted once into its own layer.
+    // soft coloured light behind the glass. Classic: the NOBAD orange high on the left, a magenta in the middle, an
+    // indigo low on the right. Painted once into its own layer.
     void glow(double x, double y, double radius, Color col) => canvas.drawRect(
       r,
       Paint()
@@ -59,6 +61,16 @@ class _BackdropPainter extends CustomPainter {
           const [0, .45, 1],
         ),
     );
+    if (c.frost) {
+      // Minimal ice over Windows' Acrylic: cold light, like a winter sky seen through frosted ice. Glacier cyan,
+      // large, from the top left; deep ice low on the right; a pale haze across the middle; the orange only a
+      // small ember (it belongs to actions)
+      glow(.06, -.04, .62, c.glowGlacier);
+      glow(.50, .42, .55, c.glowHaze);
+      glow(.98, 1.04, .62, c.glowCool);
+      glow(.92, .02, .20, c.glowWarm);
+      return;
+    }
     glow(.10, .05, .55, c.glowWarm);
     glow(.55, .55, .45, c.glowMagenta);
     glow(.95, 1.0, .60, c.glowCool);
@@ -77,7 +89,7 @@ class Glass extends StatelessWidget {
     super.key,
     required this.child,
     this.level = GlassLevel.card,
-    this.radius = 18,
+    this.radius = NbRadius.card,
     this.padding,
     this.fill,
     this.rim,
@@ -101,29 +113,33 @@ class Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    // Nocturne: the reference's big, soft corners (22 -> 32 on cards and panels)
+    // (cards and panels only: smaller corners, such as a window's own, stay as they are)
+    final radius = c.smoke && this.radius >= NbRadius.card ? this.radius * 1.45 : this.radius;
     final shape = RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(radius));
     final base =
         fill ??
         switch (level) {
           GlassLevel.card => c.card,
           GlassLevel.panel => c.panel,
-          GlassLevel.blur => c.panel,
+          GlassLevel.blur => c.dialog,
         };
+    // macOS-like: a soft, large, low-opacity shadow under the glass; a hovered card lifts a little
     final shadow = switch (level) {
       GlassLevel.card => [
         BoxShadow(
-          color: c.float.withValues(alpha: c.float.a * (.22 + .5 * lift)),
-          blurRadius: 8 + 10 * lift,
-          offset: Offset(0, 2 + 4 * lift),
-          spreadRadius: -4,
+          color: c.float.withValues(alpha: c.float.a * (.30 + .30 * lift)),
+          blurRadius: 24 + 12 * lift,
+          offset: Offset(0, 8 + 4 * lift),
+          spreadRadius: -10,
         ),
       ],
       _ => [
         BoxShadow(
-          color: c.float.withValues(alpha: c.float.a * .45),
-          blurRadius: 24,
-          offset: const Offset(0, 6),
-          spreadRadius: -10,
+          color: c.float.withValues(alpha: c.float.a * .55),
+          blurRadius: 44,
+          offset: const Offset(0, 16),
+          spreadRadius: -14,
         ),
       ],
     };

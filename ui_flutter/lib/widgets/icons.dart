@@ -6,6 +6,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import '../app/theme/colors.dart';
+import '../app/theme/tokens.dart';
+
 enum NbGlyph {
   search,
   rings,
@@ -35,6 +38,34 @@ enum NbGlyph {
   keyboard,
   info,
   more,
+  // notifications
+  bell,
+  warning,
+  error,
+  // the content pane: Settings groups, model rows, this PC's tiles (D1)
+  folderShut,
+  list,
+  palette,
+  power,
+  openFile,
+  bolt,
+  memory,
+  processor,
+  graphics,
+  scan,
+  chat,
+  globe,
+  textDoc,
+  translate,
+  moon,
+  apps,
+  archive,
+  window,
+  sync,
+  remove,
+  battery,
+  pc,
+  pulse,
 }
 
 /// Windows 11's own outline icons (the Segoe Fluent Icons font that ships with Windows; nothing bundled), one set
@@ -78,7 +109,33 @@ class NbIcon extends StatelessWidget {
     NbGlyph.shield: 0xEA18,
     NbGlyph.keyboard: 0xE765,
     NbGlyph.info: 0xE946,
+    NbGlyph.bell: 0xEA8F, // Ringer
+    NbGlyph.warning: 0xE7BA,
+    NbGlyph.error: 0xEA39, // ErrorBadge
     NbGlyph.more: 0xE712,
+    NbGlyph.folderShut: 0xE8B7, // Folder
+    NbGlyph.list: 0xE8FD, // BulletedList
+    NbGlyph.palette: 0xE790, // Color
+    NbGlyph.power: 0xE7E8, // PowerButton
+    NbGlyph.openFile: 0xE8E5, // OpenFile
+    NbGlyph.bolt: 0xE945, // LightningBolt
+    NbGlyph.memory: 0xE964, // Memory
+    NbGlyph.processor: 0xE950, // Processing
+    NbGlyph.graphics: 0xF211, // a graphics card
+    NbGlyph.scan: 0xEE6F, // a scan frame: words read from pictures
+    NbGlyph.chat: 0xE8BD, // Message
+    NbGlyph.globe: 0xE774, // Globe
+    NbGlyph.textDoc: 0xF000, // a page of text
+    NbGlyph.translate: 0xF2B7, // Translate
+    NbGlyph.moon: 0xE708, // QuietHours
+    NbGlyph.apps: 0xECAA, // AppIconDefault
+    NbGlyph.archive: 0xE7B8, // a box of kept files
+    NbGlyph.window: 0xE737, // a window
+    NbGlyph.sync: 0xE895, // Sync: updates
+    NbGlyph.remove: 0xE74D, // Delete
+    NbGlyph.battery: 0xE83F, // Battery
+    NbGlyph.pc: 0xE977, // a PC and its screen
+    NbGlyph.pulse: 0xE9D9, // Diagnostic
   };
 
   @override
@@ -95,6 +152,108 @@ class NbIcon extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// An icon in its tile: one size (32 px), one radius and the glyph at 16 everywhere: Settings group headers, model
+/// rows, this PC's tiles, Home's categories, the Index cards. Classic: a tile of the meaning's own hue ([tints]).
+/// Minimal ice: a cool monochrome tile. [accent] (the selected or suggested one) takes the orange in both.
+class GlyphTile extends StatelessWidget {
+  const GlyphTile(this.glyph, {super.key, this.accent = false});
+  final NbGlyph glyph;
+  final bool accent;
+
+  /// One colour per meaning, the same everywhere (Classic). Glyphs not listed are neutral.
+  static const tints = {
+    // speed and how hard it works
+    NbGlyph.gauge: NbTint.orange,
+    NbGlyph.bolt: NbTint.orange,
+    NbGlyph.sliders: NbTint.orange,
+    // privacy and what is kept
+    NbGlyph.shield: NbTint.green,
+    NbGlyph.battery: NbTint.green,
+    NbGlyph.clock: NbTint.teal,
+    NbGlyph.archive: NbTint.teal,
+    NbGlyph.apps: NbTint.teal,
+    // folders and what is indexed
+    NbGlyph.folder: NbTint.amber,
+    NbGlyph.folderShut: NbTint.amber,
+    NbGlyph.list: NbTint.amber,
+    NbGlyph.drive: NbTint.amber,
+    NbGlyph.bell: NbTint.amber,
+    // keys, the window, talk
+    NbGlyph.keyboard: NbTint.violet,
+    NbGlyph.window: NbTint.violet,
+    NbGlyph.moon: NbTint.violet,
+    NbGlyph.chat: NbTint.violet,
+    NbGlyph.globe: NbTint.teal,
+    // search and meaning
+    NbGlyph.search: NbTint.blue,
+    NbGlyph.openFile: NbTint.blue,
+    NbGlyph.textDoc: NbTint.blue,
+    NbGlyph.translate: NbTint.blue,
+    NbGlyph.download: NbTint.blue,
+    // the PC's parts
+    NbGlyph.processor: NbTint.cyan,
+    NbGlyph.chip: NbTint.cyan,
+    NbGlyph.memory: NbTint.cyan,
+    NbGlyph.pulse: NbTint.cyan,
+    NbGlyph.pc: NbTint.cyan,
+    NbGlyph.graphics: NbTint.magenta,
+    NbGlyph.palette: NbTint.magenta,
+    // photos and pictures
+    NbGlyph.image: NbTint.pink,
+    NbGlyph.scan: NbTint.pink,
+    // Home's categories: documents, videos and music, code
+    NbGlyph.doc: NbTint.orange,
+    NbGlyph.media: NbTint.magenta,
+    NbGlyph.code: NbTint.violet,
+    // about, updates, quitting
+    NbGlyph.info: NbTint.neutral,
+    NbGlyph.sync: NbTint.neutral,
+    NbGlyph.power: NbTint.neutral,
+  };
+
+  /// Every icon tile's size, everywhere (the glyph is 16, centred).
+  static const size = 32.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = NbColors.of(context);
+    final (top, bottom, rim, ink) = look(c, glyph, accent: accent);
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: shape(top, bottom, rim),
+      child: NbIcon(glyph, color: ink),
+    );
+  }
+
+  /// Every icon tile's shape: a squircle (continuous corners) with a soft top-to-bottom gradient and a 1 px rim.
+  static ShapeDecoration shape(Color top, Color bottom, Color rim) => ShapeDecoration(
+    gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [top, bottom]),
+    shape: RoundedSuperellipseBorder(
+      borderRadius: const BorderRadius.all(Radius.circular(NbRadius.tile)),
+      side: BorderSide(color: rim),
+    ),
+  );
+
+  /// A tile's colours (top, bottom, rim, glyph). Classic: a soft gradient of the meaning's hue, a 1 px rim of it,
+  /// the glyph in it. Minimal ice: a cool tint, a cool white glyph. [accent]: the orange.
+  static (Color, Color, Color, Color) look(NbColors c, NbGlyph glyph, {bool accent = false, NbTint? hue}) {
+    if (c.ice) {
+      final tint = accent ? c.iceAccentTile : c.iceTile;
+      return (
+        tint.withValues(alpha: (tint.a * 1.5).clamp(0, 1)),
+        tint.withValues(alpha: tint.a * .7),
+        tint.withValues(alpha: (tint.a * 1.6).clamp(0, 1)),
+        // the accent glyph: Minimal ice's ice-blue accent (no orange in this style)
+        accent ? c.orange : c.iceGlyph,
+      );
+    }
+    final t = accent ? NbTint.orange : hue ?? tints[glyph] ?? NbTint.neutral;
+    return (c.tileTop(t), c.tileBottom(t), c.tileRim(t), c.tint(t));
+  }
 }
 
 class LevelGlyph extends StatelessWidget {

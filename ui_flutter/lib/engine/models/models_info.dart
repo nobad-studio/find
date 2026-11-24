@@ -5,6 +5,7 @@ library;
 
 import 'json.dart';
 import 'settings.dart' show Hardware;
+import 'setup_offer.dart' show SetupCost;
 
 /// Settings → Models' language choice (contract `language_focus`): it changes the recommendation only.
 enum LanguageFocus {
@@ -53,9 +54,9 @@ const _states = {
 String featureLabel(String feature) =>
     const {
       'text': 'Meaning search',
-      'photo': 'Photos by what is in them',
+      'photo': 'Searching photos',
       'ocr': 'Words in pictures',
-      'talk': 'Talk about photos',
+      'talk': 'Talking about a photo',
       'runtime': 'Runs the photo talk models',
     }[feature] ??
     feature;
@@ -86,7 +87,45 @@ class ModelInfo {
     this.dir = '',
     this.vramMb = 0,
     this.runtime = '',
+    this.outcome = '',
+    this.why = '',
+    this.backend = '',
+    this.cost = const SetupCost(),
+    this.fitsNow,
+    this.chosen = false,
+    this.vectorsChange = false,
   });
+
+  /// 1.2: what the measured floors say about it for this PC: `suggested`, `upgrade`, `lighter`, `not_recommended`,
+  /// `not_measured`; '' = no verdict (Windows OCR, the runtimes, text models of the other language groups, or an
+  /// older engine).
+  final String outcome;
+
+  /// The engine's sentence from the measurements; starts with the outcome's label ([whyText] drops it).
+  final String why;
+
+  /// The runtime the figures are for: `cpu` or `vulkan`.
+  final String backend;
+
+  /// Its measured cost for this PC (`cost_here`); empty when not measured. Generic estimates never appear.
+  final SetupCost cost;
+
+  /// Whether it fits the memory free right now (null: not known).
+  final bool? fitsNow;
+
+  /// The model in use for its feature, or chosen and waiting for its download or for room.
+  final bool chosen;
+
+  /// Choosing it looks at the files again, beside the old vectors.
+  final bool vectorsChange;
+
+  bool get suggested => outcome == 'suggested';
+
+  /// Above what is suggested for this PC: an upgrade, or not recommended. Its cost comes first.
+  bool get aboveSuggestion => outcome == 'upgrade' || outcome == 'not_recommended';
+
+  /// "Use anyway" after the cost screen.
+  bool get notRecommended => outcome == 'not_recommended';
 
   /// 1.1, talk models: measured graphics memory on the Vulkan runtime (0 = not sent).
   final double vramMb;
@@ -128,7 +167,7 @@ class ModelInfo {
   /// "English, Hindi, about 100 languages".
   String get languageText => [for (final x in languages) _language(x)].join(', ');
 
-  ModelInfo withState(ModelUseState s, {bool? recommended}) => ModelInfo(
+  ModelInfo withState(ModelUseState s, {bool? recommended, bool? chosen}) => ModelInfo(
     id: id,
     feature: feature,
     name: name,
@@ -150,6 +189,13 @@ class ModelInfo {
     dir: dir,
     vramMb: vramMb,
     runtime: runtime,
+    outcome: outcome,
+    why: why,
+    backend: backend,
+    cost: cost,
+    fitsNow: fitsNow,
+    chosen: chosen ?? this.chosen,
+    vectorsChange: vectorsChange,
   );
 
   bool get onDisk => builtin || state == ModelUseState.ready || state == ModelUseState.active;
@@ -179,6 +225,13 @@ class ModelInfo {
       dir: jStr(m['dir']),
       vramMb: jNum(m['vram_mb']),
       runtime: jStr(m['runtime']),
+      outcome: jStr(m['outcome']),
+      why: jStr(m['why']),
+      backend: jStr(m['backend']),
+      cost: SetupCost.fromJson(m['cost_here']),
+      fitsNow: m['fits_now'] is bool ? m['fits_now'] as bool : null,
+      chosen: jBool(m['chosen']),
+      vectorsChange: jBool(m['vectors_change']),
     );
   }
 }
@@ -226,14 +279,85 @@ class ModelsInfo {
 
 /// `model_use` answer.
 class ModelUse {
-  const ModelUse(this.ok, {this.error = '', this.needsDownload = false});
+  const ModelUse(this.ok, {this.error = '', this.needsDownload = false, this.needsConfirm = false});
   final bool ok;
   final String error;
   final bool needsDownload;
 
+  /// 1.2: the model is above the suggestion and was not chosen: show its measured cost, then ask again with confirm.
+  final bool needsConfirm;
+
   static ModelUse fromJson(Object? v) {
     final m = jMap(v);
-    return ModelUse(jBool(m['ok']), error: jStr(m['error']), needsDownload: jBool(m['needs_download']));
+    return ModelUse(
+      jBool(m['ok']),
+      error: jStr(m['error']),
+      needsDownload: jBool(m['needs_download']),
+      needsConfirm: jBool(m['needs_confirm']),
+    );
+  }
+}
+
+/// One feature `reset_suggested` moves (or would move) to the suggested model.
+class ResetChange {
+  const ResetChange({
+    required this.feature,
+    required this.id,
+    this.name = '',
+    this.from = '',
+    this.fromName = '',
+    this.vectorsChange = false,
+    this.indexH,
+    this.measuredOn = '',
+    this.needsDownload = false,
+  });
+  final String feature;
+  final String id;
+  final String name;
+  final String from;
+  final String fromName;
+  final bool vectorsChange;
+
+  /// Hours to look at the files again for the new model; null = not measured.
+  final double? indexH;
+
+  /// `this PC` or `similar PC`: where [indexH] was measured.
+  final String measuredOn;
+  final bool needsDownload;
+
+  static ResetChange? fromJson(Object? v) {
+    final m = jMap(v);
+    if (jStr(m['id']).isEmpty) return null;
+    return ResetChange(
+      feature: jStr(m['feature']),
+      id: jStr(m['id']),
+      name: jStr(m['name']),
+      from: jStr(m['from']),
+      fromName: jStr(m['from_name']),
+      vectorsChange: jBool(m['vectors_change']),
+      indexH: jNumOrNull(m['index_h']),
+      measuredOn: jStr(m['measured_on']),
+      needsDownload: jBool(m['needs_download']),
+    );
+  }
+}
+
+/// `reset_suggested` answer: [applied] false with [changes] = nothing was changed yet (they need the user's OK).
+class ResetSuggested {
+  const ResetSuggested({this.ok = true, this.error = '', this.applied = false, this.changes = const []});
+  final bool ok;
+  final String error;
+  final bool applied;
+  final List<ResetChange> changes;
+
+  static ResetSuggested fromJson(Object? v) {
+    final m = jMap(v);
+    return ResetSuggested(
+      ok: jBool(m['ok']),
+      error: jStr(m['error']),
+      applied: jBool(m['applied']),
+      changes: jList(m['changes'], ResetChange.fromJson),
+    );
   }
 }
 
@@ -259,6 +383,137 @@ class AutoConfig {
         if (jStr(x['id']).isEmpty) return null;
         return AutoStep(feature: jStr(x['feature']), id: jStr(x['id']), needsDownload: jBool(x['needs_download']));
       }),
+    );
+  }
+}
+
+/// The live numbers behind [CapabilityState] (contract `capability_state.budget`); null = unknown right now.
+class CapabilityBudget {
+  const CapabilityBudget({
+    this.live = false,
+    this.installedMb,
+    this.freeMb,
+    this.reserveMb = 0,
+    this.usableMb,
+    this.commitPct,
+    this.commitFreeMb,
+    this.gpuKind,
+    this.gpuFreeMb,
+    this.gpuBudgetMb,
+    this.cpu,
+    this.gpu,
+    this.battery = false,
+    this.batterySaver = false,
+  });
+  final bool live;
+  final int? installedMb;
+  final int? freeMb;
+  final int reserveMb;
+  final int? usableMb;
+  final double? commitPct;
+  final int? commitFreeMb;
+
+  /// 'dedicated' (a graphics card's own memory) or 'shared' (an integrated GPU such as Intel Iris Xe), or null.
+  final String? gpuKind;
+  final int? gpuFreeMb;
+  final int? gpuBudgetMb;
+  final double? cpu;
+  final double? gpu;
+  final bool battery;
+  final bool batterySaver;
+
+  static CapabilityBudget fromJson(Object? v) {
+    final m = jMap(v);
+    final kind = jStr(m['gpu_kind']);
+    return CapabilityBudget(
+      live: jBool(m['live']),
+      installedMb: jIntOrNull(m['installed_mb']),
+      freeMb: jIntOrNull(m['free_mb']),
+      reserveMb: jInt(m['reserve_mb']),
+      usableMb: jIntOrNull(m['usable_mb']),
+      commitPct: jNumOrNull(m['commit_pct']),
+      commitFreeMb: jIntOrNull(m['commit_free_mb']),
+      gpuKind: kind.isEmpty ? null : kind,
+      gpuFreeMb: jIntOrNull(m['gpu_free_mb']),
+      gpuBudgetMb: jIntOrNull(m['gpu_budget_mb']),
+      cpu: jNumOrNull(m['cpu']),
+      gpu: jNumOrNull(m['gpu']),
+      battery: jBool(m['battery']),
+      batterySaver: jBool(m['battery_saver']),
+    );
+  }
+}
+
+/// One downloaded model's folder on disk (`storage_use` `models`).
+class StorageModel {
+  const StorageModel(this.id, this.mb);
+  final String id;
+  final double mb;
+}
+
+/// `storage_use` (1.2.0): what NOBAD Find keeps on this PC, measured by the engine from file sizes on disk, in MB.
+class StorageUse {
+  const StorageUse({
+    this.indexMb = 0,
+    this.walMb = 0,
+    this.models = const [],
+    this.runtimeMb = 0,
+    this.tmpMb = 0,
+    this.totalMb = 0,
+  });
+  final double indexMb;
+  final double walMb;
+  final List<StorageModel> models;
+  final double runtimeMb;
+  final double tmpMb;
+  final double totalMb;
+
+  /// The downloaded models together.
+  double get modelsMb => models.fold(0.0, (a, m) => a + m.mb);
+
+  static StorageUse fromJson(Object? v) {
+    final m = jMap(v);
+    return StorageUse(
+      indexMb: jNum(m['index_mb']),
+      walMb: jNum(m['wal_mb']),
+      models: jList(m['models'], (x) {
+        final e = jMap(x);
+        final id = jStr(e['id']);
+        return id.isEmpty ? null : StorageModel(id, jNum(e['mb']));
+      }),
+      runtimeMb: jNum(m['runtime_mb']),
+      tmpMb: jNum(m['tmp_mb']),
+      totalMb: jNum(m['total_mb']),
+    );
+  }
+}
+
+/// `capability_state` (2026-11-21): which models this PC can run RIGHT NOW, from free memory, commit, graphics
+/// memory, load and battery, not the installed memory alone. A model the engine didn't list is unknown (null).
+class CapabilityState {
+  const CapabilityState({
+    this.canRun = const {},
+    this.why = const {},
+    this.device = const {},
+    this.budget = const CapabilityBudget(),
+  });
+  final Map<String, bool> canRun;
+  final Map<String, String> why;
+  final Map<String, String> device;
+  final CapabilityBudget budget;
+
+  bool? runsNow(String id) => canRun[id];
+
+  static CapabilityState fromJson(Object? v) {
+    final m = jMap(v);
+    return CapabilityState(
+      canRun: {
+        for (final e in jMap(m['can_run']).entries)
+          if (e.value is bool) e.key: e.value as bool,
+      },
+      why: {for (final e in jMap(m['why']).entries) e.key: jStr(e.value)},
+      device: {for (final e in jMap(m['device']).entries) e.key: jStr(e.value)},
+      budget: CapabilityBudget.fromJson(m['budget']),
     );
   }
 }

@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "NOBAD Find"
-APP_VER = "1.1.1"
+APP_VER = "1.2.0"
 # A count over the whole index (Store.stats, the phase counts) is reused at least this many times as long as it
 # took: <= 5% of a core on a big index (api.Api._stats / _counts, indexer.Indexer._refresh_stats)
 COUNT_SHARE = 20
@@ -103,6 +103,10 @@ APP_SECRET_PATHS = (("powershell", "psreadline"), ("roaming", "filezilla"), ("ro
 ENV_FILE = ".env"
 # The word set_settings needs (param consent) to turn secret_app_files on; the UI sends it after the confirm dialog
 APP_FILES_CONSENT = "READ_APP_SECRETS"
+# The word set_settings needs to make browser_data read more than it does (off -> history -> history_logins); the UI
+# sends it after the confirm dialog that shows what is read
+BROWSER_CONSENT = "READ_BROWSER_DATA"
+BROWSER_DATA = ("off", "history", "history_logins")
 # Browser profiles and app databases: caches, not secrets, but their content is never read (binary noise)
 NAMES_ONLY_PATHS = (("chrome", "user data"), ("chromium", "user data"), ("edge", "user data"),
                     ("brave-browser", "user data"), ("vivaldi", "user data"), ("opera software",),
@@ -151,7 +155,21 @@ DEFAULTS = {
     "bar_hotkey": "ctrl+shift+space",
     "pause_on_call": True,          # while the microphone or camera is in use
     "workers": 0,                   # 0 = pick from the CPU
-    "power": "balanced",            # 0.9.3: balanced (leaves you room) | boost (every thread, even while you use the PC)
+    "power": "balanced",            # 0.9.3: balanced | boost. 1.2.0: read and written through performance_goal
+                                    # (fast <-> boost, anything else <-> balanced) for older UIs; never decides
+    # 1.2.0 (spec 2026-11-22 §4.2, §8b): the goal and the user's overrides (Settings > Performance). Precedence:
+    # safety limits, then an override, then the goal, then auto. "Reset to safe defaults" puts SAFE_DEFAULTS back.
+    "performance_goal": "balanced", # quiet | balanced | fast (fast = 0.9.3's Boost); taken once from power
+    "gpu_background": "auto",       # auto | on | off: the graphics card for background work (auto: not at quiet)
+    "backend_photos": "auto",       # auto | one of FEATURE_BACKENDS[feature] (only the installed ones are offered)
+    "backend_text": "auto",
+    "backend_talk": "auto",
+    "variant_siglip2-base": "auto", # auto | one of VARIANTS["siglip2-base"]
+    "profile_override_gpu": "auto", # auto | one of PROFILE_CLASSES, per axis (profile.effective)
+    "profile_override_cpu": "auto",
+    "profile_override_storage": "auto",
+    "profile_override_memory": "auto",
+    "gpu_reserve_min_mb": 512,      # the minimum of the GPU reserve max(this, 15% of free graphics memory): 512-4096
     "safety_net": True,             # 0.9.3: even at Boost, step down and free memory before the PC struggles
     "hotkey": "win+shift+f",
     "autostart": False,
@@ -160,8 +178,13 @@ DEFAULTS = {
     "wsearch_prev": "",             # Windows Search start type saved before NOBAD Find turned it off
     "theme": "dark",
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)
+    "theme_style": "classic",       # the window's look: "classic" (warm glows), "ice" (cold frost) or "nocturne" (smoked glass)
     "bg_notice_seen": False,        # the one-time "closing keeps NOBAD Find ready" notice was dismissed
     "welcome_seen": False,          # the Flutter UI's first-run welcome was dismissed (Start searching)
+    # 1.2.0 (plan Task 6): the first-run models window after the first scan (firstrun.py): pending (not answered)
+    # | later (a reminder was left; it is on Settings > Models) | accepted (downloads started) | done. Settings that
+    # predate it with meaning or photo search on count as done (Settings)
+    "setup_offer": "pending",
     "update_check": True,           # look for a newer NOBAD Find once a day (GitHub, nobad-studio/find; update.py)
     "models_stay_loaded": False,    # on: models stay in memory (instant searches, more memory); off: freed when idle
     "tray": True,                   # NOBAD Find's icon in the notification area (the engine's, works with the UI closed)
@@ -177,8 +200,54 @@ DEFAULTS = {
     # (const.APP_SECRET_*: command histories, FileZilla/WinSCP sites, gh/npm/cargo... tokens, .env files) into the
     # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off removes what was read.
     "secret_app_files": False,      # turned on only with set_settings consent APP_FILES_CONSENT (below)
+    # 1.2.0 (browser spec 2026-11-22): the browsers' history, bookmarks and downloads ("history"), plus saved
+    # logins' site and user name ("history_logins"; never a password), copied and read by browserdata.py into the
+    # encrypted index. Asked for with a confirm dialog in Settings > Privacy; off deletes what was read.
+    "browser_data": "off",          # off | history | history_logins; reading more needs consent BROWSER_CONSENT
     "turbo": False,                 # the optional NTFS index helper (ntfs.py); asks for admin once (turbosvc.py)
     # your own typed search questions, kept in the encrypted index for autocomplete (history.py, maintainer
     # decision 2026-11-19); off deletes them. Not activity history: nothing from Windows or other programs.
     "search_history": True,
+    # 2026-11-21: heavy creative apps (video, 3D, audio). While one is in front NOBAD Find works at Light and leaves
+    # the graphics card alone, like for a game. Program file names; the user can edit the list.
+    "creative_apps": [],            # filled from CREATIVE_APPS below
+    # notifications (notify.py, maintainer request 2026-11-21): all of them in the window's bell; Windows toasts
+    # (local only, on the lock screen and in the Action Center) from notify_level up
+    "notify_toasts": True,
+    "notify_level": "warning",      # the lowest severity that gets a Windows toast: info | warning | error
+    "notify_quiet": True,           # no toast while a game, a call or a presentation is on (the governor's detection)
+    "notify_show_names": False,     # file names in notifications; off: never a path or a name
 }
+
+CREATIVE_APPS = [
+    # video editing and encoding
+    "resolve.exe", "adobe premiere pro.exe", "afterfx.exe", "adobe media encoder.exe", "capcut.exe",
+    "shotcut.exe", "kdenlive.exe", "handbrake.exe", "obs64.exe",
+    # 3D and game engines
+    "blender.exe", "3dsmax.exe", "maya.exe", "cinema 4d.exe", "houdinifx.exe", "unity.exe", "unrealeditor.exe",
+    # audio (DAWs)
+    "fl64.exe", "reaper.exe", "ableton live 12 suite.exe", "bitwig studio.exe", "studio one.exe",
+    # photo
+    "photoshop.exe", "lightroom.exe",
+]
+DEFAULTS["creative_apps"] = list(CREATIVE_APPS)
+
+# 1.2.0 Settings > Performance (spec 2026-11-22 §4.2, §8b)
+GOALS = ("quiet", "balanced", "fast")
+GPU_BACKGROUND = ("auto", "on", "off")
+PERF_FEATURES = ("photos", "text", "talk")           # backend_<feature>
+# the backends each feature can run on in this version (spec 8b lists CUDA too: no CUDA build ships yet); only
+# the installed ones are offered (hardware.backends)
+FEATURE_BACKENDS = {"photos": ("cpu",), "text": ("cpu", "directml"), "talk": ("cpu", "vulkan")}
+VARIANTS = {"siglip2-base": ("fp16-vision", "fp32-vision")}    # variant_<model>: the lighter one first
+PROFILE_AXES = ("gpu", "cpu", "storage", "memory")   # profile_override_<axis>
+PROFILE_CLASSES = ("performance", "balanced", "efficiency", "compatibility")
+GPU_RESERVE_MIN_MB, GPU_RESERVE_MAX_MB = 512, 4096
+# "Reset to safe defaults" (§8b rule 3) puts these back to DEFAULTS (power follows the goal) ...
+SAFE_DEFAULTS = (("performance_goal", "gpu_background") + tuple(f"backend_{f}" for f in PERF_FEATURES)
+                 + tuple(f"variant_{m}" for m in VARIANTS) + ("workers",)
+                 + tuple(f"profile_override_{a}" for a in PROFILE_AXES) + ("gpu_reserve_min_mb",))
+# ... and keeps these: the index, the chosen models (Settings > Models), privacy settings, folders, and the
+# learned per-app game levels (Settings > Performance has their own Reset)
+SAFE_DEFAULTS_KEEP = ("index", "models", "privacy", "folders", "learned_apps")
+CREATIVE_MAX = 100              # at most this many names in the list

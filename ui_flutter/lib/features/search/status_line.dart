@@ -29,12 +29,21 @@ class StatusLine extends StatelessWidget {
         final st = s.status.status;
         final ok = s.status.connected;
         final reason = ok ? (st?.reason ?? '') : '';
+        // Nocturne: a floating dock, a pill of glass with a soft shadow, as in the reference
         return Container(
-          height: 36,
-          margin: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 0),
-          decoration: BoxDecoration(
-            border: Border(top: BorderSide(color: c.line)),
-          ),
+          height: c.smoke ? 46 : 36,
+          margin: c.smoke
+              ? const EdgeInsets.fromLTRB(NbSpace.gutter, 2, NbSpace.gutter, 10)
+              : const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 0),
+          padding: c.smoke ? const EdgeInsets.symmetric(horizontal: 18) : null,
+          decoration: c.smoke
+              ? BoxDecoration(
+                  color: c.panel,
+                  borderRadius: NbRadius.pillAll,
+                  border: Border.all(color: c.line2),
+                  boxShadow: [BoxShadow(color: c.float, blurRadius: 30, offset: const Offset(0, 12), spreadRadius: -12)],
+                )
+              : BoxDecoration(border: Border(top: BorderSide(color: c.line))),
           child: Row(
             children: [
               if (keys) ...[

@@ -126,6 +126,56 @@ void main() {
       await expectLater(s.call('again'), throwsA(isA<EngineOffline>()));
     });
 
+    // a status-lane method answered "busy: try again" is asked again by the session itself (1.2.0 S2)
+    Future<void> busy(FakeTransport t, int id) async {
+      while (t.sent.length < id) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      t.push({
+        'jsonrpc': '2.0',
+        'id': id,
+        'error': {'code': -32603, 'message': 'busy: try again'},
+      });
+    }
+
+    const quick = [Duration(milliseconds: 1), Duration(milliseconds: 1), Duration(milliseconds: 1)];
+
+    test('a busy status-lane call is retried and then succeeds', () async {
+      final t = FakeTransport();
+      final s = RpcSession(t, onEvent: (_) {}, busyRetry: quick);
+      final a = s.call('status_full');
+      await busy(t, 1);
+      await busy(t, 2);
+      while (t.sent.length < 3) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      t.push({'jsonrpc': '2.0', 'id': 3, 'result': 'fine'});
+      expect(await a, 'fine');
+      expect(t.sent.map((m) => m['method']), ['status_full', 'status_full', 'status_full']);
+    });
+
+    test('a status-lane call that stays busy is retried 3 times, then the error surfaces', () async {
+      final t = FakeTransport();
+      final s = RpcSession(t, onEvent: (_) {}, busyRetry: quick);
+      final a = s.call('models');
+      final seen = expectLater(a, throwsA(isA<RpcException>().having((e) => e.message, 'message', 'busy: try again')));
+      for (var id = 1; id <= 4; id++) {
+        await busy(t, id);
+      }
+      await seen;
+      expect(t.sent.length, 4);
+    });
+
+    test('a method outside the status lane is never retried', () async {
+      final t = FakeTransport();
+      final s = RpcSession(t, onEvent: (_) {}, busyRetry: quick);
+      final a = s.call('search');
+      final seen = expectLater(a, throwsA(isA<RpcException>()));
+      await busy(t, 1);
+      await seen;
+      expect(t.sent.length, 1);
+    });
+
     test('times out', () async {
       final s = RpcSession(FakeTransport(), onEvent: (_) {});
       await expectLater(s.call('slow', const {}, const Duration(milliseconds: 10)), throwsA(isA<RpcException>()));

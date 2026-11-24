@@ -1,14 +1,19 @@
-/// Surfaces and read-outs: panels, page and section titles, stat tiles, meters, notices, the toast.
+/// Surfaces and read-outs: panels, page and section titles (with the notification bell), stat tiles, meters, notices,
+/// the toast.
 library;
 
 import 'package:flutter/widgets.dart';
+import 'package:material_ui/material_ui.dart' show Tooltip;
 
+import '../app/scope.dart';
 import '../app/theme/colors.dart';
 import '../app/theme/tokens.dart';
 import '../app/theme/typography.dart';
+import '../features/notifications/notification_bell.dart';
 import '../state/toast_controller.dart';
 import 'controls.dart';
 import 'glass.dart';
+import 'icons.dart';
 
 /// A grouped surface. [live] gives it the orange edge (the thing that's working now).
 class NbPanel extends StatelessWidget {
@@ -29,10 +34,9 @@ class NbPanel extends StatelessWidget {
     final c = NbColors.of(context);
     // a card of frosted glass on the backdrop (no blur: fill and rim)
     return Glass(
-      radius: 18,
       padding: padding,
       rim: live ? c.orangeA(.55) : null,
-      child: clip ? ClipRSuperellipse(borderRadius: BorderRadius.circular(18), child: child) : child,
+      child: clip ? ClipRSuperellipse(borderRadius: BorderRadius.circular(NbRadius.card), child: child) : child,
     );
   }
 }
@@ -124,6 +128,7 @@ class PageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    final bell = AppScope.maybeOf(context)?.notifications; // the main window's bell, on every page
     return Padding(
       padding: padding,
       child: Row(
@@ -142,51 +147,80 @@ class PageHeader extends StatelessWidget {
             ),
           ),
           ?trailing,
+          if (bell != null) ...[
+            if (trailing != null) const SizedBox(width: NbSpace.x2),
+            NotificationBell(controller: bell),
+          ],
         ],
       ),
     );
   }
 }
 
-/// A number with what it is: "186 MB" over "Memory".
+/// A number with what it is: "186 MB" over "Memory", under an [icon] in its tile when given. The value takes at
+/// most 2 lines (3 for a long name) and the label 3, then an ellipsis, with the whole text in a tooltip: a long
+/// text never makes one tile bigger than the others (the grid gives a row one height).
 class StatTile extends StatelessWidget {
-  const StatTile({super.key, required this.value, required this.label, this.live = false});
+  const StatTile({
+    super.key,
+    required this.value,
+    required this.label,
+    this.live = false,
+    this.icon,
+    this.valueMaxLines,
+  });
   final String value;
   final String label;
   final bool live;
+  final NbGlyph? icon;
+
+  /// At most this many lines for the value (null: 2, 3 for a long name); the tooltip has it all.
+  final int? valueMaxLines;
+
+  static const valueLines = 2, labelLines = 3;
 
   @override
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
+    final glyph = icon;
     return NbPanel(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            // a number reads as data; a long name (a graphics card) reads better as text
-            style: value.length > 12
-                ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
-                : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: NbType.text(NbSize.small, c.dim, height: 1.35),
-          ),
-        ],
+      padding: glyph == null ? const EdgeInsets.fromLTRB(12, 9, 12, 9) : const EdgeInsets.all(NbSpace.x3),
+      child: Tooltip(
+        message: '$value\n$label',
+        waitDuration: const Duration(milliseconds: 600),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // the icon above the text, so the text has the tile's whole width (12 px between them)
+            if (glyph != null) ...[GlyphTile(glyph, accent: live), const SizedBox(height: NbSpace.x3)],
+            Text(
+              value,
+              // a long name (a graphics card) may take one more line than a number
+              maxLines: valueMaxLines ?? (value.length > 12 ? valueLines + 1 : valueLines),
+              overflow: TextOverflow.ellipsis,
+              // a number reads as data; a long name (a graphics card) reads better as text
+              style: value.length > 12
+                  ? NbType.text(13.5, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.3)
+                  : NbType.data(16, live ? c.orange : c.text, weight: FontWeight.w600, height: 1.25),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: labelLines,
+              overflow: TextOverflow.ellipsis,
+              style: NbType.text(NbSize.small, c.dim, height: 1.35),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// A grid of tiles that fills the width with as many columns of at least [min] as fit.
+/// A grid of tiles that fills the width with as many columns of at least [min] as fit. Every tile has the same
+/// width, and the tiles of a row the same height (the tallest one's), so no tile is bigger or smaller because of
+/// its text.
 class TileGrid extends StatelessWidget {
   const TileGrid({super.key, required this.children, this.min = 170, this.gap = 10});
   final List<Widget> children;
@@ -198,13 +232,37 @@ class TileGrid extends StatelessWidget {
     builder: (context, box) {
       final cols = ((box.maxWidth + gap) / (min + gap)).floor().clamp(1, 8);
       final w = (box.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [for (final ch in children) SizedBox(width: w, child: ch)],
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < children.length; i += cols) ...[
+            if (i > 0) SizedBox(height: gap),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var j = i; j < children.length && j < i + cols; j++) ...[
+                    if (j > i) SizedBox(width: gap),
+                    TileCell(width: w, child: children[j]),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
       );
     },
   );
+}
+
+/// One cell of a [TileGrid] (the alignment test measures them).
+class TileCell extends StatelessWidget {
+  const TileCell({super.key, required this.width, required this.child});
+  final double width;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(width: width, child: child);
 }
 
 /// A progress bar. [busy]: working with no known end (watching for changes, counting): a still, softly tinted

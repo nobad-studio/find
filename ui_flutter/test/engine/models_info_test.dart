@@ -159,4 +159,59 @@ void main() {
     expect(LanguageFocus.multilingual.wire, 'multilingual');
     expect(LanguageFocus.hindi.label, 'Hindi + English');
   });
+
+  test('1.2: the verdict, cost and choice fields parse; an older engine sends none', () {
+    final m = ModelInfo.fromJson({
+      'id': 'qwen3vl-2b',
+      'feature': 'talk',
+      'outcome': 'upgrade',
+      'why': 'Upgrade: Qwen3-VL 2B: more memory (2,491 MB)',
+      'backend': 'vulkan',
+      'cost_here': {'load_s': 6.21, 'answer_s': 12.08, 'ram_mb': 2491, 'shared_mb': 2058, 'measured_on': 'similar PC'},
+      'fits_now': false,
+      'chosen': true,
+      'vectors_change': false,
+    })!;
+    expect(m.aboveSuggestion && !m.suggested && !m.notRecommended, isTrue);
+    expect(m.cost.loadS, 6.21);
+    expect(m.cost.place, 'on a similar PC');
+    expect(m.cost.here, isFalse);
+    expect(m.fitsNow, isFalse);
+    expect(m.chosen, isTrue);
+    expect(ModelInfo.fromJson({'id': 'x', 'outcome': 'not_recommended'})!.aboveSuggestion, isTrue);
+    expect(ModelInfo.fromJson({'id': 'x', 'outcome': 'lighter'})!.aboveSuggestion, isFalse);
+    final old = ModelInfo.fromJson({'id': 'x'})!;
+    expect((old.outcome, old.why, old.fitsNow, old.chosen, old.cost.isEmpty), ('', '', null, false, true));
+    expect(ModelInfo.fromJson({'id': 'x', 'cost_here': <String, Object?>{}})!.cost.isEmpty, isTrue);
+    final u = ModelUse.fromJson({'ok': false, 'error': 'cost first', 'needs_download': false, 'needs_confirm': true});
+    expect((u.ok, u.needsConfirm), (false, true));
+    expect(ModelUse.fromJson({'ok': true}).needsConfirm, isFalse);
+  });
+
+  test('1.2: reset_suggested parses its changes with the re-index time (null: not measured)', () {
+    final r = ResetSuggested.fromJson({
+      'ok': true,
+      'error': '',
+      'applied': false,
+      'changes': [
+        {
+          'feature': 'photo',
+          'id': 'siglip2-base',
+          'name': 'SigLIP 2 base',
+          'from': 'siglip-base',
+          'from_name': 'SigLIP base',
+          'vectors_change': true,
+          'index_h': 0.24,
+          'measured_on': 'similar PC',
+          'needs_download': true,
+        },
+        {'feature': 'text', 'id': 'gte-small', 'index_h': null, 'measured_on': ''},
+        {'feature': 'text'},
+      ],
+    });
+    expect(r.applied, isFalse);
+    expect(r.changes.length, 2);
+    expect((r.changes[0].fromName, r.changes[0].indexH, r.changes[0].vectorsChange), ('SigLIP base', 0.24, true));
+    expect(r.changes[1].indexH, isNull);
+  });
 }

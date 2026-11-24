@@ -1,5 +1,5 @@
-/// Home, shown while the box and the filters are empty: a short display line, examples to try, the categories as
-/// tiles, files changed lately, and the keys.
+/// Home, shown while the box and the filters are empty: the categories as one row of equal tiles, then the files
+/// changed lately, on the same edges as the search box.
 ///
 /// "Recently changed" is asked for when Home appears, when the engine connects, and again when the index grows
 /// (status events, at most every 15 s) or after a failed try. The engine sends its usual answer; 8 are shown.
@@ -18,6 +18,7 @@ import '../../engine/models/result.dart';
 import '../../state/categories.dart';
 import '../../widgets/smooth_scroll.dart';
 import '../../widgets/common.dart';
+import '../../widgets/controls.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/panels.dart';
@@ -26,6 +27,10 @@ import '../../widgets/pressable.dart';
 class HomeView extends StatefulWidget {
   const HomeView({super.key, required this.onTile});
   final void Function(String words, SearchFilters filters) onTile;
+
+  /// The category row and the recent files card (their edges match the search box's; tested).
+  static const tilesKey = ValueKey('home-tiles');
+  static const listKey = ValueKey('home-list');
 
   @override
   State<HomeView> createState() => _HomeViewState();
@@ -102,71 +107,69 @@ class _HomeViewState extends State<HomeView> {
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     final s = AppScope.of(context);
-    // compact: a short line, the categories as a strip of tiles, then what changed lately; all of it visible at
-    // 1180 x 760 without scrolling, top-left, the rest of the window shows the map
-    return SmoothScroll(builder: (sc) => SingleChildScrollView(controller: sc, 
-      padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x5),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 980),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Semantics(
-                label: 'Browse by category',
-                container: true,
-                child: CategoryTiles(
-                  tiles: [for (final k in SearchCategory.values.skip(1)) (k.label, categoryBadges[k]!, k.filters)],
-                  onTile: (f) => widget.onTile('', f),
-                ),
+    // the categories as one row of equal tiles, then what changed lately; on the search box's edges, and all of
+    // it visible at 1180 x 760 without scrolling
+    return SmoothScroll(
+      builder: (sc) => SingleChildScrollView(
+        controller: sc,
+        padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, NbSpace.x5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              label: 'Browse by category',
+              container: true,
+              child: CategoryTiles(
+                key: HomeView.tilesKey,
+                tiles: [for (final k in SearchCategory.values.skip(1)) (k.label, categoryBadges[k]!, k.filters)],
+                onTile: (f) => widget.onTile('', f),
               ),
-              const SizedBox(height: NbSpace.x4),
-              Glass(
-                radius: 18,
-                padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-                      child: Row(
-                        children: [
-                          Semantics(header: true, child: Text('Recently changed', style: sectionStyle(c))),
-                          const Spacer(),
-                          Pressable(
-                            onTap: () => widget.onTile('', SearchCategory.recent.filters),
-                            semanticLabel: 'All recent files',
-                            builder: (context, p) => Text(
-                              'Show all',
-                              style: NbType.text(12, p.lit ? c.orange : c.dim, weight: FontWeight.w600),
-                            ),
+            ),
+            const SizedBox(height: NbSpace.x4),
+            Glass(
+              key: HomeView.listKey,
+              padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+                    child: Row(
+                      children: [
+                        Semantics(header: true, child: Text('Recently changed', style: sectionStyle(c))),
+                        const Spacer(),
+                        Pressable(
+                          onTap: () => widget.onTile('', SearchCategory.recent.filters),
+                          semanticLabel: 'All recent files',
+                          builder: (context, p) => Text(
+                            'Show all',
+                            style: NbType.text(12, p.lit ? c.orange : c.dim, weight: FontWeight.w600),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                    _RecentList(
-                      files: _recent,
-                      link: s.engine.link.value,
-                      failed: _failed,
-                      onOpen: (r) async {
-                        final res = await s.engine.open(r.id);
-                        if (!res.ok) {
-                          s.toasts.show(res.error.isNotEmpty ? res.error : "That file isn't there any more.");
-                        } else if (s.settings.settings.flag('hide_after_open')) {
-                          s.window.hide();
-                          unawaited(s.engine.uiHidden('main').catchError((Object _) {}));
-                        }
-                      },
-                    ),
-                  ],
-                ),
+                  ),
+                  _RecentList(
+                    files: _recent,
+                    link: s.engine.link.value,
+                    failed: _failed,
+                    onOpen: (r) async {
+                      final res = await s.engine.open(r.id);
+                      if (!res.ok) {
+                        s.toasts.show(res.error.isNotEmpty ? res.error : "That file isn't there any more.");
+                      } else if (s.settings.settings.flag('hide_after_open')) {
+                        s.window.hide();
+                        unawaited(s.engine.uiHidden('main').catchError((Object _) {}));
+                      }
+                    },
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-    ));
+    );
   }
 }
 
@@ -191,7 +194,8 @@ NbGlyph tileGlyph(SearchFilters f) => switch (f) {
   _ => NbGlyph.grid,
 };
 
-/// A strip of starting tiles (Home's categories, a category's narrower searches): compact, never stretched.
+/// A row of starting tiles (Home's categories, a category's narrower searches): every tile the same width, the
+/// row spanning the search box's width (full rows of equal tiles when the window is narrow).
 class CategoryTiles extends StatelessWidget {
   const CategoryTiles({super.key, required this.tiles, required this.onTile, this.current});
   final List<CategoryTile> tiles;
@@ -200,13 +204,54 @@ class CategoryTiles extends StatelessWidget {
   /// The filters in use: the tile with them is lit.
   final SearchFilters? current;
 
+  static const _gap = 8.0, _min = 140.0;
+
   @override
-  Widget build(BuildContext context) => Wrap(
-    spacing: 8,
-    runSpacing: 8,
-    children: [
-      for (final (label, _, f) in tiles) _Tile(filters: f, label: label, on: current == f, onTap: () => onTile(f)),
-    ],
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) {
+      // the most columns that fit and divide the tiles evenly (6, 3, 2 or 1 for six), so every row spans the box
+      final fit = ((box.maxWidth + _gap) / (_min + _gap)).floor().clamp(1, tiles.isEmpty ? 1 : tiles.length);
+      var cols = fit;
+      while (cols > 1 && tiles.length % cols != 0) {
+        cols--;
+      }
+      final w = (box.maxWidth - _gap * (cols - 1)) / cols;
+      return Wrap(
+        spacing: _gap,
+        runSpacing: _gap,
+        children: [
+          for (final (label, _, f) in tiles)
+            SizedBox(
+              width: w,
+              child: _Tile(filters: f, label: label, on: current == f, onTap: () => onTile(f)),
+            ),
+        ],
+      );
+    },
+  );
+}
+
+/// A category's narrower searches above its files: one slim row of chips (28 px), scrolling sideways when the
+/// window is narrow, so the results keep their room. Home keeps the big [CategoryTiles].
+class CategoryChips extends StatelessWidget {
+  const CategoryChips({super.key, required this.tiles, required this.onTile, this.current});
+  final List<CategoryTile> tiles;
+  final ValueChanged<SearchFilters> onTile;
+
+  /// The filters in use: the chip with them is lit.
+  final SearchFilters? current;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        for (final (i, (label, _, f)) in tiles.indexed) ...[
+          if (i > 0) const SizedBox(width: NbSpace.x2),
+          NbChipButton(label, icon: tileGlyph(f), on: current == f, onTap: () => onTile(f)),
+        ],
+      ],
+    ),
   );
 }
 
@@ -228,25 +273,27 @@ class _Tile extends StatelessWidget {
       builder: (context, p) => AnimatedContainer(
         duration: NbMotion.of(context, NbMotion.fast),
         curve: NbMotion.curve,
-        height: 40,
-        padding: const EdgeInsets.fromLTRB(6, 0, 14, 0),
+        // room around the icon tile: 8 px above, below and on its left
+        height: GlyphTile.size + 2 * NbSpace.x2,
+        padding: const EdgeInsets.fromLTRB(NbSpace.x2, 0, NbSpace.x1, 0),
         decoration: BoxDecoration(
-          color: on ? c.orangeA(c.isDark ? .12 : .09) : (p.lit ? c.cardHover : c.card),
+          color: on ? c.orangeA(c.isDark ? .12 : .09) : (p.lit ? c.cardLift : c.card),
           border: Border.all(color: on || p.lit ? c.orangeA(.55) : c.line),
           borderRadius: NbRadius.rowAll,
         ),
+        // fills its grid cell; the icon in the one icon treatment (Classic: its hue; Minimal ice: plain)
         child: Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 28,
-              height: 28,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: c.cardHover, borderRadius: const BorderRadius.all(Radius.circular(10))),
-              child: NbIcon(tileGlyph(filters), size: 16, color: on ? c.orange : c.muted),
+            GlyphTile(tileGlyph(filters), accent: on),
+            const SizedBox(width: NbSpace.x3),
+            Expanded(
+              child: Text(
+                label,
+                // a long label wraps to a second line inside the pill rather than being cut
+                maxLines: 2,
+                style: NbType.text(12, c.text, weight: FontWeight.w600, height: 1.2),
+              ),
             ),
-            const SizedBox(width: 10),
-            Text(label, style: NbType.text(13, c.text, weight: FontWeight.w600, height: 1.2)),
           ],
         ),
       ),

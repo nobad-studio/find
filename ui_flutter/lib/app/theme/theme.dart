@@ -53,17 +53,13 @@ ThemeData nbTheme(NbColors c) {
     ),
     menuTheme: MenuThemeData(
       style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(c.surface),
+        // invisible: the items sit in MenuGlass (widgets/menu_glass.dart), frosted like the dialogs
+        backgroundColor: const WidgetStatePropertyAll(Color(0x00000000)),
         surfaceTintColor: const WidgetStatePropertyAll(Color(0x00000000)),
-        shadowColor: WidgetStatePropertyAll(c.shadow),
-        elevation: const WidgetStatePropertyAll(8),
-        padding: const WidgetStatePropertyAll(EdgeInsets.all(NbSpace.x1)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: NbRadius.panelAll,
-            side: BorderSide(color: c.line2),
-          ),
-        ),
+        shadowColor: const WidgetStatePropertyAll(Color(0x00000000)),
+        elevation: const WidgetStatePropertyAll(0),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        shape: const WidgetStatePropertyAll(RoundedRectangleBorder()),
       ),
     ),
     // the action panel's rows (Ctrl+K, right-click): 32 px, a quiet fill on the one under the pointer or keys
@@ -71,7 +67,7 @@ ThemeData nbTheme(NbColors c) {
       style: ButtonStyle(
         minimumSize: const WidgetStatePropertyAll(Size(200, 32)),
         padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10)),
-        shape: const WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(10)))),
+        shape: const WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: NbRadius.controlAll)),
         textStyle: WidgetStatePropertyAll(NbType.text(13, c.text)),
         foregroundColor: WidgetStateProperty.resolveWith((st) => st.contains(WidgetState.disabled) ? c.dim : c.text),
         overlayColor: WidgetStatePropertyAll(c.selected),
@@ -87,7 +83,7 @@ ThemeData nbTheme(NbColors c) {
       surfaceTintColor: const Color(0x00000000),
       barrierColor: c.isDark ? const Color(0xB3000000) : const Color(0x66000000),
       shape: RoundedRectangleBorder(
-        borderRadius: NbRadius.panelAll,
+        borderRadius: NbRadius.cardAll,
         side: BorderSide(color: c.line2),
       ),
     ),

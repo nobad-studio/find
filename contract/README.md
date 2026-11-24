@@ -31,12 +31,20 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 - At most 8 connections. Requests run on a pool of 4 threads, so a slow call doesn't hold up a search; the calls
   that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`, `turbo_helper`) run on threads of their own
   and only one of each waits at a time, so search, status and quit always get an answer.
+- State reports (`status`, `status_full`, `hardware`, `capability_state`, `storage_use`, `models`, `scope_info`, `turbo_state`,
+  `wsearch_state`, `performance_state`; "reports", not "pure": a cold one may run the hardware scan, start a background
+  count, or retry saving the forgotten list) run on a small pool of 2 threads of their own, so a slow one never makes a
+  search wait. One client may have 2 running and 4 waiting there; the next gets the JSON-RPC error `-32603`
+  "busy: try again" at once (no schema change, any method may answer an error). The UI session asks such a call again
+  up to 3 times, after 250, 500 and 1000 ms. The cheap `status` beat is answered on the connection's reader thread:
+  never refused as busy, never queued behind the others.
 
 ### Start-up order for a UI
 
 1. `hello`: check `protocol` is 1 (refuse a newer engine and say why). `pid` is the engine's process id: call
    `AllowSetForegroundWindow(pid)` before `pick_folder` and `wsearch_set`, so their windows can come to the front.
-2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting`;
+2. `subscribe` to what this window needs (main window: `status level activity download notice show here quitting
+   models turbo update notification`;
    bar: `show quitting`). The engine tells the two apart by this (a client with `here` is a main window): a
    `show` for a window no connected UI has starts that UI instead.
 3. `status` once (events only report changes), then `ui_shown` when the window is on screen.
@@ -64,12 +72,28 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   is how the question was read (show as chips), `terms` the words to highlight, `notes` sentences for the user,
   `more` = there were more matches than shown, `error` = `""` or a sentence when the search failed.
   - `Filters` (all optional, `""` = off): `kind` (`pdf document spreadsheet slides text code email image video audio
-    archive ebook app folder secret`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
+    archive ebook app folder secret launcher browser`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
     (`here`, a known folder word, or a folder path already in the index; ≤ 2000), `sort` (`newest oldest largest
     name`). Any other key or word is refused (`-32602`).
+    1.2.0 (browser spec §4): `kind: "launcher"` is **Settings & apps**: no files at all (`results: []`), only the
+    launcher's settings pages, Control Panel items, tools and apps in `actions` (up to 12, read as asking to open
+    one). `kind: "browser"` shows only browser items (nothing while the setting `browser_data` is off), with
+    `browser` (`history bookmark login download`, `""` = all) and, for `browser: "history"` only, `visited`
+    (`today yesterday week month`, or picked local days `YYYY-MM-DD..YYYY-MM-DD`, both included; ignored for the
+    other kinds).
   - `Result`: `{id: int, path, name, dir, kind: string, size: int|null, mtime: number|null (seconds since 1970),
-    ago: string, why: [string], snippet: string, weak: bool}`. `weak` = a loose match, show it as less sure.
-    Every string is untrusted text from the user's disk: show it as plain text, never as markup.
+    ago: string, why: [string], snippet: string, weak: bool, browser?: BrowserItem}`. `weak` = a loose match, show
+    it as less sure. Every string is untrusted text from the user's disk: show it as plain text, never as markup.
+  - 1.2.0, browser results (only while `browser_data` is on): `kind: "browser"`, a **negative** `id` (never a file's),
+    `name` the title (a login: its site), `dir` a line the engine built ("Edge (Work) · github.com"), `path` the
+    address (a download: its file path), `mtime` the last visit / added / downloaded / last used time, and
+    `browser: {browser, profile, kind: history|bookmark|login|download, title, url, host, at, visits, folder}` (a
+    login's `title` is its user name; never a password). They are ranked with the files through the name and text
+    channels; the meaning and photo channels never apply to them. The question's words "history", "visited",
+    "bookmark(s)", "saved login(s)" and "password for" ask for browser kinds only (soft: read as words when nothing
+    matches, with a note). `open` by that id: history and bookmarks open their http(s) address in the default
+    browser, a login its browser's password manager (the launcher's `pw:<browser>` action), a download its file or
+    else its folder; `reveal`: a download only. Other file methods answer `ok: false` for them.
   - `Part` (0.8.5, smart search): `{kind, label, without}`, how the question was understood, in display order
     (where, what kind, when, size, order, then what it's about): `kind` is `folder drive kind time size sort meaning
     words` (`meaning`: what it's about, searched by meaning with a model; `words`: the same by words only). `label`
@@ -81,7 +105,7 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
     what was typed, the only match, the picture that clearly fits best, a clear winner on name and content). When
     there is one it is always `results[0]`, so Enter opens it. `null` when unsure.
   `channel` (optional, default `"main"`): which search of the UI this is (`"home"` for the Home list, `"bar"`). A newer search on the same connection and channel cancels the one still running, which then answers with `cancelled: true` (and no results): ignore that answer. Other channels are left alone.
-- **`search` → `needs`** (0.9.0, only when something isn't ready): `[{model: photo|meaning, state: missing|off|analyzing, id, size_mb, done, total, text}]`. A described photo search ("black shirt image") whose photo model isn't downloaded (`missing`: offer `model_download`), is switched off (`off`: offer `set_settings` `photo_meaning`), or is still looking at photos (`analyzing`: `done` of `total`); a description that found little while meaning search is missing or off. `text` is the sentence to show.
+- **`search` → `needs`** (0.9.0, only when something isn't ready): `[{model: photo|meaning, state: missing|off|analyzing, id, size_mb, done, total, text}]`. A described photo search ("black shirt image") whose photo model isn't downloaded (`missing`: offer `model_download`), is switched off (`off`: offer `set_settings` `photo_meaning`), or is still looking at photos (`analyzing`: `done` of `total`; also while a new photo model or re-pin looks at them again beside the old vectors, which answer until then); a description that found little while meaning search is missing or off. `text` is the sentence to show.
 - **`suggest`** `{text: string (≤ 2000), channel?: "main"|"bar"|...}` → `{items: [Suggestion], complete: string}`:
   autocomplete for every keystroke (well under a millisecond on the eval corpus, `docs/measurements.md`). Up to 8
   items (5 for `channel: "bar"`), in order: the user's own past questions (only while `search_history` is on), the
@@ -114,6 +138,25 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`to_main`** `{text?: string (≤ 2000)}` → `{ok: true}`: the bar's Alt+Enter. The engine sends `show {what: "main", text}`,
   so the main window comes up with the same words in its search box.
 
+### Notifications
+
+Crashes, restarted workers, model fallbacks, internal errors, suggestions, updates and long pauses
+(`nobadfind/notify.py`, maintainer request 2026-11-21). Kept in memory and inside the encrypted index, at most 100,
+newest first. The text never has a file path; `detail` is a file name only while `notify_show_names` is on. The
+same kind of event is posted at most once per 10 minutes (its key), and at most 5 an hour also go to Windows as a
+local toast (`notify_toasts`, from `notify_level` up, not while a game, a call or a presentation is on with
+`notify_quiet`). Nothing goes over the network.
+
+- `Notification` = `{id: int, t: number, kind, severity: info|warning|error, title (≤ 80), body (≤ 300), detail
+  (≤ 120), action: null|{id, label}, read: bool}`. `kind` is `worker_crashed worker_restarted model_fallback
+  model_released_memory internal_error suggestion update_available turbo_needs_ok indexing_paused_reason` (show an
+  unknown kind like any other). `action.id` is `open_indexing open_performance open_models open_turbo update`; the UI
+  opens that page (`update`: Settings > About, where Install asks for its own consent). `label` is the button's text.
+- **`notifications_list`** `{}` → `{items: [Notification], unread: int}`: the bell's panel.
+- **`notifications_read`** `{ids: [int]}` or `{all: true}` → `{ok, error, unread}`: mark read. Unknown ids are
+  ignored; anything else (`{}`, `all: false`, both at once, ids that aren't whole numbers) is `-32602`.
+- **`notifications_clear`** `{}` → `Ok`: the panel's Clear: every notification goes, from memory and the index.
+
 ### Status and the governor
 
 - **`status`** `{}` → `StatusBrief` = `{level, reason, phase, files: int, paused: string}`: the status line.
@@ -131,12 +174,15 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   `""` or idle/starting/ending/not readable; sampled at most every 2 s; the totals count the UIs too), `phases` (`[{id: names|text|ocr|meaning|photos|watching, label,
   state: off|running|waiting|done, done, total|null, rate, eta_s|null}]`), `models` (cards: `[{id:
   meaning|photo|ocr, name, license, size_mb, on_disk, loaded, memory_mb|null, device, items, download:
-  null|{got_mb, size_mb, mb_s}}]`), `activity` (newest first, at most 50: `[{t, kind, text}]`). Other keys may
-  appear (indexer details); ignore them. It answers at once (1.1.1): the index totals (`with_text chunks
+  null|{got_mb, size_mb, mb_s}}]`), `activity` (newest first, at most 50: `[{t, kind, text}]`), `limits`
+  (2026-11-21: how many of each operation may run at once now, `{walk, readers, photo, vision}`, each `{effective,
+  user, cpu, memory, governor, gpu?, by}`: `effective` is the smallest of what the user set, the processor, free
+  memory and the governor's level (vision: and the graphics card), `by` names which one set it; recomputed every
+  2 s). Other keys may appear (indexer details); ignore them. It answers at once (1.1.1): the index totals (`with_text chunks
   vectors name_vectors photo_vectors`) are counted in the background, one count at a time; until the first count
   is in, `counting_totals` is `true` and they are the indexer's own running numbers or `0` (the Index page says
   "Counting…" for them); `files` is the indexer's live count, and `db_bytes` is always current.
-  An engine before 1.1.1 sends no `counting_totals`.
+  An engine before 1.1.1 sends no `counting_totals`. 1.2.0: each count says how fresh it is, for the totals (`totals_*`) and the phase counts (`counts_*`): `*_at` (epoch seconds of the last successful count, or `null`), `*_state` (`counting` first count running, `ready`, `refreshing` a newer count is running and the old numbers are shown, `failed` the last attempt failed and the previous numbers, if any, are still shown) and `*_error` (a short plain reason when failed, else `""`); `counting_totals` is `totals_state == "counting"`. A phase ending, a rescan or a wipe makes the next poll count again, never more often than every 10 s. An engine before 1.2.0 sends none of these.
 - **`pause_for`** `{seconds: int ≥ 1}` → `Ok`: pause indexing (at most 24 hours; less than 1 is `-32602`).
 - **`resume`** `{}` → `Ok`: end a pause now.
 - **`learned_apps`** `{}` → `{apps: [{exe, seen: int, lag_events: int, worst_cpu: number|null, worst_gpu:
@@ -144,7 +190,10 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   NOBAD Find slowed down (program file names only).
 - **`reset_learned`** `{exe?: string (≤ 260)|null}` → `Ok`: forget one app, or every app (`exe` null or left out).
 - **`hardware`** `{}` → `{ram_gb, cores, threads, avx2, avx512_vnni, gpu, vram_gb, directml, disk_free_gb, ssd:
-  bool|null}`: the "Your PC" facts (measured once per engine run).
+  bool|null, gpus: [{vendor, name, dedicated_mb, shared_mb, integrated}], backends: {onnx: [...], llamacpp: [...]}}`:
+  the "Your PC" facts (measured once per engine run; every adapter listed, shared memory is never video memory;
+  a backend is listed only when installed and loadable; `backends` is re-read on every call, so a runtime downloaded while
+  the engine runs shows up without a restart).
 
 ### Settings and the index
 
@@ -155,10 +204,34 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`set_settings`** `{changes: {name: value}, consent?: string (≤ 40)}` → `{changed: [string], settings: Settings}`: the engine checks every
   value (`settings.coerce`); a value that doesn't fit becomes the default, unknown names and `wsearch_prev` are
   ignored. `secret_app_files: true` is ignored (not in `changed`) unless `consent` is `"READ_APP_SECRETS"`, which
-  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
+  the UI sends only after the user's yes in its confirm dialog; turning it off needs no word. `browser_data`
+  (1.2.0, `off`|`history`|`history_logins`, **off by default**) is ignored when it would read more than now (`off` →
+  `history` → `history_logins`) unless `consent` is `"READ_BROWSER_DATA"`, sent only after the dialog that shows
+  what is read; narrowing needs no word. `history` reads the browsers' history, bookmarks and downloads,
+  `history_logins` also saved logins' site and user name (never a password value: not decrypted, stored or shown;
+  Firefox's user names are encrypted, so only the site). The engine copies each database with full sharing and reads
+  the copy in a worker process, so a browser is never closed or blocked. `off` deletes every row it read,
+  `history` the logins' rows. `changed` lists what really changed, `settings` is the result. A new hotkey takes effect at once (`hotkeys` in the result says whether each one works); before 0.9.0 it took effect after the
   engine restarts.
   `stay_running` (0.8.5, default off): off, the engine quits when the last UI's pipe closes (its window closed),
   so nothing of NOBAD Find keeps running; on, it stays for the hotkeys and the notification-area icon.
+  1.2.0: `performance_goal` (`quiet`|`balanced`|`fast`) decides how hard NOBAD Find works; `power` stays readable
+  and writable for older UIs and mirrors it (`fast` ↔ `boost`, anything else ↔ `balanced`): writing a changed
+  `power` changes the goal, writing the `power` you read changes nothing, and when both come in one call the goal
+  wins. Under `fast` the manual `workers` number isn't used (every thread). The overrides (`gpu_background`,
+  `backend_<feature>`, `variant_<model>`, `profile_override_<axis>`, `gpu_reserve_min_mb`) beat the goal but never
+  a safety limit (spec 8b rule 0).
+- **`performance_state`** `{}` → `{goal, rows: {name: {value, auto, why, options: [string], note}}}` (1.2.0):
+  Settings > Performance. One row per override (`gpu_background`, `backend_photos`, `backend_text`,
+  `backend_talk`, `variant_siglip2-base`, `workers`, `profile_override_gpu|cpu|storage|memory`,
+  `gpu_reserve_min_mb`): its `value`, what `auto` would pick on this PC right now and `why` (one sentence),
+  the `options` it may take here (only installed backends; `[]` for numbers), and `note` when the value isn't
+  used now (`""` if none). From the cached hardware scan and the plan; ask again after a change.
+- **`reset_safe_defaults`** `{}` → `{ok, reset: [string], kept: [string]}` (1.2.0): "Reset to safe defaults". The UI
+  asks once first. The goal goes back to `balanced`, every override to `auto` (`workers` to 0, auto) and `gpu_reserve_min_mb` to 512,
+  at once (the governor and the plan follow). `reset` names those settings; `kept` is always
+  `["index", "models", "privacy", "folders", "learned_apps"]`: the index, the chosen models, privacy settings,
+  folders and the learned apps (their own Reset) are never touched.
 - **`pick_folder`** `{}` → `{path: string, busy: bool}`: Windows' folder dialog, shown by the engine, topmost;
   `path` `""` if cancelled. The answer comes when the user closes the dialog: **no time limit** on this call. Only
   one dialog at a time: while one is open, another call answers at once with `busy: true` (and `path: ""`) and
@@ -183,21 +256,52 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   were measured on the reference PC (0 / "" when not measured); `improves`, `licence`, `size_mb`, `source` and
   `ram_mb` are what the consent dialog shows. `recommended`: in the recommended tier for this PC and language focus.
   The `models` event brings the same object whenever it changes.
+  1.2.0: each model also says what the measured floors think of it for this PC and the runtime it would use (the
+  suggestion engine, `modelsuggest.for_pc`): `outcome` (`""` | suggested | upgrade | lighter | not_recommended |
+  not_measured; `""` for Windows OCR, the runtimes and the text models of the other language groups; text models are
+  not_measured: they have no floor yet), `suggested`, `above_suggestion` (upgrade or not_recommended: the UI shows
+  `cost_here` first, not_recommended also needs "Use anyway", and `model_use` needs `confirm`), `why` (one plain
+  sentence from the measurements; "Not now: ..." is appended while it doesn't fit the memory free right now),
+  `backend` (cpu | vulkan: what the figures are for), `cost_here` (`SetupCost`: load, answer or search time, peak
+  memory, `index_h` = hours to look at the photos the first scan found again; only measured figures, `measured_on`
+  says "this PC" or "similar PC"; `{}` when not measured, generic estimates never appear), `fits_now` (bool|null),
+  `chosen` (the model in use, or chosen and waiting) and `vectors_change` (choosing it looks at the files again,
+  beside the old vectors).
   1.1: `feature` may also be `talk` (SmolVLM2 500M and Qwen3-VL 2B, talk about a photo) or `runtime` (the llama.cpp
   runtimes `llama-cpu` / `llama-vulkan` they run on). A talk model also sends `vram_mb` (measured graphics memory on
   Vulkan) and `runtime` (the runtime id this PC uses for it). The UI's one consent dialog for a talk model names the
   model and that runtime (when it isn't on disk yet), both sizes and the total, and both sources (huggingface.co;
   github.com, which redirects to `*.githubusercontent.com`); its Download then sends `model_download` for each. No
   consent is stored for either. `model_use` is not for them; `model_remove` deletes a runtime's unpacked DLLs.
-- **`model_use`** `{feature, id}` → `{ok, error, needs_download: bool}`: choose the model for a feature (and turn the
-  feature on). Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
+- **`capability_state`** `{}` → `{can_run: {id: bool}, why: {id: string}, device: {id: gpu|cpu}, budget: {live,
+  installed_mb, free_mb, reserve_mb, usable_mb, commit_pct, commit_free_mb, gpu_kind: dedicated|shared|null,
+  gpu_free_mb, gpu_budget_mb, cpu, gpu, battery, battery_saver}}` (2026-11-21): which models this PC can run RIGHT
+  NOW (`capability.assess`), from the governor's last reading, not the installed memory alone: a model runs now
+  only when its RAM need plus a margin fits in free memory after the 1.5 GB kept for Windows, Windows isn't close
+  to its commit limit, battery saver is off (else light models only), on battery the best tier waits, other apps
+  aren't using the processor, and its speed measured on this PC is enough. `why` is one sentence per model for
+  Settings -> Models "Your PC, now"; `device` is where it would run (`gpu` only with DirectML and that much free
+  graphics memory now; an integrated GPU's is `shared`). `null` in `budget` = unknown right now, never counted
+  against a model; `live` false before the governor's first reading. Not an event: ask again while the page is open.
+- **`storage_use`** `{}` → `{index_mb, wal_mb, models: [{id, mb}], runtime_mb, tmp_mb, total_mb}` (1.2.0): what NOBAD Find
+  keeps on this PC, measured from file sizes on disk (read only, MB with one decimal): the index and its `-wal` file,
+  each downloaded model's folder (only models with files on disk are listed), the llama.cpp runtimes together, the
+  temporary folder, and the sum. A state report (answered on the status lane). Settings -> Models and the Index page show
+  it, with "Free up" going to Settings -> Models.
+- **`model_use`** `{feature, id, confirm?: bool}` → `{ok, error, needs_download: bool, needs_confirm: bool}`: choose
+  the model for a feature (and turn the feature on). A model above what is suggested for this PC (its `models` entry's
+  `above_suggestion`) is chosen only with `confirm: true`, which the UI sends after the screen with its measured cost
+  (a model not recommended also needs "Use anyway" there); without it `ok` is false, `needs_confirm` true, nothing
+  changes. A choice stays chosen: when it doesn't fit the memory free right now it waits and says why (`models`:
+  `fits_now` false, `why` ends with "Not now: ..."), it is never swapped for the suggestion.
+  Not downloaded yet: it is chosen, `needs_download` is true, and it's used once downloaded. A new text
   model rebuilds the meaning vectors in the background (`status_full.phases` has `{id: "rebuild"}`); the old vectors
   and their model stay in use until the new ones are complete, then they swap at once. Vectors of two models are
   never searched together.
 - **`model_download`** `{id, consent}` → `Ok`: download a model, only with `consent: "DOWNLOAD"` (the consent dialog's
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
-- **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command. `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
+- **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command (1.2.0: also `pw:edge`, `pw:chrome`, `pw:brave`, `pw:vivaldi`, `pw:opera`, `pw:firefox`: that browser's password manager page, opened with its own installed program). `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
 - **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, bps, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, verifying, ready, installing or error. While `downloading`, `got` of `size` bytes have arrived and `bps` is the speed measured over the last few seconds (0 until known); `verifying`: every byte is in and its size and SHA-256 are being checked (again right before the installer runs).
 - **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
 - **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
@@ -206,6 +310,38 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
 - **`auto_configure`** `{}` → `{tier, steps: [{feature, id, needs_download}]}`: apply the recommended tier for this PC
   and language focus. Everything that needs no download is applied at once; for each step with `needs_download`, the
   UI asks for consent and calls `model_download`. A step's `id` is `""` when the tier turns that feature off.
+- **`reset_suggested`** `{confirm?: bool}` → `{ok, error, applied: bool, changes: [{feature: text|photo, id, name, from,
+  from_name, vectors_change, index_h: number|null, measured_on: ""|this PC|similar PC, needs_download}]}` (1.2.0,
+  Settings → Models "Reset to suggested"): each of meaning search and photo search that is on goes back to the model
+  suggested for this PC (a feature that is off stays off; with no suggestion it stays as it is; for text, which has no
+  measured floor yet, the tier's pick). Another model means other vectors, so without `confirm` nothing changes:
+  `applied` is false and `changes` lists each one with its re-index time `index_h` (hours, from the measured speed and
+  what the first scan counted; null = not measured) for the UI to show; the same call with `confirm: true` applies
+  them, and the old vectors keep answering until the new ones cover everything. Nothing to change: `applied` false,
+  `changes` empty. A model that isn't on disk is chosen and `needs_download` says the UI must ask for the download.
+- **`setup_offer`** `{}` → `{show, state: pending|later|accepted|done, walked, pc: {like: low|mid|high, similar,
+  summary, classes, hardware}, items: [SetupItem], notes: [str], total_mb, est_download: str|null}` (1.2.0): the
+  first-run models window. `show` is true once the first scan is done until the window is answered (and again when a
+  download it started failed, to try again); the UI shows it then, and Settings → Models ("Suggested for this PC")
+  any time. `SetupItem` = `{workload: text|photo_search|photo_talk, model, name, outcome:
+  suggested|upgrade|lighter|not_measured, group: suggested|more, size_mb, cost_here, why, est_index, checked,
+  on_disk, state: not_downloaded|downloading|ready|failed, error, licence, source, runtime: null|{id, name, size_mb,
+  source}}`. Only `suggested` models are ticked, never `photo_talk`; `more` ("More for this PC") lists upgrades and
+  lighter options with their measured cost; not-recommended models aren't listed (they are on the Models page). Text
+  has no measured floor yet: the model the tier picks for this PC's memory and cores is listed as `not_measured`,
+  unticked. `cost_here.measured_on` says where the figures were measured (`this PC`, `similar PC`, `reference PC`).
+  `est_index` is the measured items a second against what the first scan counted (photos; documents, "or more");
+  `est_download` is null until a download has measured this PC's speed. A talk model's `size_mb` includes its
+  `runtime`; `total_mb` counts a shared runtime once. Nothing is downloaded.
+- **`setup_accept`** `{models: [id], consent}` → `{ok, error, started: [id]}`: the window's Download, which is the
+  consent: with `consent: "DOWNLOAD"` only (any other word: ok false, nothing changes), for exactly the listed models
+  given (at most 8; one the offer doesn't list: ok false, nothing changes). It sets what `auto_configure` sets for
+  them (meaning search and the text model, photo meaning and the photo model, OCR on) and starts `model_download` for
+  each not on disk (a talk model with its runtime); `started` lists them. Progress comes as `download` events.
+- **`setup_later`** `{remind?: bool}` → `Ok`: the window's Later. Not shown again by itself; with `remind` (the
+  default) one `suggestion` notification ("Open Models") says where the suggestions are. Details sends `remind:
+  false` (the user is on its way to Settings > Models). After a Download whose models are all on disk it changes
+  nothing; after one that didn't finish (the retry window) it is Later too.
 - **`model_language`** `{focus: english|multilingual|hindi}` → `Ok`: "English first", "Many languages" or "Hindi" in
   Settings → Models. It changes the recommendation only; nothing is downloaded or switched by itself. Until it is
   set, the focus comes from Windows' display and keyboard languages (read from Windows, no network).
@@ -241,6 +377,15 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   and `.env` files are then read into the encrypted index (`.env` files are names only until then). Turning it off
   removes their content, and their rows while `include_secrets` is off, without a rebuild. Keys, browser passwords,
   vaults, wallets and Recent items are never read.
+- **`browser_clear`** `{}` → `Ok`: Settings > Privacy, "Clear browser data" (1.2.0). Deletes every browser item
+  read (history, bookmarks, downloads, saved logins' site and user name) and any temporary copy; `browser_data`
+  stays as it is, so while it's on a browser's data comes back when its files next change.
+- **`browser_data_state`** `{}` → `{setting, profiles: [{browser, profile, last_read: number|null, error,
+  counts: {history, bookmark, download, login}}]}` (1.2.0): each browser profile read or tried since the engine
+  started, or with rows in the index. `last_read` = unix seconds (null: not since the engine started), `error` =
+  `""` or the last problem in plain words (a file in use by the browser and when it's tried again, or given up
+  until it changes; a file layout this version doesn't know). Show it as plain text; the names come from the
+  browsers.
 - **`turbo_state`** `{}` → `TurboState` = `{available, enabled, running: bool, volumes: [{drive, ntfs: bool, files:
   int, usn_ok: bool, last_scan: number|null}], error: string, helper: not_installed|installed|needs_update}`: the
   optional turbo index, an elevated helper that reads NTFS's own file list and change journal (names, sizes, times
@@ -334,6 +479,8 @@ Subscribe with `subscribe`. Each is `{"jsonrpc":"2.0","method":"<name>","params"
 - **`here`** → `{path}`: after the main hotkey, the File Explorer folder it was pressed in (`""` if none). Comes shortly
   after `show`; a newer press wins.
 - **`quitting`** → `{}`: the engine is ending. Exit instead of reconnecting.
+- **`notification`** → `{item: Notification, unread: int}`: a new notification (sent on the next tick, within
+  half a second); `unread` counts it. A duplicate (the same key within its time) isn't posted at all.
 - **`turbo`** → `TurboState` (as `turbo_state`): the turbo index started, stopped, read a drive, lost a change journal
   (it reads the drive again) or hit an error.
 - **`vision`** -> `{job, state: loading|answering|done|error|cancelled, text, model, note}`: the answer to a photo
@@ -369,9 +516,13 @@ lines, rewrites the `recv` lines), then review the diff.
 |---|---|
 | `01-connect-and-search.jsonl` | hello, subscribe, status, ui_shown, search (words, filters only, empty), thumbnail, open, reveal, path_of, a path instead of an id (refused), a filter word that does not exist (refused), an unknown method, status events, ui_hidden |
 | `02-events.jsonl` | every event: status, level, activity, download progress/ready/failed, show (hotkeys and to_main), here, a notice waiting for a listener, unsubscribe, quit and quitting |
-| `03-settings-and-system.jsonl` | get/set_settings (and a bad one), pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words |
+| `03-settings-and-system.jsonl` | get/set_settings (and a bad one; secret_app_files and browser_data with and without their consent words), browser_data_state, browser_clear, pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words, the creative apps list (a path dropped) |
 | `04-indexing-page.jsonl` | status_full method and event, pause_for/resume with level events, bad pauses (a string, 0), learned_apps, reset_learned, hardware, forget |
 | `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
-| `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray) |
+| `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state, storage_use |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
+| `12-browser-search.jsonl` | 1.2.0: the Settings & apps filter (actions only), the Browser filter with History and its dates (a word and a picked range), a browser result opened by its negative id, a login's password manager by `run_action`, bad browser filter values (refused) |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
+| `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |
+| `11-first-run-setup.jsonl` | setup_offer after the first scan, setup_accept with a wrong consent word, a bad list and a model the offer doesn't list, then a photo and a talk model (with its runtime) and their download events (one failing), the offer after it, setup_later with remind false (Details) and a bad remind, then setup_later and its reminder notification |
+| `09-notifications.jsonl` | notifications_list (empty, three), notification events, a duplicate key not posted, a path kept out of the text, notifications_read (some ids, all, and bad ones), notifications_clear |

@@ -3,11 +3,13 @@
 Each result says why it matched, in plain words, and only claims what was actually measured.
 Snippets mark matches with \\x02 ... \\x03; the UI escapes the text first and only then turns those into <mark>.
 """
+import datetime as dt
 import os
 import time
 
 from .const import (BROWSER_SECRET_FILES, NAMES_ONLY_PATHS, SECRET_EXT, SECRET_FILES, SECRET_FILES_IN, SECRET_NAMES,
                     SECRET_PATHS)
+from . import browsersearch as bsearch
 from .query import parse
 from .store import KEPT_ORD, OperationalError, fts_quote
 from .understand import best_guess, folder_finder, parts, place_bases
@@ -422,6 +424,35 @@ def photo_v2():
 PHOTO_TEXT_MEANING = 0.38      # = "related" in _closeness
 
 
+def photo_admission():
+    """Photo admission policy D (Experiment A, docs/measurements.md, chosen on the fresh set's training split by a
+    rule written first): on a keyword-style search, a photo found only by its look must be near the best photo.
+    On by default. Rollback to the earlier behaviour (every photo the look channel finds): NOBAD_FIND_PHOTO_ADMIT=off,
+    or the "admit_all" variant in the eval tools ("admit_query" forces it on)."""
+    if "admit_query" in VARIANTS:
+        return True
+    if "admit_all" in VARIANTS:
+        return False
+    return os.environ.get("NOBAD_FIND_PHOTO_ADMIT", "on").lower() != "off"
+
+
+def _keywordish(q):
+    """A document-style keyword search ("lease", "invoice march"): one content word and no picture words, as
+    opposed to a visual description ("a red car", "photos of my dog")."""
+    return len(q.terms) + len(q.phrases) <= 1 and "image" not in q.kinds
+
+
+def _admit_photos(q, photos, pbest, other):
+    """Policy D. On a keyword-style search, photos near the best one (the PHOTO_SURE rule) stay; weaker ones only
+    with `other` evidence (found by a name, text or meaning channel too). A typed word rarely describes a picture,
+    so a weak look-alike there is mostly a wrong photo (keyword searches: grade-0 photos in the top 10 6.7 -> 0.7 on
+    training). Visual descriptions keep every photo: floors on them cost nDCG@10 0.714 -> 0.506."""
+    if not _keywordish(q):
+        return photos
+    sure = PHOTO_SURE * max(pbest.values()) if pbest else 1.0
+    return [f for f in photos if pbest.get(f, 0) >= sure or f in other]
+
+
 def _drop_loose_photo_text(store, meaning, best):
     """v2: a photo's OCR text counts as a meaning match only when it is at least "related". Measured on 308 judged
     photos: 38 of 44 "loosely related" OCR matches in the top 10 were wrong (garbled advert text in a stadium photo
@@ -440,6 +471,18 @@ def _drop_loose_photo_text(store, meaning, best):
     return [fid for fid in meaning if fid not in images]
 
 
+def _one_photo_list(a, b):
+    """The searched photo set's list and the rebuilt set's (indexer._load_photo) as one photo channel: each photo at
+    its best rank in either, ties to the searched set. Ranks only: the two identities' scores are never compared,
+    and a photo both sets found counts once, as much as it would in one set at that rank."""
+    best = {}
+    for ch, ids in enumerate((a, b)):
+        for r, fid in enumerate(ids):
+            if fid not in best or (r, ch) < best[fid]:
+                best[fid] = (r, ch)
+    return sorted(best, key=best.get)
+
+
 def _photo_question(q):
     """What the photo model is asked. v1: the meaning words ("a screenshot of a phone" -> "phone"). v2: the clean
     visual description query.parse made (q.visual): the typed description when it is a plain one, never filter
@@ -449,7 +492,8 @@ def _photo_question(q):
     return q.meaning or q.text
 
 
-def _photo_hits(store, q, photo_text, pindex, limit):
+def _photo_hits(store, q, photo_text, pindex, limit, table="pvecs"):
+    """table: where pindex's vectors are stored (pvecs_next: the identity being rebuilt beside pvecs)."""
     # v2: the visual description decides, not the leftover words. "a screenshot of program code" reads every word
     # as a kind (code, image), leaving no terms; v1 then skipped photos and listed all images newest first
     asked = _photo_question(q) if photo_v2() else q.text
@@ -484,7 +528,7 @@ def _photo_hits(store, q, photo_text, pindex, limit):
         # elsewhere can't push every one of them out before the filter is even looked at
         # 0.9.5: CROSS JOIN keeps the photos (thousands) as the outer loop; SQLite otherwise walked all the files
         # (a million on a whole-PC index) for the folder filter: 1-3 s per keystroke in the bar
-        fit = [r[0] for r in store.q(f"SELECT f.id FROM pvecs p CROSS JOIN files f ON f.id = p.file_id "
+        fit = [r[0] for r in store.q(f"SELECT f.id FROM {table} p CROSS JOIN files f ON f.id = p.file_id "
                                      f"WHERE length(p.v) > 0{where} LIMIT {PHOTO_FILTER_MAX}", tuple(args))]
         hits = among(qvec, fit, k=limit * 3)
     else:
@@ -611,7 +655,8 @@ def _asks(q):
     described = bool(words)
     # a description, not a file name: "lease.pdf" or "budget" alone are looked up, not described
     sentence = len(words) >= 2 and not any("." in w or "\\" in w or "/" in w for w in words)
-    out = {"photo": described and "image" in (q.kinds or ()), "meaning": sentence}
+    # a browser-only question (1.2.0) needs no model: browser items are matched by their words only
+    out = {"photo": described and "image" in (q.kinds or ()), "meaning": sentence and not q.browser}
     if out["photo"]:
         roots = []
         if q.folder:
@@ -625,15 +670,22 @@ def _asks(q):
 
 
 def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=None, here="", filters=None,
-           is_dir=None, roots=(), photo_text=None, pindex=None, cancelled=None, romanized=False, asks=None):
+           is_dir=None, roots=(), photo_text=None, pindex=None, cancelled=None, romanized=False, asks=None,
+           photo_next=None, browser=False):
     """drives: every drive the index knows, [{'root', 'type', 'label', 'present'}] (indexer.known_drives).
     here: the File Explorer folder NOBAD Find was opened from ("" if none). filters: the filter bar.
+    photo_next: (question encoder, VectorIndex) of the photo identity being rebuilt beside pindex (pvecs_next), or
+    None. It answers in its own channel; its scores are never compared with pindex's.
+    browser: the browser kinds this search may show (1.2.0, browsersearch.allowed_kinds: True for all, a tuple, or
+    False while the setting browser_data is off: then nothing about browsers runs and the question's browser words
+    stay plain words).
 
     A time in the question ("electricity bill march") is first a filter on when the file changed. When nothing
     changed then, it is read as words instead (the bill *for* March), and a note says so."""
     t_start = time.perf_counter()
     args = dict(embedder=embedder, vindex=vindex, limit=limit, now=now, drives=drives, here=here, filters=filters,
-                is_dir=is_dir, roots=roots, photo_text=photo_text, pindex=pindex, romanized=romanized)
+                is_dir=is_dir, roots=roots, photo_text=photo_text, pindex=pindex, romanized=romanized,
+                photo_next=photo_next, browser=browser)
     db = None
     if cancelled is not None:
         db = store.db                                   # this thread's connection: SQLite stops when told to
@@ -677,15 +729,17 @@ def search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=N
 
 
 def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=None, here="", filters=None,
-            is_dir=None, roots=(), photo_text=None, pindex=None, times=True, romanized=False, soft=True):
+            is_dir=None, roots=(), photo_text=None, pindex=None, times=True, romanized=False, soft=True,
+            photo_next=None, browser=False):
     t_start = time.perf_counter()
+    allowed = bsearch.allowed_kinds(browser)
     drives = drives or []
     now = now or time.time()
     is_dir = is_dir or folder_checker(store, drives, roots)
     # "in projects": folders of the index by name, near the top of your folders, the roots or a drive
     finder = folder_finder(store, place_bases(roots, drives))
-    q = parse(text, labels=[d.get("label") or "" for d in drives], is_dir=is_dir, times=times, romanized=romanized,
-              find_folder=finder, soft_kinds=soft)
+    q = parse(text, now=dt.datetime.fromtimestamp(now), labels=[d.get("label") or "" for d in drives], is_dir=is_dir,
+              times=times, romanized=romanized, find_folder=finder, soft_kinds=soft, browser_words=bool(allowed))
     _keep_named(store, q)
     time_from_text = q.when if q.t0 is not None else ""
     q.drives = drives
@@ -704,16 +758,18 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
             q.notes.append("“Here” is the folder you're looking at in File Explorer when you press the hotkey. "
                            "Open NOBAD Find that way to search a folder.")
     apply_filters(q, filters, now)
+    bsearch.apply_filters(q, filters, now)
+    files = not q.browser                       # a browser-only question (the Browser filter, "history ..."): no files
     lists = []
     w_name, w_text, w_meaning = W_NAME, W_TEXT, W_MEANING
     if "rrf_equal" in VARIANTS:
         w_name = w_text = w_meaning = 1.0
     if "meaning_up" in VARIANTS:
         w_meaning = 1.6
-    names = _name_hits(store, q, 300)
+    names = _name_hits(store, q, 300) if files else []
     lists.append((w_name, names))
-    texts, snippets, kept = _text_hits(store, q, 300)
-    token = q.raw.strip() if looks_like_token(q.raw) else ""
+    texts, snippets, kept = _text_hits(store, q, 300) if files else ([], {}, set())
+    token = q.raw.strip() if files and looks_like_token(q.raw) else ""
     exact = []
     if token:
         memo = getattr(store, "_token_memo", None)      # one scan per search, even when search() asks again
@@ -731,22 +787,37 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
                            "looked at yet. Add a folder to narrow it.")
     exact_tokens = set(exact)                   # found by the exact token inside any text (not only the kept one)
     lists.append((w_text, texts))
-    meaning, best = _meaning_hits(store, q, embedder, vindex, 150)
+    meaning, best = _meaning_hits(store, q, embedder, vindex, 150) if files else ([], {})
     if photo_v2() and meaning and photo_text is not None and pindex is not None and getattr(pindex, "n", 0):
         # only when the photo channel can find those photos itself (without a photo model, OCR is all there is)
         meaning = _drop_loose_photo_text(store, meaning, best)
     lists.append((w_meaning, meaning))
-    photos, pbest = _photo_hits(store, q, photo_text, pindex, 100)
+    # photo channels never apply to browser items: they only ever list files, and a browser-only question asks none
+    photos, pbest = _photo_hits(store, q, photo_text, pindex, 100) if files else ([], {})
+    if photos and photo_admission():
+        photos = _admit_photos(q, photos, pbest, set(names) | set(texts) | set(meaning))
     # asking for photos ("beach photos", the Images filter): what's in the picture counts most
-    lists.append((W_PHOTO_ASKED if "image" in q.kinds else W_PHOTO, photos))
+    w_photo = W_PHOTO_ASKED if "image" in q.kinds else W_PHOTO
+    # a photo identity rebuilt beside the searched one (indexer._load_photo): its partial set is searched with its
+    # own model, scores, "sure" rule and admission, then joined with the searched set's list by rank only
+    nphotos, nbest = [], {}
+    if photo_next is not None and files:
+        nphotos, nbest = _photo_hits(store, q, photo_next[0], photo_next[1], 100, table="pvecs_next")
+        if nphotos and photo_admission():
+            nphotos = _admit_photos(q, nphotos, nbest, set(names) | set(texts) | set(meaning))
+    lists.append((w_photo, _one_photo_list(photos, nphotos) if nphotos else photos))
     if "photo_only" in VARIANTS and photos:         # measurement: the photo channel alone where it has answers
         lists = [(1.0, photos)]
     # a file named exactly what was typed wins, even when part of it read as a filter ("invoices 2023" is a name,
     # not invoices from 2023)
-    exact = _exact_name_hits(store, text, q) if q.has_filters() or q.dropped else []
+    exact = _exact_name_hits(store, text, q) if files and (q.has_filters() or q.dropped) else []
     if exact:
         lists.append((W_EXACT, exact))
         names = exact + [n for n in names if n not in exact]
+    # 1.2.0: browser items through the same name and text channels (browsersearch.py), with the same weights
+    bnames, btexts = bsearch.hits(store, q, allowed) if allowed else ([], [])
+    if bnames or btexts:
+        lists += [(w_name, bnames), (w_text, btexts)]
 
     score = {}
     for w, ids in lists:
@@ -757,13 +828,16 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
     if not score and not q.terms and not q.phrases and q.has_filters():
         # only filters ("list all pdf here"): every matching file, in the chosen order
         listing, limit = True, LIST_LIMIT
-        where, args = _filters(q)
-        ids = [r[0] for r in store.q(f"SELECT f.id FROM files f WHERE 1=1{where} ORDER BY {SORT_SQL[q.sort]} "
-                                     "LIMIT ?", (*args, limit + 1))]
+        if files:
+            where, args = _filters(q)
+            ids = [r[0] for r in store.q(f"SELECT f.id FROM files f WHERE 1=1{where} ORDER BY {SORT_SQL[q.sort]} "
+                                         "LIMIT ?", (*args, limit + 1))]
+        else:                                           # Browser > History, last 7 days
+            ids = bsearch.listing(store, q, allowed, limit + 1) if allowed else []
         score = {fid: 1.0 / (i + 1) for i, fid in enumerate(ids)}
 
     ranked = sorted(score, key=score.get, reverse=True)
-    meaning_on = bool(meaning or photos or (embedder and vindex and q.text.strip()) or
+    meaning_on = bool(meaning or photos or nphotos or (embedder and vindex and q.text.strip()) or
                       (photo_text and pindex is not None and getattr(pindex, "n", 0) and q.meaning))
     chips = parts(q, meaning_on=meaning_on)
     if not ranked:
@@ -778,22 +852,36 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
         part = pool[i:i + 900]
         info.update({r[0]: r for r in store.q(f"SELECT id, path, name, dir, kind, size, mtime, ctime FROM files "
                                               f"WHERE id IN ({','.join('?' * len(part))})", part)})
+    brows = bsearch.rows(store, pool) if allowed else {}    # browser results (negative ids)
+    info.update({k: bsearch.info(r) for k, r in brows.items()})
     if q.sort and not listing:                          # matches first, then the order asked for
         key = {"newest": lambda f: -(info[f][6] or 0), "oldest": lambda f: info[f][6] or 0,
                "largest": lambda f: -(info[f][5] or 0), "name": lambda f: info[f][2].lower()}[q.sort]
         pool = sorted((f for f in pool if f in info), key=key)
     more = len(pool) > limit
     top = pool[:limit]
-    name_set, text_set = set(names), set(texts)
+    name_set, text_set = set(names) | set(bnames), set(texts) | set(btexts)
     # a photo is "sure" when it's close to the best photo for this question (measured: right photos score within
     # ~10% of the best one, look-alikes 20% or more below it)
     photo_sure = max(PHOTO_MIN + 0.005, PHOTO_SURE * max(pbest.values())) if pbest else 1.0
+    # sure / maybe per photo, each identity by its own best photo
+    sure = {f for f, s in pbest.items() if s >= photo_sure}
+    if nbest:
+        nsure = max(PHOTO_MIN + 0.005, PHOTO_SURE * max(nbest.values()))
+        sure |= {f for f, s in nbest.items() if s >= nsure}
+    pseen = set(pbest) | set(nbest)
     offline = {d["root"].upper(): (d.get("label") or d["root"].rstrip("\\")) for d in drives
                if d.get("present") is False}
     out = []
     for fid in top:
         r = info.get(fid)
         if not r:
+            continue
+        if fid in brows:
+            row = brows[fid]
+            ago = _ago(row[7], now) if row[7] else ""
+            out.append(bsearch.result(row, bsearch.why(row, fid in name_set, fid in text_set, q.t0 is not None, ago),
+                                      ago))
             continue
         why = []
         if fid in name_set:
@@ -813,8 +901,8 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
                     why.append(KEPT_MATCH)
             else:
                 why.append(f"{'name' if how == 'name' else 'text'} has a {_closeness(s)} meaning")
-        if fid in pbest:
-            why.append("the picture shows something like it" if pbest[fid] >= photo_sure else "the picture may show it")
+        if fid in pseen:
+            why.append("the picture shows something like it" if fid in sure else "the picture may show it")
         if q.t0 is not None:
             why.append(f"changed {_ago(r[6], now)}" if r[6] else "date matches")
         if q.place:
@@ -824,14 +912,15 @@ def _search(store, text, embedder=None, vindex=None, limit=60, now=None, drives=
             why.append(f"on {drive}, not connected now")
         snippet = snippets.get(fid) or (best[fid][1] if fid in best else "")
         # only a weak hint (a picture that "may show it", a loosely related meaning): shown, but as less sure
-        strong = (fid in name_set or fid in text_set or (fid in pbest and pbest[fid] >= photo_sure)
+        strong = (fid in name_set or fid in text_set or fid in sure
                   or (fid in best and best[fid][0] >= 0.38) or listing)
         out.append({"id": fid, "path": r[1], "name": r[2], "dir": r[3], "kind": r[4], "size": r[5], "mtime": r[6],
                     "ago": _ago(r[6], now) if r[6] else "", "why": why, "snippet": snippet, "weak": not strong})
     if not q.sort and not listing and "noweak" not in VARIANTS:     # sure results first, the less sure after
         out.sort(key=lambda x: x["weak"])
     # the best guess (understand.best_guess): one result the engine is sure of, shown first; None when unsure
-    guess = best_guess(q, out, score, pbest, listing=listing) if "noguess" not in VARIANTS else None
+    # photo scores of one identity only (the searched one; the rebuilt one when the searched one found none)
+    guess = best_guess(q, out, score, pbest or nbest, listing=listing) if "noguess" not in VARIANTS else None
     best = None
     if guess:
         gid, reason = guess

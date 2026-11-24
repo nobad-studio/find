@@ -1,10 +1,9 @@
 """Talk about a photo, release fix: the hang deadline follows real progress per phase, Stop reaches a load, the
-worker's memory / I/O priority is normal only while a job runs, and the capability path of PR #16 is used when it
-is there (vlm/worker.py, api.talk_assess). Fake worker messages and fake sessions; no model."""
+worker's memory / I/O priority is normal only while a job runs, and talk uses capability.assess
+(vlm/worker.py, api.talk_assess). Fake worker messages and fake sessions; no model."""
 import importlib.util
 import multiprocessing
 import os
-import sys
 import threading
 import time
 import types
@@ -421,36 +420,46 @@ def test_real_stop_reaches_the_load_and_the_photo_eval(tmp_path, phase):
         t.stop()
 
 
-# ---------- PR #16: the capability path is used as soon as nobadfind.capability exists ----------
-def test_talk_assess_uses_capability_assess_when_the_module_is_there(monkeypatch):
-    """Until PR #16 merges, talk_assess falls back to models.capable + free RAM (temporary). With a capability
-    module that has assess(), only assess() decides, and the fallback is not called."""
+# ---------- PR #16 merged: talk uses capability.assess, with the talk model's measured need ----------
+def test_capability_module_is_used_when_present(monkeypatch):
+    """talk_assess asks the real capability.assess, with the need measured for the runtime: on Vulkan
+    max(ram_mb, vram_mb) counted against system RAM (shared graphics memory is never separate capacity)."""
+    from nobadfind import capability
     calls = []
-    fake = types.ModuleType("nobadfind.capability")
+    real = capability.assess
 
-    def assess(sample, hardware, measured=None, catalog=None):
-        calls.append((sample, hardware, [m["id"] for m in catalog]))
-        return {"can_run": {m["id"]: False for m in catalog}, "why": {m["id"]: "Not now: assess says so"
-                                                                     for m in catalog}, "device": {}, "budget": {}}
-    fake.assess = assess
-    monkeypatch.setitem(sys.modules, "nobadfind.capability", fake)
-    import nobadfind
-    monkeypatch.setattr(nobadfind, "capability", fake, raising=False)
-
-    def fallback(*a, **k):
-        raise AssertionError("the free-RAM fallback ran although capability.assess exists")
-    monkeypatch.setattr(models, "capable", fallback)
-    monkeypatch.setattr(api_mod, "talk_fits", fallback)
+    def spy(sample, hardware, measured=None, catalog=None):
+        calls.append((sample, hardware, measured, [m["id"] for m in catalog]))
+        return real(sample, hardware, measured, catalog)
+    monkeypatch.setattr(capability, "assess", spy)
     qwen = models.get("qwen3vl-2b")
-    sample = object()
-    assert api_mod.talk_assess(qwen, sample, dict(PC)) == (False, "Not now: assess says so")
-    assert calls == [(sample, dict(PC), ["qwen3vl-2b"])]
+    sample = types.SimpleNamespace(free_mb=3072)
+    ok, why = api_mod.talk_assess(qwen, sample, dict(PC), "llama-cpu")
+    assert not ok and why.startswith("Not now: it needs about 2.4 GB")
+    assert calls == [(sample, dict(PC), {"qwen3vl-2b": {"ram_mb": 2483}}, ["qwen3vl-2b"])]
+    sample.free_mb = 6000
+    ok, why = api_mod.talk_assess(qwen, sample, dict(PC), "llama-cpu")
+    assert ok and why.startswith("Fits now")
+    big_gpu = dict(qwen, vram_mb=4000)                  # a graphics need above the RAM need: counted against RAM
+    sample.free_mb = 5000                               # 3.5 GB usable: 2.4 GB + margin fits, 3.9 GB + margin doesn't
+    assert api_mod.talk_assess(big_gpu, sample, dict(PC), "llama-cpu")[0]
+    ok, why = api_mod.talk_assess(big_gpu, sample, dict(PC), "llama-vulkan")
+    assert not ok and why.startswith("Not now: it needs about 3.9 GB")
+    assert calls[-1][2] == {"qwen3vl-2b": {"ram_mb": 4000}}
 
 
-def test_without_the_capability_module_the_fallback_decides(monkeypatch):
-    monkeypatch.setitem(sys.modules, "nobadfind.capability", None)      # import fails, as on this branch
-    seen = []
-    monkeypatch.setattr(models, "capable", lambda m, pc: seen.append("capable") or (True, ""))
-    monkeypatch.setattr(api_mod, "talk_fits", lambda m, s: seen.append("fits") or (True, ""))
-    assert api_mod.talk_assess(models.get("qwen3vl-2b"), None, dict(PC)) == (True, "")
-    assert seen == ["capable", "fits"]
+def test_no_fallback_left():
+    """The temporary free-RAM fallback (talk_fits, TALK_MARGIN_*) used before PR #16 merged is gone."""
+    src = open(api_mod.__file__, encoding="utf-8").read()
+    for gone in ("def talk_fits", "talk_fits(", "TALK_MARGIN", "TEMPORARY", "except ImportError"):
+        assert gone not in src, gone
+    assert not hasattr(api_mod, "talk_fits")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for top in ("nobadfind", "tools"):                  # no caller left either (tools/measure_talk.py used both)
+        for folder, _dirs, files in os.walk(os.path.join(root, top)):
+            for name in files:
+                if name.endswith(".py"):
+                    path = os.path.join(folder, name)
+                    text = open(path, encoding="utf-8").read()
+                    for gone in ("talk_fits", "TALK_MARGIN", "free-RAM fallback"):
+                        assert gone not in text, f"{gone} in {os.path.relpath(path, root)}"

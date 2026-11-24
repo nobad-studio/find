@@ -7,6 +7,12 @@ import 'json.dart';
 /// set_settings' consent word for turning `secret_app_files` on (const.APP_FILES_CONSENT in the engine).
 const appFilesConsent = 'READ_APP_SECRETS';
 
+/// set_settings' consent word for making `browser_data` read more (const.BROWSER_CONSENT in the engine).
+const browserConsent = 'READ_BROWSER_DATA';
+
+/// `browser_data`'s values, from reading nothing to reading the most (const.BROWSER_DATA).
+const browserDataLevels = ['off', 'history', 'history_logins'];
+
 /// The engine's settings as it sent them. Unknown keys are kept (a newer engine), missing ones read as the
 /// engine's defaults. The UI never decides what a value means: set_settings sends changes and the engine checks.
 class Settings {
@@ -45,13 +51,32 @@ class Settings {
     'wsearch_prev': '',
     'theme': 'dark',
     'glass': true,
+    'theme_style': 'classic',
     'bg_notice_seen': false,
     'welcome_seen': false,
     'search_history': true,
     // 1.1.0: read command histories, saved logins and tool tokens (Settings > Privacy, after a confirm dialog)
     'secret_app_files': false,
+    // 1.2.0: browser history, bookmarks, downloads (and saved logins' site + user name); Settings > Privacy
+    'browser_data': 'off',
     'models_stay_loaded': false,
     'update_check': true,
+    'notify_toasts': true,
+    'notify_level': 'warning',
+    'notify_quiet': true,
+    'notify_show_names': false,
+    // 1.2.0 Settings > Performance (spec 8b): the goal and the overrides; power mirrors the goal for older UIs
+    'performance_goal': 'balanced',
+    'gpu_background': 'auto',
+    'backend_photos': 'auto',
+    'backend_text': 'auto',
+    'backend_talk': 'auto',
+    'variant_siglip2-base': 'auto',
+    'profile_override_gpu': 'auto',
+    'profile_override_cpu': 'auto',
+    'profile_override_storage': 'auto',
+    'profile_override_memory': 'auto',
+    'gpu_reserve_min_mb': 512,
   };
 
   static const initial = Settings(defaults);
@@ -70,6 +95,11 @@ class Settings {
   /// 0.8.5 is dark only (maintainer decision 2026-11-19), whatever an older engine says.
   bool get dark => true;
   bool get glass => flag('glass');
+
+  /// The window's look: Minimal ice (cold frost) or Classic (the original colours and warm glows; the default, and
+  /// what an engine that doesn't know the setting gives). Both are see-through over Windows' Acrylic.
+  bool get ice => text('theme_style') == 'ice';
+  bool get nocturne => text('theme_style') == 'nocturne';
 
   Settings merged(Map<String, Object?> changes) => Settings({...values, ...changes});
 }
@@ -168,6 +198,34 @@ class LearnedApp {
   }
 }
 
+/// One graphics adapter. [sharedMb] is system memory it may borrow, never video memory.
+class GpuInfo {
+  const GpuInfo({
+    this.vendor = '',
+    this.name = '',
+    this.dedicatedMb = 0,
+    this.sharedMb = 0,
+    this.integrated = false,
+  });
+  final String vendor;
+  final String name;
+  final int dedicatedMb;
+  final int sharedMb;
+  final bool integrated;
+
+  static GpuInfo? fromJson(Object? v) {
+    if (v is! Map) return null;
+    final m = jMap(v);
+    return GpuInfo(
+      vendor: jStr(m['vendor']),
+      name: jStr(m['name']),
+      dedicatedMb: jInt(m['dedicated_mb']),
+      sharedMb: jInt(m['shared_mb']),
+      integrated: jBool(m['integrated']),
+    );
+  }
+}
+
 class Hardware {
   const Hardware({
     this.ramGb = 0,
@@ -180,6 +238,9 @@ class Hardware {
     this.directml = false,
     this.diskFreeGb = 0,
     this.ssd,
+    this.gpus = const [],
+    this.onnxBackends = const [],
+    this.llamacppBackends = const [],
   });
   final double ramGb;
   final int cores;
@@ -191,6 +252,13 @@ class Hardware {
   final bool directml;
   final double diskFreeGb;
   final bool? ssd;
+
+  /// Every graphics adapter (empty from an older engine).
+  final List<GpuInfo> gpus;
+
+  /// Backends installed per family, e.g. ['cpu', 'directml'] and ['vulkan', 'cpu'] (empty from an older engine).
+  final List<String> onnxBackends;
+  final List<String> llamacppBackends;
 
   static Hardware? fromJson(Object? v) {
     if (v is! Map) return null;
@@ -206,6 +274,9 @@ class Hardware {
       directml: jBool(m['directml']),
       diskFreeGb: jNum(m['disk_free_gb']),
       ssd: m['ssd'] is bool ? m['ssd'] as bool : null,
+      gpus: jList(m['gpus'], GpuInfo.fromJson),
+      onnxBackends: jList(jMap(m['backends'])['onnx'], (x) => x is String ? x : null),
+      llamacppBackends: jList(jMap(m['backends'])['llamacpp'], (x) => x is String ? x : null),
     );
   }
 }
@@ -253,5 +324,115 @@ class ActionResult {
   static ActionResult fromJson(Object? v) {
     final m = jMap(v);
     return ActionResult(jBool(m['ok']), jStr(m['error']));
+  }
+}
+
+/// One Settings > Performance override as `performance_state` describes it (spec 8b rule 5): its [value], what
+/// "auto" would pick on this PC right now ([auto], a string or a number) and [why], the [options] it may take here
+/// (empty for numbers) and a [note] when the value isn't used now.
+class PerformanceRow {
+  const PerformanceRow({this.value, this.auto, this.why = '', this.options = const [], this.note = ''});
+  final Object? value;
+  final Object? auto;
+  final String why;
+  final List<String> options;
+  final String note;
+
+  static PerformanceRow fromJson(Object? v) {
+    final m = jMap(v);
+    return PerformanceRow(
+      value: m['value'],
+      auto: m['auto'],
+      why: jStr(m['why']),
+      options: jStrs(m['options']),
+      note: jStr(m['note']),
+    );
+  }
+}
+
+/// `performance_state` (1.2.0 engines): the goal, and every override row by its setting name.
+class PerformanceState {
+  const PerformanceState(this.goal, this.rows);
+  final String goal;
+  final Map<String, PerformanceRow> rows;
+
+  static PerformanceState fromJson(Object? v) {
+    final m = jMap(v);
+    final g = jStr(m['goal']);
+    return PerformanceState(g.isEmpty ? 'balanced' : g, {
+      for (final e in jMap(m['rows']).entries) e.key: PerformanceRow.fromJson(e.value),
+    });
+  }
+}
+
+/// `reset_safe_defaults`: whether it worked, the settings put back, and what was kept.
+class ResetResult {
+  const ResetResult(this.ok, this.reset, this.kept);
+  final bool ok;
+  final List<String> reset;
+  final List<String> kept;
+
+  static ResetResult fromJson(Object? v) {
+    final m = jMap(v);
+    return ResetResult(jBool(m['ok']), jStrs(m['reset']), jStrs(m['kept']));
+  }
+}
+
+/// One browser profile in `browser_data_state` (1.2.0): when it was last read, its rows per kind and its last
+/// problem. [browser] and [profile] come from the browsers: shown as plain text.
+class BrowserProfileState {
+  const BrowserProfileState(this.browser, this.profile, this.lastRead, this.error, this.counts);
+  final String browser;
+  final String profile;
+
+  /// Unix seconds; null when it hasn't been read since the engine started.
+  final double? lastRead;
+  final String error;
+  final Map<String, int> counts;
+
+  int get total => counts.values.fold(0, (a, b) => a + b);
+
+  static BrowserProfileState? fromJson(Object? v) {
+    final m = jMap(v);
+    if (m.isEmpty) return null;
+    final c = jMap(m['counts']);
+    return BrowserProfileState(jStr(m['browser']), jStr(m['profile']), jNumOrNull(m['last_read']), jStr(m['error']), {
+      for (final k in const ['history', 'bookmark', 'download', 'login']) k: jInt(c[k]),
+    });
+  }
+}
+
+/// `browser_data_state` (1.2.0): the setting and each browser profile read or tried.
+class BrowserDataState {
+  const BrowserDataState(this.setting, this.profiles);
+  final String setting;
+  final List<BrowserProfileState> profiles;
+
+  static const none = BrowserDataState('off', []);
+
+  static BrowserDataState fromJson(Object? v) {
+    final m = jMap(v);
+    final s = jStr(m['setting']);
+    return BrowserDataState(s.isEmpty ? 'off' : s, jList(m['profiles'], BrowserProfileState.fromJson));
+  }
+
+  /// One plain line for Settings > Privacy: each profile with its items and when it was read, or its problem.
+  String summary(DateTime now) {
+    if (profiles.isEmpty) {
+      return setting == 'off' ? '' : 'Not read yet: NOBAD Find reads your browsers in the background.';
+    }
+    String ago(double t) {
+      final s = now.millisecondsSinceEpoch / 1000 - t;
+      if (s < 60) return 'just now';
+      if (s < 3600) return '${s ~/ 60} min ago';
+      if (s < 86400) return '${s ~/ 3600} h ago';
+      return '${s ~/ 86400} days ago';
+    }
+
+    return [
+      for (final p in profiles)
+        '${p.browser} (${p.profile}): '
+            '${p.error.isNotEmpty ? p.error : (p.lastRead == null ? '${p.total} items' : '${p.total} items, read ${ago(p.lastRead!)}')}',
+    ].join(' · ');
   }
 }

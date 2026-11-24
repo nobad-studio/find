@@ -15,6 +15,7 @@ import threading
 import time
 
 from . import jobs as _jobs
+from . import notify
 from .log import log
 
 WORKER_MB = 1500
@@ -111,9 +112,16 @@ class Watchdog:
             self._kill(pid)
             if kind == "text reader":
                 self.activity.add("kill", f"Stopped a text reader using {_size(mb)}; the file is skipped")
+                notify.post("worker_restarted", "A text reader used too much memory",
+                            f"NOBAD Find stopped a text reader using {_size(mb)}. The file it was reading is "
+                            "skipped; the other files go on.", "warning", action="open_indexing",
+                            key=f"worker-memory:{kind}")
             else:
                 the = "a" if kind == "background worker" else "the"
                 self.activity.add("kill", f"Stopped {the} {kind} using {_size(mb)}; it starts again")
+                notify.post("worker_restarted", f"The {kind} used too much memory",
+                            f"NOBAD Find stopped {the} {kind} using {_size(mb)}; it starts again.", "warning",
+                            action="open_indexing", key=f"worker-memory:{kind}")
             times = [t for t in self._kills.get(kind, []) if now - t <= KILL_WINDOW] + [now]
             self._kills[kind] = times
             if len(times) >= 2:
@@ -121,6 +129,10 @@ class Watchdog:
                 self._kills[kind] = []
                 self.activity.add("info", f"The {kind} grew too big twice in 10 minutes, so it is left alone "
                                           "for 30 minutes")
+                notify.post("suggestion", f"The {kind} keeps growing",
+                            f"The {kind} grew too big twice in 10 minutes, so NOBAD Find leaves it alone for 30 "
+                            "minutes. Fewer workers in Settings > Performance use less memory.", "info",
+                            action="open_performance", key=f"worker-twice:{kind}", every=86400)
 
     def _check_job(self):
         if self._job_usage().get("memory_mb", 0) <= self.job_limit():
@@ -144,9 +156,17 @@ class Watchdog:
             self._recycle()
             self.activity.add("model", "NOBAD Find is using a lot of memory, so it restarts its workers "
                                        "(the models stay loaded, as you asked)")
+            notify.post("worker_restarted", "NOBAD Find restarted its workers",
+                        f"All of NOBAD Find was using more than {_size(self.job_limit())}, so its workers start fresh. "
+                        "The models stay loaded, as you asked.", "warning", action="open_indexing",
+                        key="job-recycle")
             return
         self._spared = False
         self._release()
         self._recycle()
         self.activity.add("model", "NOBAD Find is using a lot of memory, so it let go of its search models "
                                    "and restarts its workers")
+        notify.post("model_released_memory", "NOBAD Find freed memory",
+                    f"All of NOBAD Find was using more than {_size(self.job_limit())}, so it let go of its search models and "
+                    "restarted its workers. The models load again when a search needs them.", "warning",
+                    action="open_indexing", key="job-release")

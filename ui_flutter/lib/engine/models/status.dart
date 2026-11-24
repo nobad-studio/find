@@ -92,6 +92,32 @@ class EngineStatus {
   int get hashCode => Object.hash(level, reason, phase, files, paused, details);
 }
 
+/// The quiet line under a count: how fresh it is. Null when an older engine sends no state (or nothing is worth
+/// saying). [now] is for tests.
+String? freshnessLine({required String state, double? at, String error = '', DateTime? now}) {
+  final when = at == null ? null : DateTime.fromMillisecondsSinceEpoch((at * 1000).round());
+  switch (state) {
+    case 'counting':
+      return 'Counting…';
+    case 'refreshing':
+      return 'Counting again…';
+    case 'ready':
+      if (when == null) return null;
+      final s = (now ?? DateTime.now()).difference(when).inSeconds;
+      if (s < 60) return 'Counted just now';
+      if (s < 3600) return 'Counted ${s ~/ 60} min ago';
+      if (s < 86400) return 'Counted ${s ~/ 3600} h ago';
+      return 'Counted ${s ~/ 86400} d ago';
+    case 'failed':
+      final why = error.replaceAll(RegExp(r'[.\s]+$'), '');
+      final head = why.isEmpty ? "Couldn't count just now" : "Couldn't count just now: $why";
+      if (when == null) return '$head.';
+      final hm = '${when.hour.toString().padLeft(2, '0')}:${when.minute.toString().padLeft(2, '0')}';
+      return '$head. Showing the last count from $hm.';
+  }
+  return null;
+}
+
 class IndexDetails {
   const IndexDetails({
     this.version = '',
@@ -104,6 +130,12 @@ class IndexDetails {
     this.rate = 0,
     this.dbBytes = 0,
     this.countingTotals = false,
+    this.totalsAt,
+    this.totalsState = '',
+    this.totalsError = '',
+    this.countsAt,
+    this.countsState = '',
+    this.countsError = '',
     this.plan,
     this.speed = '',
     this.ocrOn = false,
@@ -118,6 +150,7 @@ class IndexDetails {
     this.phases = const [],
     this.models = const [],
     this.activity = const [],
+    this.limits,
   });
 
   final String version;
@@ -133,6 +166,16 @@ class IndexDetails {
   /// 1.1.1: the engine is still counting the index totals for the first time ([withText], [vectors],
   /// [nameVectors], [photoVectors] aren't known yet). [dbBytes] is always current.
   final bool countingTotals;
+
+  /// 1.2.0: how fresh the totals and the phase counts are. `*At` is the epoch seconds of the last successful
+  /// count (null: none yet); `*State` is counting | ready | refreshing | failed, or '' from an older engine;
+  /// `*Error` is a short plain reason when failed.
+  final double? totalsAt;
+  final String totalsState;
+  final String totalsError;
+  final double? countsAt;
+  final String countsState;
+  final String countsError;
   final WorkPlan? plan;
   final String speed;
   final bool ocrOn;
@@ -148,6 +191,9 @@ class IndexDetails {
   final List<ModelCard> models;
   final List<ActivityEntry> activity;
 
+  /// How many of each operation may run at once now (2026-11-21 engines; null from older ones).
+  final OpLimits? limits;
+
   static IndexDetails fromJson(Map<String, Object?> m) {
     final ocr = m['ocr'];
     final plan = m['plan'];
@@ -162,6 +208,12 @@ class IndexDetails {
       rate: jNum(m['rate']),
       dbBytes: jInt(m['db_bytes']),
       countingTotals: jBool(m['counting_totals']),
+      totalsAt: jNumOrNull(m['totals_at']),
+      totalsState: jStr(m['totals_state']),
+      totalsError: visibleControls(jStr(m['totals_error'])),
+      countsAt: jNumOrNull(m['counts_at']),
+      countsState: jStr(m['counts_state']),
+      countsError: visibleControls(jStr(m['counts_error'])),
       plan: plan is Map && plan.isNotEmpty ? WorkPlan.fromJson(jMap(plan)) : null,
       speed: jStr(m['speed']),
       ocrOn: ocr == true,
@@ -176,6 +228,7 @@ class IndexDetails {
       phases: jList(m['phases'], PhaseRow.fromJson),
       models: jList(m['models'], ModelCard.fromJson),
       activity: jList(m['activity'], ActivityEntry.fromJson),
+      limits: OpLimits.fromJson(m['limits']),
     );
   }
 
@@ -187,6 +240,50 @@ class IndexDetails {
     final i = speed.indexOf(' (');
     if (i < 0) return 'Speed';
     return 'Speed: ${speed.substring(i + 2).replaceAll(')', '')}';
+  }
+}
+
+/// One operation's limit (`status_full.limits`): [effective] = the smallest of the user's setting, the processor,
+/// free memory and the governor's level (vision: and the graphics card); [by] = which one set it.
+class OpLimit {
+  const OpLimit(this.effective, this.by);
+  final int effective;
+  final String by;
+
+  static const _by = {
+    'user': 'your setting',
+    'cpu': 'the processor',
+    'memory': 'free memory',
+    'governor': 'the current level',
+    'gpu': 'the graphics card',
+  };
+
+  /// "set by free memory".
+  String get byLabel => 'set by ${_by[by] ?? by}';
+
+  static OpLimit fromJson(Object? v) {
+    final m = jMap(v);
+    return OpLimit(jInt(m['effective']), jStr(m['by']));
+  }
+}
+
+/// `status_full.limits`: the names walk, the text readers, the photo step and the (future) vision step.
+class OpLimits {
+  const OpLimits({required this.walk, required this.readers, required this.photo, required this.vision});
+  final OpLimit walk;
+  final OpLimit readers;
+  final OpLimit photo;
+  final OpLimit vision;
+
+  static OpLimits? fromJson(Object? v) {
+    if (v is! Map || v.isEmpty) return null;
+    final m = jMap(v);
+    return OpLimits(
+      walk: OpLimit.fromJson(m['walk']),
+      readers: OpLimit.fromJson(m['readers']),
+      photo: OpLimit.fromJson(m['photo']),
+      vision: OpLimit.fromJson(m['vision']),
+    );
   }
 }
 

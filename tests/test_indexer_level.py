@@ -304,6 +304,27 @@ def test_every_tick_lets_idle_models_go():
     assert calls == [1]
 
 
+def test_high_commit_lets_the_models_go_once_and_the_limits_follow_every_tick():
+    calls, act = [], Activity()
+    it = iter([smp(t=float(t), commit_pct=92.0) for t in range(0, 12, 2)])
+    plan = {"cpu": 8, "walk_threads": 16, "text_workers": 6, "text_workers_idle": 7, "model_threads": 4}
+    gv = Governor(S(), Apps(), act, sense=lambda: next(it), jobs=FakeJobs(),
+                  release_models=lambda: calls.append(1), plan=lambda: plan)
+    for _ in range(6):
+        gv.tick()
+    assert calls == [1]
+    assert any("let go of its search models" in e["text"] for e in act.recent(10))
+    assert gv.limits["readers"]["effective"] == 6 and gv.sample.commit_pct == 92.0
+
+    def boom():
+        raise RuntimeError("busy")
+    it2 = iter([smp(t=float(t), commit_pct=92.0) for t in range(0, 12, 2)])
+    gv2 = Governor(S(), Apps(), Activity(), sense=lambda: next(it2), jobs=FakeJobs(), release_models=boom,
+                   plan=boom)
+    for _ in range(6):
+        assert gv2.tick().level                      # a failing release or plan never stops the governor
+
+
 # ---------- paused: nothing runs (I-8), paused time is not work time (I-9), kills are listed (I-10) ----------
 class _Proc:
     def __init__(self):
@@ -593,3 +614,148 @@ def test_efficiency_mode_only_for_pids_still_in_the_worker_job():
     gv.brain.fixed = g.LIGHT
     gv.tick()
     assert calls == [(31, "job-handle")]
+
+
+# ---------- 2026-11-21: per-operation limits reach the pools ----------
+class LimGov:
+    def __init__(self, level, limits, **d):
+        self.decision = g.Decision(level, "why", **d)
+        self.limits = {op: {"effective": n} for op, n in limits.items()}
+        # a graphics card with room (the reserve and fit check: test_gpu_fit.py)
+        self.sample = g.Sample(t=0.0, cpu=10.0, gpu=5.0, mem_load=40, free_mb=8000, find_cpu=0.0, foreground="", game=False,
+                              presentation=False, hung=False, battery=False, call=False, idle_s=0.0,
+                              gpu_mem={"kind": "dedicated", "free_mb": 6000, "used_mb": 0, "budget_mb": 6000})
+
+
+def test_text_readers_follow_the_readers_limit(tmp_path, monkeypatch):
+    from nobadfind.store import Store
+    from nobadfind.walker import Walker
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for i in range(8):
+        (docs / f"n{i}.txt").write_text(f"note {i}")
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    Walker([str(docs)], gen=1, on_batch=s.upsert_files).run()
+    ix = indexer.Indexer(s, S(content=True, content_max_mb=1, ocr=False, src_mail=True),
+                         governor=LimGov(g.FULL, {"readers": 2}))
+    ix.status["plan"] = {"text_workers": 3, "text_workers_idle": 6}
+    peak, pending = [0], []
+
+    class Pool:
+        def __init__(self, *a, **k):
+            pass
+
+        def submit(self, fn, job):
+            f = cf.Future()
+            pending.append((f, job))
+            return f
+
+        def shutdown(self, **k):
+            pass
+
+    real_wait = indexer.cf.wait
+
+    def spy(fs, **k):
+        peak[0] = max(peak[0], len(fs))
+        for f, job in pending:
+            f.set_result((job[0], job[3], [], ""))
+        pending.clear()
+        return real_wait(fs, **k)
+
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(indexer.cf, "wait", spy)
+    ix._read_texts()
+    assert peak[0] == 2 and ix.status["texts"] == 8          # Full allows 6; the limit (memory, disk) says 2
+    s.close()
+
+
+def test_the_walk_uses_the_walk_limit_and_waits_while_the_disk_is_slow(tmp_path, monkeypatch):
+    made, waits = [], []
+
+    class W:
+        errors = 0
+
+        def __init__(self, roots, threads=8, on_batch=None, **k):
+            made.append(threads)
+            self.on_batch = on_batch
+
+        def run(self):
+            self.on_batch([("x",)] * indexer.NAME_BATCH)
+
+    class St:
+        def meta(self, k, d=None):
+            return d
+
+        def upsert_files(self, rows):
+            pass
+
+        def set_meta(self, *a):
+            pass
+
+        def drop_unseen(self, *a):
+            return 0
+    monkeypatch.setattr(indexer, "Walker", W)
+    monkeypatch.setattr(indexer.winapi, "drives", lambda: [])
+    ix = indexer.Indexer(St(), S(), governor=LimGov(g.GENTLE, {"walk": 3}, io_slow=True))
+    ix.status["plan"] = {"walk_threads": 32}
+    monkeypatch.setattr(ix, "roots", lambda: [str(tmp_path)])
+    monkeypatch.setattr(ix.stop_ev, "wait", lambda t: waits.append(t))
+    ix._scan_names()
+    assert made == [3] and indexer.IO_SLOW_WAIT in waits
+    ix.governor = LimGov(g.GENTLE, {})                         # no limit known: the plan's threads
+    waits.clear()
+    ix._scan_names()
+    assert made[-1] == 32 and indexer.IO_SLOW_WAIT not in waits
+
+
+def test_photo_threads_follow_the_photo_limit(tmp_path, monkeypatch):
+    from nobadfind.store import Store
+    made = []
+
+    class Pool:
+        def __init__(self, *a, **k):
+            made.append(k["initargs"])
+            self._processes = {}
+
+        def shutdown(self, **k):
+            pass
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(indexer.os, "cpu_count", lambda: 16)
+    s = Store(str(tmp_path / "i.db"), encrypt=False)
+    ix = indexer.Indexer(s, {"photo_meaning": True}, governor=LimGov(g.FULL, {"photo": 3}))
+    ix.photo_text = object()
+    ix.status["plan"] = {"text_workers": 8, "text_workers_idle": 15}
+    ix._photo_vectors()
+    assert made == [(3,)]
+    s.close()
+
+
+def test_no_graphics_card_for_meaning_when_the_governor_says_so(monkeypatch):
+    made = []
+
+    class Pool:
+        def __init__(self, max_workers, initializer, initargs):
+            made.append(initargs[2])
+
+        def submit(self, fn, texts):
+            import numpy as np
+            f = cf.Future()
+            f.set_result(np.zeros((len(texts), 384), np.float32).tobytes())
+            return f
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
+    monkeypatch.setattr(indexer.cf, "ProcessPoolExecutor", Pool)
+    ix = indexer.Indexer(None, S(), governor=LimGov(g.FULL, {}, gpu=False))
+    ix._vectors_in_worker = True
+    ix.status["plan"] = {"text_workers": 2, "text_workers_idle": 4}
+    t = [0.0]
+    ix._clock = lambda: t[0]
+    ix._encode(["a"])
+    ix.governor = LimGov(g.FULL, {})
+    ix._encode(["b"])
+    assert made == [False]                  # going up waits for indexer.UP_HOLD
+    t[0] = indexer.UP_HOLD + 1
+    ix._encode(["c"])
+    assert made == [False, True]
+    ix._end_meaning_pool()

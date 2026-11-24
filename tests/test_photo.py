@@ -184,10 +184,11 @@ def test_photo_v2_keeps_low_scoring_photos_in_siglips_order_and_marks_them_less_
     s = _store(tmp_path)
     vi = _pindex(s)
     monkeypatch.setenv("NOBAD_FIND_PHOTO_V2", "0")           # rollback: the earlier ranking, unchanged
-    v1 = [x["name"] for x in search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]]
+    # a description: on a one-word search ("dog") policy D drops the look-alike instead
+    v1 = [x["name"] for x in search.search(s, "my dog at home", photo_text=_Text(), pindex=vi)["results"]]
     assert v1 == ["IMG_0042.jpg"]                            # v1: the beach photo is under the floor, dropped
     monkeypatch.delenv("NOBAD_FIND_PHOTO_V2", raising=False)  # default: v2
-    r = search.search(s, "dog", photo_text=_Text(), pindex=vi)["results"]
+    r = search.search(s, "my dog at home", photo_text=_Text(), pindex=vi)["results"]
     assert [x["name"] for x in r] == ["IMG_0042.jpg", "IMG_0043.jpg"]
     assert not r[0]["weak"] and r[1]["weak"]                 # kept, after the sure one, shown as less sure
     assert search.search(s, "dog pdf", photo_text=_Text(), pindex=vi)["results"] == []   # still not photos

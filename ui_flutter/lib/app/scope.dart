@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../engine/engine_api.dart';
 import '../platform/window.dart';
+import '../state/notifications_controller.dart';
 import '../state/search_controller.dart';
 import '../state/settings_controller.dart';
 import '../state/status_controller.dart';
@@ -80,6 +81,7 @@ class AppScope extends InheritedWidget {
     required this.nav,
     required this.window,
     required this.version,
+    this.notifications,
   });
 
   final EngineApi engine;
@@ -91,7 +93,11 @@ class AppScope extends InheritedWidget {
   final WindowControl window;
   final String version;
 
+  /// The bell's notifications (null: a window without the bell, such as the quick find bar).
+  final NotificationsController? notifications;
+
   static AppScope of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppScope>()!;
+  static AppScope? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<AppScope>();
 
   @override
   bool updateShouldNotify(AppScope old) => false; // the controllers notify their own listeners
