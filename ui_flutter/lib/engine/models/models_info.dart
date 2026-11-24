@@ -54,9 +54,9 @@ const _states = {
 String featureLabel(String feature) =>
     const {
       'text': 'Meaning search',
-      'photo': 'Photos by what is in them',
+      'photo': 'Searching photos',
       'ocr': 'Words in pictures',
-      'talk': 'Talk about photos',
+      'talk': 'Talking about a photo',
       'runtime': 'Runs the photo talk models',
     }[feature] ??
     feature;

@@ -324,7 +324,7 @@ def test_models_before_the_first_scan_has_no_reindex_time(a):
     assert by["siglip2-base"]["suggested"] and "index_h" not in by["siglip2-base"]["cost_here"]
 
 
-def test_not_recommended_on_a_small_pc_keeps_its_reason(a, monkeypatch):
+def test_a_small_pc_has_photo_models_not_measured_with_their_reason(a, monkeypatch):
     monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "ram_gb": 7.8, "cores": 4, "threads": 8})
     by = {m["id"]: m for m in a.models()["models"]}
     assert by["siglip2-base"]["outcome"] == "not_measured" and not by["siglip2-base"]["suggested"]
@@ -402,3 +402,26 @@ def test_reset_suggested_returns_each_feature_and_leaves_off_features_off(a):
     assert a.reset_suggested(confirm=True)["applied"] is True
     assert a._settings.get("text_model") == "gte-small" and a._settings.get("photo_meaning") is False
     assert a._settings.get("photo_model") == "siglip-base"
+
+
+def test_reset_suggested_leaves_an_unmeasured_photo_model_as_it_is(a, monkeypatch):
+    """Nothing measured for this PC: the tier's photo model is no suggestion, so reset keeps what is chosen."""
+    _walked(a)
+    monkeypatch.setattr(api_mod.hw, "scan", lambda: {**PC, "ram_gb": 7.8, "cores": 4, "threads": 8})
+    a._settings.update({"photo_model": "siglip-base", "photo_meaning": True, "text_model": "gte-small", "semantic": True})
+    assert a.reset_suggested() == {"ok": True, "error": "", "applied": False, "changes": []}
+    assert a._settings.get("photo_model") == "siglip-base"
+
+
+def test_reset_suggested_keeps_photo_when_models_were_measured_but_none_is_suggested(a, monkeypatch):
+    _walked(a)
+    bad = dict(models.MEASURED[("siglip2-base", "fp16-vision", "cpu", "mid")], need_mb=9000, ram_mb=9000, ws_mb=9000)
+    monkeypatch.setitem(models.MEASURED, ("siglip2-base", "fp16-vision", "cpu", "mid"), bad)
+    a._settings.update({"photo_model": "siglip-base", "photo_meaning": True, "text_model": "gte-small", "semantic": True})
+    assert a.reset_suggested(confirm=True)["changes"] == []
+    assert a._settings.get("photo_model") == "siglip-base"
+
+
+def test_chosen_is_false_for_talk_models_and_runtimes(a):
+    by = {m["id"]: m for m in a.models()["models"]}
+    assert not by["smolvlm2-500m"]["chosen"] and not by["llama-cpu"]["chosen"]

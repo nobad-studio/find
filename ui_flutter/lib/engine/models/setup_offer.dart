@@ -39,7 +39,14 @@ class SetupCost {
 
   /// Nothing was measured (the engine sent `{}`).
   bool get isEmpty =>
-      ramMb == null && itemsS == null && queryMs == null && answerS == null && loadS == null && indexH == null;
+      ramMb == null &&
+      itemsS == null &&
+      queryMs == null &&
+      answerS == null &&
+      loadS == null &&
+      gpuMb == null &&
+      sharedMb == null &&
+      indexH == null;
 
   bool get here => measuredOn == 'this PC';
 

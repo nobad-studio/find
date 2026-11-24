@@ -430,7 +430,7 @@ void _suggestionTests() {
     await tester.tap(reset);
     await tester.pumpAndSettle();
     expect(find.text('Back to the suggested models?'), findsOneWidget);
-    expect(find.text('Photos by what is in them: SigLIP base to SigLIP 2 base'), findsOneWidget);
+    expect(find.text('Searching photos: SigLIP base to SigLIP 2 base'), findsOneWidget);
     expect(find.textContaining('Looking at your photos again takes about 14 min (measured on a similar PC)'), findsOneWidget);
     await tester.tap(find.text('Not now'));
     await tester.pumpAndSettle();

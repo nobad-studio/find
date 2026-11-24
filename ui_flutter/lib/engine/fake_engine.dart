@@ -917,7 +917,7 @@ class FakeEngine implements EngineApi {
     for (final f in const ['text', 'photo']) {
       final have = modelsInfo.byFeature(f).where((x) => x.chosen).firstOrNull;
       final want = f == 'photo'
-          ? modelsInfo.byFeature(f).where((x) => x.suggested).firstOrNull
+          ? modelsInfo.byFeature(f).where((x) => x.suggested).firstOrNull // never an unmeasured tier pick
           : modelsInfo.byFeature(f).where((x) => x.recommended).firstOrNull;
       if (have == null || want == null || have.id == want.id) continue;
       changes.add(

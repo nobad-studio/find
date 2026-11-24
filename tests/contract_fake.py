@@ -294,7 +294,8 @@ class FakeApi:
                 state = "active" if cat.selected(self.settings, m["feature"]) == m["id"] else "ready"
             else:
                 state = "not_downloaded"
-            fit = {**modelsuggest.fields(entries.get(m["id"])), "chosen": cat.selected(self.settings, m["feature"]) == m["id"],
+            fit = {**modelsuggest.fields(entries.get(m["id"])), "chosen": m["feature"] in ("text", "photo", "ocr")
+                   and cat.selected(self.settings, m["feature"]) == m["id"],
                    "vectors_change": cat.vectors_change(self.settings, m["feature"], m["id"])}
             out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": cat.size_mb(m),
@@ -331,6 +332,8 @@ class FakeApi:
         choice, entries, changes = cat.recommend_choice(pc, focus, sugg), modelsuggest.by_model(sugg), []
         for feature in ("text", "photo"):
             have, want = cat.selected(self.settings, feature), choice.get(feature) or ""
+            if feature == "photo":
+                want = next((e["model"] for e in sugg.get("photo_search") or [] if e["outcome"] == "suggested"), "")
             if not have or not want or have == want:
                 continue
             cost = (entries.get(want) or {}).get("cost_here") or {}

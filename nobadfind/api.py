@@ -1258,7 +1258,8 @@ class Api:
             # 1.2: the suggestion's verdict on it (modelsuggest.fields), whether it is the one in use, and whether using
             # it would make other vectors (a re-index, with the time shown first)
             fit = {**modelsuggest.fields(entries.get(m["id"])),
-                   "chosen": models.selected(self._settings, m["feature"]) == m["id"],
+                   "chosen": m["feature"] in ("text", "photo", "ocr")
+                   and models.selected(self._settings, m["feature"]) == m["id"],
                    "vectors_change": models.vectors_change(self._settings, m["feature"], m["id"])}
             out.append({**talk, **fit, "id": m["id"], "feature": m["feature"], "name": m["name"], "tier": m["tier"],
                         "licence": m["licence"], "source": m["source"], "size_mb": models.size_mb(m),
@@ -1310,6 +1311,8 @@ class Api:
         changes = []
         for feature in ("text", "photo"):
             have, want = models.selected(self._settings, feature), choice.get(feature) or ""
+            if feature == "photo":      # only a measured suggestion: the tier's pick of an unmeasured PC is no suggestion
+                want = next((e["model"] for e in sugg.get("photo_search") or [] if e["outcome"] == "suggested"), "")
             m = models.get(want) if want else None
             if not have or not want or have == want or m is None:
                 continue
