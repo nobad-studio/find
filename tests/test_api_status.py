@@ -702,16 +702,20 @@ def test_a_count_finishing_between_the_two_reads_is_not_reported_ready_and_empty
 
 
 def test_the_status_fields_validate_against_the_schema(tmp_path):
-    import json
-    import jsonschema
+    # the repo's own checker (tests/schemacheck.py): jsonschema isn't in the hash-pinned lock the build and CI use
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from schemacheck import Checker
     a, s = make(tmp_path)
     s.stats = SlowStats()
     a.status()
     stats_counted(a)
     st = a.status()
-    root = json.load(open(os.path.join(os.path.dirname(__file__), "..", "contract", "methods.schema.json"), encoding="utf-8"))
-    props = root["$defs"]["status_full"]["properties"]
+    check = Checker(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contract"))
+    props = check.doc("methods.schema.json")["$defs"]["status_full"]["properties"]
     for k in ("totals_at", "totals_state", "totals_error", "counts_at", "counts_state", "counts_error"):
         assert k in props, k
-        jsonschema.validate(st[k], {**props[k], "$defs": root["$defs"]})
+        assert not check.unknown_keywords(props[k]), k
+        errs = check.errors(st[k], props[k], "methods.schema.json")
+        assert not errs, (k, errs)
     s.close()
