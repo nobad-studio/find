@@ -50,8 +50,8 @@ class _CardShell extends StatelessWidget {
       builder: (context, lift, parallax) => Glass(
         radius: radius,
         lift: selected ? 1 : lift,
-        fill: selected ? c.orangeA(c.isDark ? .13 : .10) : (lift > .05 ? Color.lerp(c.card, c.cardLift, lift) : null),
-        rim: selected ? c.orangeA(.55) : null,
+        fill: selected ? c.pick : (lift > .05 ? Color.lerp(c.card, c.cardLift, lift) : null),
+        rim: selected ? (c.smoke ? c.text.withValues(alpha: .38) : c.orangeA(.55)) : null,
         padding: padding,
         child: builder(context, parallax, selected || lift > .5),
       ),
@@ -241,7 +241,7 @@ class _FlatRowState extends State<_FlatRow> {
             child: AnimatedContainer(
               duration: NbMotion.of(context, NbMotion.fast),
               decoration: BoxDecoration(
-                color: sel ? c.selected : (_hover ? c.cardHover : const Color(0x00000000)),
+                color: sel ? (c.smoke ? c.pick : c.selected) : (_hover ? c.cardHover : const Color(0x00000000)),
                 borderRadius: NbRadius.rowAll,
               ),
             ),
@@ -252,7 +252,7 @@ class _FlatRowState extends State<_FlatRow> {
             bottom: 18,
             width: 3,
             child: AnimatedOpacity(
-              opacity: sel ? 1 : 0,
+              opacity: sel && !c.smoke ? 1 : 0, // Nocturne marks the selected row by its lift alone
               duration: NbMotion.of(context, NbMotion.fast),
               child: DecoratedBox(
                 decoration: BoxDecoration(color: c.orange, borderRadius: const BorderRadius.all(Radius.circular(2))),

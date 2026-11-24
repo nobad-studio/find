@@ -169,6 +169,7 @@ class _NobadFindAppState extends State<NobadFindApp> {
         final c = (settings.settings.dark ? NbColors.dark : NbColors.light).withGlass(
           _glass,
           iceStyle: settings.settings.ice,
+          nocturneStyle: settings.settings.nocturne,
         );
         final bar = widget.mode == AppMode.bar;
         return MaterialApp(

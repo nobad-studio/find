@@ -178,7 +178,7 @@ DEFAULTS = {
     "wsearch_prev": "",             # Windows Search start type saved before NOBAD Find turned it off
     "theme": "dark",
     "glass": True,                  # see-through acrylic window on Windows 11 (follows Windows' transparency switch)
-    "theme_style": "classic",       # the window's look: "classic" (Mica, warm glows) or "ice" (Acrylic, cold frost)
+    "theme_style": "classic",       # the window's look: "classic" (warm glows), "ice" (cold frost) or "nocturne" (smoked glass)
     "bg_notice_seen": False,        # the one-time "closing keeps NOBAD Find ready" notice was dismissed
     "welcome_seen": False,          # the Flutter UI's first-run welcome was dismissed (Start searching)
     # 1.2.0 (plan Task 6): the first-run models window after the first scan (firstrun.py): pending (not answered)

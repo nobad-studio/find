@@ -3111,9 +3111,10 @@
         "theme_style": {
           "enum": [
             "classic",
-            "ice"
+            "ice",
+            "nocturne"
           ],
-          "description": "The window's look: classic (Mica, warm glows; the default) or ice (Minimal ice: Acrylic, cold frost)."
+          "description": "The window's look: classic (warm glows; the default), ice (Minimal ice: cold frost) or nocturne (smoked glass, white actions)."
         },
         "bg_notice_seen": {
           "type": "boolean"
@@ -3497,9 +3498,10 @@
         "theme_style": {
           "enum": [
             "classic",
-            "ice"
+            "ice",
+            "nocturne"
           ],
-          "description": "The window's look: classic (Mica, warm glows; the default) or ice (Minimal ice: Acrylic, cold frost)."
+          "description": "The window's look: classic (warm glows; the default), ice (Minimal ice: cold frost) or nocturne (smoked glass, white actions)."
         },
         "bg_notice_seen": {
           "type": "boolean"

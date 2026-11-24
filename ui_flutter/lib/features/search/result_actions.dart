@@ -125,14 +125,14 @@ class _ActionChip extends StatelessWidget {
         height: 28,
         padding: EdgeInsets.symmetric(horizontal: compact || glyph == null ? 8 : 10),
         decoration: BoxDecoration(
-          color: primary ? (p.lit ? c.orange : c.orangeA(.85)) : (p.lit ? c.cardLift : c.card),
-          border: Border.all(color: primary ? c.orange : c.line2),
+          color: primary ? (p.lit ? c.action : c.action.withValues(alpha: .85)) : (p.lit ? c.cardLift : c.card),
+          border: Border.all(color: primary ? c.action : c.line2),
           borderRadius: NbRadius.pillAll,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (glyph != null) NbIcon(glyph!, size: 14, color: primary ? c.onOrange : (p.lit ? c.text : c.muted)),
+            if (glyph != null) NbIcon(glyph!, size: 14, color: primary ? c.onAction : (p.lit ? c.text : c.muted)),
             if (glyph == null) NbIcon(NbGlyph.more, size: 14, color: p.lit ? c.text : c.muted),
             if (!compact && glyph != null) ...[
               const SizedBox(width: 6),
@@ -140,7 +140,7 @@ class _ActionChip extends StatelessWidget {
                 label,
                 style: NbType.text(
                   NbSize.small,
-                  primary ? c.onOrange : (p.lit ? c.text : c.muted),
+                  primary ? c.onAction : (p.lit ? c.text : c.muted),
                   weight: FontWeight.w600,
                   height: 1.2,
                 ),

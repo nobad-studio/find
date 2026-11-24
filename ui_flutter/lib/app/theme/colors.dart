@@ -3,7 +3,8 @@
 /// with a fine light rim. Two styles (setting `theme_style`, Settings > General): Classic, the default (the
 /// original colours, glows and shapes, see-through over the frost, colourful icon tiles), and Minimal ice (glacier
 /// cyan and deep ice light, cool frost panels, cool monochrome tiles). In both the NOBAD orange is the one warm
-/// accent, for actions. Glass off: one solid look for both, as before.
+/// accent, for actions. Nocturne (dark): smoked glass over a neutral olive-grey stage, rounder panels, white actions
+/// in place of the orange buttons. Glass off: one solid look for all, as before.
 ///
 /// Screens read them with `NbColors.of(context)`; nothing outside lib/app/theme hard-codes a colour.
 library;
@@ -34,6 +35,7 @@ class NbColors extends ThemeExtension<NbColors> {
     required this.shadow,
     this.glass = false,
     this.ice = false,
+    this.nocturne = false,
   });
 
   final Brightness brightness;
@@ -65,6 +67,12 @@ class NbColors extends ThemeExtension<NbColors> {
   /// colours.
   final bool ice;
 
+  /// The Nocturne style: smoked glass, white actions, rounder panels (drawn as such only in dark).
+  final bool nocturne;
+
+  /// Nocturne in dark: the smoked look.
+  bool get smoke => nocturne && isDark;
+
   /// Glass and Minimal ice: the cold look.
   bool get frost => glass && ice;
 
@@ -73,10 +81,12 @@ class NbColors extends ThemeExtension<NbColors> {
 
   /// The ink under the glass: a cold blue-black (dark) or a pale frost (light) for Minimal ice, the canvas colour
   /// otherwise.
-  Color get ink => !frost ? bg : (isDark ? const Color(0xFF070A0F) : const Color(0xFFEAF1F8));
+  Color get ink => smoke && glass
+      ? const Color(0xFF45463F)
+      : (!frost ? bg : (isDark ? const Color(0xFF070A0F) : const Color(0xFFEAF1F8)));
 
   /// The window canvas under the backdrop: a thin ink tint over Windows' frost, solid otherwise.
-  Color get canvas => glass ? ink.withValues(alpha: isDark ? .34 : .42) : bg;
+  Color get canvas => glass ? ink.withValues(alpha: smoke ? .62 : (isDark ? .34 : .42)) : bg;
 
   /// Classic over glass: its own colours (neutral dark, or white), see-through at [alpha].
   Color _classic(double alpha, {bool quiet = false}) =>
@@ -85,29 +95,37 @@ class NbColors extends ThemeExtension<NbColors> {
 
   /// Floating panels (the search box, the detail pane). Classic over glass: see-through at 40 %. Minimal ice: cool
   /// frost at 44 % (dark), pale frost at 58 % (light). Solid: neutral dark at 64 %, or white at 72 %.
-  Color get panel => frost
+  Color get panel => smoke
+      ? (glass ? const Color(0xE6252524) : const Color(0xFF252524))
+      : frost
       ? (isDark ? const Color(0x70121A24) : const Color(0x94F6FAFE))
       : glass
       ? _classic(.40)
       : (isDark ? const Color(0xA3181A1F) : const Color(0xB8FFFFFF));
 
   /// The sidebar, a little quieter than panels. Classic over glass: 35 %.
-  Color get rail => frost
+  Color get rail => smoke
+      ? (glass ? const Color(0xD91F1F1E) : const Color(0xFF1F1F1E))
+      : frost
       ? (isDark ? const Color(0x66121A24) : const Color(0x8AF6FAFE))
       : glass
       ? _classic(.35, quiet: true)
       : (isDark ? const Color(0x94141519) : const Color(0xADFFFFFF));
 
   /// Cards on the backdrop: fainter than panels. Classic over glass: 30 %, the desktop frosted behind them.
-  Color get card => frost
+  Color get card => smoke
+      ? (glass ? const Color(0xB82C2C2A) : const Color(0xFF2C2C2A))
+      : frost
       ? (isDark ? const Color(0x57121A24) : const Color(0x7AF6FAFE))
       : glass
-      ? _classic(.30)
+      ? _classic(isDark ? .48 : .30)
       : (isDark ? const Color(0x85181A1F) : const Color(0x9EFFFFFF));
 
   /// Dialogs and menus that float over results (consent, download, context menus, popovers): kept readable
   /// whatever is under them (64 %), with real blur behind them.
-  Color get dialog => frost
+  Color get dialog => smoke
+      ? (glass ? const Color(0xF22A2A28) : const Color(0xFF2A2A28))
+      : frost
       ? (isDark ? const Color(0xA3121A24) : const Color(0xB8F6FAFE))
       : glass
       ? _classic(.64)
@@ -139,12 +157,19 @@ class NbColors extends ThemeExtension<NbColors> {
   /// The backdrop's soft light. Minimal ice: glacier cyan (large, top left), deep ice (bottom right), a pale ice
   /// haze, and only a small ember of the orange (the orange belongs to actions). Classic: the warm orange, the
   /// magenta and the indigo.
-  Color get glowWarm =>
-      frost ? orange.withValues(alpha: isDark ? .09 : .07) : orange.withValues(alpha: isDark ? .30 : .22);
-  Color get glowCool => frost
+  Color get glowWarm => smoke
+      ? const Color(0x268F8A7A)
+      : frost
+      ? orange.withValues(alpha: isDark ? .09 : .07) : orange.withValues(alpha: isDark ? .30 : .22);
+  Color get glowCool => smoke
+      ? const Color(0x473F4A52)
+      : frost
       ? (isDark ? const Color(0x473B6CFF) : const Color(0x2E3B6CFF))
       : (isDark ? const Color(0x524F5DFF) : const Color(0x3D4F5DFF));
-  Color get glowMagenta => isDark ? const Color(0x38D0347A) : const Color(0x2ED0347A);
+  Color get glowMagenta => smoke
+      ? const Color(0x2E7A7464)
+      : isDark
+      ? const Color(0x38D0347A) : const Color(0x2ED0347A);
   Color get glowGlacier => isDark ? const Color(0x2E6FD3FF) : const Color(0x336FD3FF);
   Color get glowHaze => isDark ? const Color(0x12BFE6FF) : const Color(0x33BFE6FF);
 
@@ -188,6 +213,14 @@ class NbColors extends ThemeExtension<NbColors> {
   Color tileTop(NbTint t) => _tints[t]!.$3.withValues(alpha: .22);
   Color tileBottom(NbTint t) => _tints[t]!.$3.withValues(alpha: .10);
   Color tileRim(NbTint t) => _tints[t]!.$3.withValues(alpha: .30);
+
+  /// The primary action's fill and ink: Nocturne's white pill with dark ink; the accent (the orange, or Minimal
+  /// ice's cyan) otherwise.
+  Color get action => smoke ? const Color(0xFFF7F7F5) : orange;
+  Color get onAction => smoke ? const Color(0xFF1D1D1C) : onOrange;
+
+  /// A selected row or card: a white lift in Nocturne, the warm tint otherwise.
+  Color get pick => smoke ? const Color(0x1FFFFFFF) : orangeA(isDark ? .13 : .10);
 
   /// The soft shadow under floating things.
   Color get float => isDark ? const Color(0x73000000) : const Color(0x1A1B2440);
@@ -245,8 +278,8 @@ class NbColors extends ThemeExtension<NbColors> {
   static const _iceAccentDark = Color(0xFFA8E6FF), _iceAccentLight = Color(0xFF0A6690);
 
   /// This palette over glass ([on]) or solid, in the Classic or the Minimal ice ([iceStyle]) style.
-  NbColors withGlass(bool on, {bool iceStyle = false}) {
-    if (on == glass && iceStyle == ice) return this;
+  NbColors withGlass(bool on, {bool iceStyle = false, bool nocturneStyle = false}) {
+    if (on == glass && iceStyle == ice && nocturneStyle == nocturne) return this;
     final base = isDark ? dark : light;
     final (m, d) = on ? _glassText[(iceStyle, isDark)]! : (base.muted, base.dim);
     return NbColors(
@@ -268,6 +301,7 @@ class NbColors extends ThemeExtension<NbColors> {
       shadow: shadow,
       glass: on,
       ice: iceStyle,
+      nocturne: nocturneStyle,
     );
   }
 
@@ -295,6 +329,7 @@ class NbColors extends ThemeExtension<NbColors> {
       shadow: l(shadow, other.shadow),
       glass: t < .5 ? glass : other.glass,
       ice: t < .5 ? ice : other.ice,
+      nocturne: t < .5 ? nocturne : other.nocturne,
     );
   }
 }

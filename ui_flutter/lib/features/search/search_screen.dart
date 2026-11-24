@@ -712,8 +712,8 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
           key: SearchScreen.boxKey,
           level: GlassLevel.panel,
           radius: NbRadius.card,
-          rim: on ? c.orangeA(.6) : null,
-          padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+          rim: on && !c.smoke ? c.orangeA(.6) : null,
+          padding: c.smoke ? const EdgeInsets.fromLTRB(10, 10, 10, 12) : const EdgeInsets.fromLTRB(4, 2, 4, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -728,7 +728,11 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
                   );
                 },
               ),
-              Container(height: 1, margin: const EdgeInsets.fromLTRB(10, 0, 10, 8), color: c.line),
+              Container(
+                height: 1,
+                margin: c.smoke ? const EdgeInsets.fromLTRB(4, 8, 4, 10) : const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                color: c.line,
+              ),
               Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: widget.filters),
             ],
           ),
@@ -744,25 +748,39 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
       autofocus: true,
       cursorColor: c.orange,
       inputFormatters: [LengthLimitingTextInputFormatter(maxTextLength)],
-      style: NbType.text(NbSize.field, c.text),
+      style: NbType.text(c.smoke ? 20 : NbSize.field, c.text),
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         isDense: true,
         border: InputBorder.none,
         hintText: 'Describe it: “rent pdf from last week”, “budget.xlsx”',
-        hintStyle: NbType.text(NbSize.field, c.dim),
-        prefixIcon: Padding(
-          padding: const EdgeInsets.only(left: 12, right: 10),
-          child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
-        ),
-        prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 18),
+        hintStyle: NbType.text(c.smoke ? 20 : NbSize.field, c.dim),
+        prefixIcon: c.smoke
+            // Nocturne: the reference's round button on the left
+            ? Padding(
+                padding: const EdgeInsets.only(right: 14),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(shape: BoxShape.circle, color: c.raised, border: Border.all(color: c.line)),
+                  child: NbIcon(NbGlyph.search, size: 18, color: on ? c.text : c.muted),
+                ),
+              )
+            : Padding(
+                padding: const EdgeInsets.only(left: 12, right: 10),
+                child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
+              ),
+        prefixIconConstraints: c.smoke
+            ? const BoxConstraints(minWidth: 58, minHeight: 44)
+            : const BoxConstraints(minWidth: 40, minHeight: 18),
         // a way to clear the box with the mouse; Esc does the same
         suffixIcon: ListenableBuilder(
           listenable: widget.controller,
           builder: (context, _) => widget.controller.text.isEmpty
-              ? const SizedBox(width: 8)
+              ? SizedBox(width: c.smoke ? 44 : 8, height: c.smoke ? 44 : null)
               : Padding(
-                  padding: const EdgeInsets.only(right: 10),
+                  padding: EdgeInsets.only(right: c.smoke ? 0 : 10),
                   child: Pressable(
                     onTap: () {
                       widget.controller.clear();
@@ -772,15 +790,30 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
                     tooltip: 'Clear (Esc)',
                     canRequestFocus: false,
                     ringRadius: NbRadius.pillAll,
-                    builder: (context, p) => Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(color: p.lit ? c.cardHover : null, shape: BoxShape.circle),
-                      child: NbIcon(NbGlyph.close, size: 13, color: p.lit ? c.text : c.dim),
-                    ),
+                    builder: (context, p) => c.smoke
+                        // Nocturne: the white round button on the right
+                        ? Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: p.lit ? Color.lerp(c.action, c.onAction, .06) : c.action,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(color: c.float, blurRadius: 16, offset: const Offset(0, 6), spreadRadius: -6),
+                              ],
+                            ),
+                            child: NbIcon(NbGlyph.close, size: 16, color: c.onAction),
+                          )
+                        : Container(
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(color: p.lit ? c.cardHover : null, shape: BoxShape.circle),
+                            child: NbIcon(NbGlyph.close, size: 13, color: p.lit ? c.text : c.dim),
+                          ),
                   ),
                 ),
         ),
-        contentPadding: const EdgeInsets.fromLTRB(0, 12, 12, 11),
+        contentPadding: c.smoke ? const EdgeInsets.fromLTRB(0, 12, 8, 12) : const EdgeInsets.fromLTRB(0, 12, 12, 11),
       ),
     ),
   );

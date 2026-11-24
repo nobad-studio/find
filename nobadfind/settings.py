@@ -132,7 +132,7 @@ def coerce(key, value):
     if key == "setup_offer":
         return value if value in ("pending", "later", "accepted", "done") else d
     if key == "theme_style":
-        return value if value in ("classic", "ice") else d
+        return value if value in ("classic", "ice", "nocturne") else d
     if key == "scope":
         return value if value in SCOPES else d
     if key == "browser_data":

@@ -180,7 +180,7 @@ class _Item extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 2),
         padding: EdgeInsets.only(left: indent ? 16 : 2, right: 8),
         decoration: BoxDecoration(
-          color: on ? c.selected : (p.lit ? c.cardHover : const Color(0x00000000)),
+          color: on ? (c.smoke ? c.pick : c.selected) : (p.lit ? c.cardHover : const Color(0x00000000)),
           borderRadius: NbRadius.controlAll,
         ),
         child: Row(
@@ -189,11 +189,11 @@ class _Item extends StatelessWidget {
             AnimatedContainer(
               duration: d,
               width: 3,
-              height: on ? 16 : 0,
+              height: on && !c.smoke ? 16 : 0,
               margin: EdgeInsets.only(right: indent ? 8 : 9),
               decoration: BoxDecoration(color: c.orange, borderRadius: const BorderRadius.all(Radius.circular(2))),
             ),
-            NbIcon(glyph, size: 16, color: on ? c.orange : (p.lit || strong ? c.text : c.muted)),
+            NbIcon(glyph, size: 16, color: on ? (c.smoke ? c.text : c.orange) : (p.lit || strong ? c.text : c.muted)),
             const SizedBox(width: 10),
             Expanded(
               child: Text(

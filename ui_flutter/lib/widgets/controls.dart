@@ -45,7 +45,7 @@ class NbButton extends StatelessWidget {
       builder: (context, s) {
         final enabled = s.enabled;
         final (Color bg, Color fg, Color edge) = switch (kind) {
-          NbButtonKind.primary => (s.down ? Color.lerp(c.orange, c.shadow, .12)! : c.orange, c.onOrange, c.orange),
+          NbButtonKind.primary => (s.down ? Color.lerp(c.action, c.shadow, .12)! : c.action, c.onAction, c.action),
           NbButtonKind.ghost => (
             s.lit ? c.orangeA(.06) : const Color(0x00000000),
             c.text,
@@ -68,15 +68,17 @@ class NbButton extends StatelessWidget {
           child: AnimatedContainer(
             duration: NbMotion.of(context, NbMotion.fast),
             curve: NbMotion.curve,
-            height: small ? 28 : 32,
-            padding: EdgeInsets.symmetric(horizontal: small ? 10 : 14),
+            height: c.smoke ? (small ? 30 : 36) : (small ? 28 : 32),
+            padding: EdgeInsets.symmetric(horizontal: (small ? 10 : 14) + (c.smoke ? 3 : 0)),
             decoration: BoxDecoration(
               color: bg,
               border: Border.all(color: edge),
               borderRadius: NbRadius.controlAll,
               boxShadow: [
                 if (kind == NbButtonKind.primary && s.lit && enabled)
-                  BoxShadow(color: c.orangeA(.3), blurRadius: 10, offset: const Offset(0, 3), spreadRadius: -5),
+                  c.smoke
+                      ? BoxShadow(color: c.float, blurRadius: 18, offset: const Offset(0, 6), spreadRadius: -6)
+                      : BoxShadow(color: c.orangeA(.3), blurRadius: 10, offset: const Offset(0, 3), spreadRadius: -5),
               ],
             ),
             child: Row(
@@ -124,8 +126,8 @@ class NbSwitch extends StatelessWidget {
           height: 20,
           decoration: BoxDecoration(
             // Fluent: on is the accent (the NOBAD orange) filled, off an outline
-            color: value ? (s.lit ? Color.lerp(c.orange, c.text, .12) : c.orange) : (s.lit ? c.cardHover : c.raised),
-            border: Border.all(color: value ? c.orange : (s.lit ? c.text.withValues(alpha: .7) : c.muted)),
+            color: value ? (s.lit ? Color.lerp(c.action, c.text, .12) : c.action) : (s.lit ? c.cardHover : c.raised),
+            border: Border.all(color: value ? c.action : (s.lit ? c.text.withValues(alpha: .7) : c.muted)),
             borderRadius: NbRadius.pillAll,
           ),
           child: AnimatedAlign(
@@ -136,7 +138,7 @@ class NbSwitch extends StatelessWidget {
               width: 12,
               height: 12,
               margin: const EdgeInsets.symmetric(horizontal: 4),
-              decoration: BoxDecoration(shape: BoxShape.circle, color: value ? c.onOrange : c.muted),
+              decoration: BoxDecoration(shape: BoxShape.circle, color: value ? c.onAction : c.muted),
             ),
           ),
         ),

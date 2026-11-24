@@ -20,9 +20,9 @@ class GeneralPage extends StatelessWidget {
           ChoiceSetting(
             'theme_style',
             'Theme style',
-            'Both are see-through. Classic: the original colours, warm light behind the glass and colourful icons. '
-                'Minimal ice: cold frost and quiet icons.',
-            [('classic', 'Classic'), ('ice', 'Minimal ice')],
+            'All are see-through. Classic: the original colours, warm light behind the glass and colourful icons. '
+                'Minimal ice: cold frost and quiet icons. Nocturne: smoked glass, rounder panels and white actions.',
+            [('classic', 'Classic'), ('ice', 'Minimal ice'), ('nocturne', 'Nocturne')],
           ),
           SwitchSetting(
             'glass',

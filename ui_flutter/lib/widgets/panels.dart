@@ -56,9 +56,24 @@ class PageTitle extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(text.toUpperCase(), style: NbType.display(size, c.text)),
-          const SizedBox(height: 8),
-          const SignalRule(),
+          if (c.smoke)
+            Text(
+              text,
+              style: TextStyle(
+                fontFamily: 'Segoe UI Variable Display',
+                fontFamilyFallback: NbFont.bodyFallback,
+                fontSize: size + 6,
+                fontWeight: FontWeight.w500,
+                letterSpacing: -.02 * (size + 6),
+                height: 1.15,
+                color: c.text,
+              ),
+            )
+          else ...[
+            Text(text.toUpperCase(), style: NbType.display(size, c.text)),
+            const SizedBox(height: 8),
+            const SignalRule(),
+          ],
         ],
       ),
     );

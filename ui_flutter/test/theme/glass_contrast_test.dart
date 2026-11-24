@@ -204,17 +204,29 @@ void main() {
     expect(l.glowWarm, l.orange.withValues(alpha: .22));
   });
 
-  test('Classic over glass: see-through all over (sidebar 35 %, cards 30 %, panels 40 %, dialogs 64 %), its own '
-      'colours', () {
+  test('Classic over glass: see-through all over (sidebar 35 %, cards 48 % dark / 30 % light, panels 40 %, '
+      'dialogs 64 %), its own colours', () {
     for (final base in [NbColors.dark, NbColors.light]) {
       final c = base.withGlass(true);
       expect(c.rail.a, closeTo(.35, .01));
-      expect(c.card.a, closeTo(.30, .01));
+      // 2026-11-24: the inner cards darker in dark, so they read as cards over a bright desktop
+      expect(c.card.a, closeTo(base.isDark ? .48 : .30, .01));
       expect(c.panel.a, closeTo(.40, .01)); // the search box and the detail pane
       expect(c.dialog.a, closeTo(.64, .01));
       expect(c.card.withValues(alpha: 1), base.isDark ? const Color(0xFF181A1F) : const Color(0xFFFFFFFF));
       expect(c.glowWarm, base.orange.withValues(alpha: base.isDark ? .30 : .22)); // the original light
     }
+  });
+
+  test('Nocturne (dark): smoked glass over an olive-grey stage, white actions, rounder glass', () {
+    final d = NbColors.dark.withGlass(true, nocturneStyle: true);
+    expect(d.smoke, isTrue);
+    expect(d.panel, const Color(0xE6252524));
+    expect(d.card, const Color(0xB82C2C2A));
+    expect(d.action, const Color(0xFFF7F7F5));
+    expect(d.onAction, const Color(0xFF1D1D1C));
+    // Classic and Minimal ice keep their accent as the action
+    expect(NbColors.dark.withGlass(true).action, NbColors.dark.orange);
   });
 
   test('Minimal ice over glass: as built (18a4f7b)', () {
