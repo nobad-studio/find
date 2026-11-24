@@ -89,14 +89,17 @@ class _SearchingRingState extends State<SearchingRing> with SingleTickerProvider
     final s = widget.size;
     if (reduceMotion(context)) {
       if (_turn.isAnimating) _turn.stop();
-      return SizedBox(
-        key: const ValueKey('searching-dot'),
-        width: s,
-        height: s,
-        child: Center(
-          child: DecoratedBox(
-            decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
-            child: const SizedBox(width: 7, height: 7),
+      return Semantics(
+        label: 'Searching',
+        child: SizedBox(
+          key: const ValueKey('searching-dot'),
+          width: s,
+          height: s,
+          child: Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+              child: const SizedBox(width: 7, height: 7),
+            ),
           ),
         ),
       );

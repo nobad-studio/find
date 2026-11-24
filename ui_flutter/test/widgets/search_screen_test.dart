@@ -83,11 +83,11 @@ void main() {
 
   testWidgets('double-clicking a result opens it; a missing file says so', (tester) async {
     final engine = FakeEngine()..openOk = false;
-    await pumpApp(tester, engine);
+    await pumpApp(tester, engine, size: const Size(1280, 800)); // wide: the detail pane, no strip
     await type(tester, 'notes');
-    await tester.tap(find.text('tax notes.txt'));
+    await tester.tap(find.text('tax notes.txt').first);
     await tester.pump(const Duration(milliseconds: 80));
-    await tester.tap(find.text('tax notes.txt'));
+    await tester.tap(find.text('tax notes.txt').first);
     await tester.pump();
     expect(engine.opened, [2]);
     expect(find.text("That file isn't there any more."), findsOneWidget);

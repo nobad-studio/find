@@ -42,6 +42,7 @@ import '../../platform/timing.dart';
 import '../../state/typed_filters.dart';
 import '../../widgets/controls.dart';
 import 'result_actions.dart';
+import 'preview_strip.dart';
 import 'result_tile.dart';
 import 'searching_ring.dart';
 import 'smart_search.dart';
@@ -195,6 +196,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     if (identical(Demo.mainBox, box)) Demo.mainBox = null;
     _shows?.cancel();
+    _clickedFor?.cancel();
     s.find.removeListener(_follow);
     s.find.removeListener(_followPhoto);
     talk.dispose();
@@ -241,6 +243,9 @@ class _SearchScreenState extends State<SearchScreen> {
   /// detail pane's width), and Home / End jump in the results instead of moving the caret.
   bool _navigating = false;
   bool _sheet = false;
+
+  /// Narrow window (no detail pane): a click opened the preview strip under the results (preview_strip.dart).
+  bool _strip = false;
   bool _wide = false;
   final _menu = MenuController();
   final _menuAnchor = GlobalKey();
@@ -344,10 +349,10 @@ class _SearchScreenState extends State<SearchScreen> {
   int _clickedId = -1;
   Timer? _clickedFor;
 
-  /// A click on a result (1.2): it selects and previews in the detail pane (below the pane's width the details are
-  /// Details in the actions menu), it never opens. A double-click opens; Ctrl+click shows the
-  /// file in its folder (Enter, Ctrl+Enter and the pane's buttons do the same for the selected result). The click
-  /// takes effect at once: nothing waits to find out whether a second one follows.
+  /// A click on a result (1.2): it selects and previews, it never opens. The preview is the detail pane, or, in a
+  /// window too narrow for the pane, the strip under the results (nothing covers the list). A double-click opens;
+  /// Ctrl+click shows the file in its folder (Enter, Ctrl+Enter and the preview's buttons do the same for the
+  /// selected result). The click takes effect at once: nothing waits to find out whether a second one follows.
   void _clicked(int i, bool reveal) {
     s.find.select(i);
     focus.requestFocus();
@@ -365,6 +370,7 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     _clickedId = id;
     _clickedFor = Timer(_doubleClick, () => _clickedId = -1);
+    if (!_wide && !_strip) setState(() => _strip = true);
   }
 
   void _action(ResultAction a) {
@@ -409,6 +415,10 @@ class _SearchScreenState extends State<SearchScreen> {
     }
     if (_sheet) {
       setState(() => _sheet = false);
+      return;
+    }
+    if (_strip && !_wide) {
+      setState(() => _strip = false); // the preview strip closes before the box is cleared
       return;
     }
     if (box.text.isNotEmpty) {
@@ -650,6 +660,38 @@ class _SearchScreenState extends State<SearchScreen> {
                   ],
                 ),
               ),
+              // narrow window: the preview of the selected result, under the results (never over them)
+              if (!wide)
+                Align(
+                  alignment: Alignment.topLeft,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
+                    child: ListenableBuilder(
+                      listenable: s.find,
+                      builder: (context, _) {
+                        final r = s.find.current;
+                        final show = _strip && !_sheet && s.find.showingResults && r != null;
+                        return AnimatedSize(
+                          duration: NbMotion.size(context, NbMotion.base),
+                          curve: NbMotion.curve,
+                          alignment: Alignment.topCenter,
+                          child: show
+                              ? PreviewStrip(
+                                  key: const ValueKey('preview-strip'),
+                                  result: r,
+                                  onOpen: _open,
+                                  onReveal: () => _open(reveal: true),
+                                  onClose: () {
+                                    setState(() => _strip = false);
+                                    focus.requestFocus();
+                                  },
+                                )
+                              : const SizedBox(width: double.infinity),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               // on the same edges as the search box and Home's tiles and list
               Align(
                 alignment: Alignment.topLeft,
