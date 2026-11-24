@@ -62,7 +62,7 @@
   defaults at the next change, losing your folders, exclusions and scope. Now the file is read again first and your
   change is added to it; if it still can't be read it is kept as settings.json.unreadable-<date> (Wipe deletes it).
 
-## 1.1.1 · (in development)
+## 1.1.1 · 2026-11-23
 
 ### Fixed
 - **The Index, Models and What to index pages open at once on a big index,** and searching no longer stops with
