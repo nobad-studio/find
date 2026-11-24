@@ -748,13 +748,13 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
       autofocus: true,
       cursorColor: c.orange,
       inputFormatters: [LengthLimitingTextInputFormatter(maxTextLength)],
-      style: NbType.text(c.smoke ? 20 : NbSize.field, c.text),
+      style: NbType.text(NbSize.field, c.text),
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         isDense: true,
         border: InputBorder.none,
         hintText: 'Describe it: “rent pdf from last week”, “budget.xlsx”',
-        hintStyle: NbType.text(c.smoke ? 20 : NbSize.field, c.dim),
+        hintStyle: NbType.text(NbSize.field, c.dim),
         prefixIcon: c.smoke
             // Nocturne: the reference's round button on the left
             ? Padding(

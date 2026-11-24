@@ -52,6 +52,9 @@ abstract final class NbRadius {
   /// Icon tiles (Settings groups, model rows, this PC's tiles, Home's categories, the Index cards).
   static const tile = 12.0;
 
+  /// Windows 11's own window corner (DWMWCP_ROUND): glass that fills a whole window (the quick find bar).
+  static const window = 8.0;
+
   static const keyAll = BorderRadius.all(key);
   static const controlAll = BorderRadius.all(control);
   static const rowAll = BorderRadius.all(row);

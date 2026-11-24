@@ -114,7 +114,8 @@ class Glass extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = NbColors.of(context);
     // Nocturne: the reference's big, soft corners (22 -> 32 on cards and panels)
-    final radius = c.smoke ? this.radius * 1.45 : this.radius;
+    // (cards and panels only: smaller corners, such as a window's own, stay as they are)
+    final radius = c.smoke && this.radius >= NbRadius.card ? this.radius * 1.45 : this.radius;
     final shape = RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(radius));
     final base =
         fill ??

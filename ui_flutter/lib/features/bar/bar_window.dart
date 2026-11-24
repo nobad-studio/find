@@ -432,9 +432,10 @@ class _BarWindowState extends State<BarWindow> {
     // a frosted pill: Windows' Acrylic behind the window does the blur; the glass adds the tint and the rim
     return Glass(
       level: GlassLevel.panel,
-      radius: NbRadius.card,
-      // 0.9.5: the main window's see-through tint, not the denser panel; Nocturne: its smoked glass
-      fill: c.smoke ? c.panel : (c.glass ? c.canvas : c.surface),
+      // the bar's own window has Windows 11's round corners (8 px): the glass follows them, so no square box shows
+      // around a rounder pill
+      radius: NbRadius.window,
+      fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
       child: MenuAnchor(
         controller: _menu,
         menuChildren: MenuGlass.wrap(_menuItems),
