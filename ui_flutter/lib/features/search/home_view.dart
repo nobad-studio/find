@@ -18,6 +18,7 @@ import '../../engine/models/result.dart';
 import '../../state/categories.dart';
 import '../../widgets/smooth_scroll.dart';
 import '../../widgets/common.dart';
+import '../../widgets/controls.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
 import '../../widgets/panels.dart';
@@ -227,6 +228,30 @@ class CategoryTiles extends StatelessWidget {
         ],
       );
     },
+  );
+}
+
+/// A category's narrower searches above its files: one slim row of chips (28 px), scrolling sideways when the
+/// window is narrow, so the results keep their room. Home keeps the big [CategoryTiles].
+class CategoryChips extends StatelessWidget {
+  const CategoryChips({super.key, required this.tiles, required this.onTile, this.current});
+  final List<CategoryTile> tiles;
+  final ValueChanged<SearchFilters> onTile;
+
+  /// The filters in use: the chip with them is lit.
+  final SearchFilters? current;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        for (final (i, (label, _, f)) in tiles.indexed) ...[
+          if (i > 0) const SizedBox(width: NbSpace.x2),
+          NbChipButton(label, icon: tileGlyph(f), on: current == f, onTap: () => onTile(f)),
+        ],
+      ],
+    ),
   );
 }
 

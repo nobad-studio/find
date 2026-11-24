@@ -8,6 +8,7 @@ import '../app/theme/colors.dart';
 import '../app/theme/tokens.dart';
 import '../app/theme/typography.dart';
 import 'icons.dart';
+import 'menu_glass.dart';
 import 'pressable.dart';
 
 enum NbButtonKind { primary, ghost, danger, quiet }
@@ -177,8 +178,8 @@ class _NbSelectState extends State<NbSelect> {
     final current = widget.options.firstWhere((o) => o.$1 == widget.value, orElse: () => widget.options.first);
     return MenuAnchor(
       controller: _menu,
-      alignmentOffset: const Offset(0, 4),
-      menuChildren: [
+      alignmentOffset: MenuGlass.at(const Offset(0, 4)),
+      menuChildren: MenuGlass.wrap([
         for (final o in widget.options)
           MenuItemButton(
             onPressed: () => widget.onChanged(o.$1),
@@ -203,7 +204,7 @@ class _NbSelectState extends State<NbSelect> {
               ),
             ),
           ),
-      ],
+      ]),
       builder: (context, menu, _) => Pressable(
         onTap: () => menu.isOpen ? menu.close() : menu.open(),
         semanticLabel: widget.label == null ? current.$2 : '${widget.label}: ${current.$2}',

@@ -32,6 +32,7 @@ import '../search/result_tile.dart' show WhyChip;
 import '../search/smart_search.dart';
 import '../../state/suggest_controller.dart';
 import '../../widgets/glass.dart';
+import '../../widgets/menu_glass.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/smooth_scroll.dart';
 
@@ -246,7 +247,7 @@ class _BarWindowState extends State<BarWindow> {
     final box = _menuAnchor.currentContext?.findRenderObject() as RenderBox?;
     setState(() => _menuItems = items);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (box != null && mounted) _menu.open(position: box.globalToLocal(global));
+      if (box != null && mounted) _menu.open(position: MenuGlass.at(box.globalToLocal(global)));
     });
   }
 
@@ -430,7 +431,7 @@ class _BarWindowState extends State<BarWindow> {
       fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
       child: MenuAnchor(
         controller: _menu,
-        menuChildren: _menuItems,
+        menuChildren: MenuGlass.wrap(_menuItems),
         onOpen: () => widget.window.fitBar(BarSize.maxRows), // room for the menu inside the bar's window
         onClose: () {
           _rows = -1;

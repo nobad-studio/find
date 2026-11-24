@@ -28,6 +28,7 @@ import '../../platform/demo.dart';
 import '../../widgets/dialogs.dart';
 import '../../widgets/glass.dart';
 import '../../widgets/icons.dart';
+import '../../widgets/menu_glass.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/panels.dart';
 import '../../widgets/pressable.dart';
@@ -359,7 +360,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void _menuAt(Offset global) {
     final box = _menuAnchor.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return;
-    _menu.open(position: box.globalToLocal(global));
+    _menu.open(position: MenuGlass.at(box.globalToLocal(global)));
   }
 
   /// The menu key / Shift+F10: the menu under the selected result.
@@ -483,7 +484,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     Positioned.fill(
                       child: MenuAnchor(
                         controller: _menu,
-                        menuChildren: resultMenuItems(context, _action, details: !wide),
+                        menuChildren: MenuGlass.wrap(resultMenuItems(context, _action, details: !wide)),
                         child: KeyedSubtree(
                           key: _menuAnchor,
                           child: Align(
@@ -958,8 +959,8 @@ class _Results extends StatelessWidget {
     final head = tiles == null
         ? null
         : Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-            child: CategoryTiles(tiles: tiles!, current: s.find.filters, onTile: s.find.setFilters),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+            child: CategoryChips(tiles: tiles!, current: s.find.filters, onTile: s.find.setFilters),
           );
     final firstWeak = rows.indexWhere((r) => r.weak);
     final divider = firstWeak > 0;

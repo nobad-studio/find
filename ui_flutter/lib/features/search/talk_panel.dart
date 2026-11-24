@@ -20,6 +20,7 @@ import '../../engine/models/result.dart';
 import '../../state/talk_controller.dart';
 import '../../widgets/controls.dart';
 import '../../widgets/icons.dart';
+import '../../widgets/menu_glass.dart';
 import '../consent/download_consent_dialog.dart' show askTalkConsent;
 
 /// The answer area's label: what is shown is the model's reading, not a fact about the photo.
@@ -120,7 +121,8 @@ class _TalkPanelState extends State<TalkPanel> {
                 ),
                 MenuAnchor(
                   controller: _compare,
-                  menuChildren: [
+                  alignmentOffset: MenuGlass.at(const Offset(0, 4)),
+                  menuChildren: MenuGlass.wrap([
                     for (final o in widget.others)
                       MenuItemButton(
                         onPressed: () => unawaited(t.compare(o.id, question: _q.text)),
@@ -134,7 +136,7 @@ class _TalkPanelState extends State<TalkPanel> {
                           ),
                         ),
                       ),
-                  ],
+                  ]),
                   child: NbButton(
                     'Compare with…',
                     small: true,

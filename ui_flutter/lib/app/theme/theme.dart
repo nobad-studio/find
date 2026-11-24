@@ -53,17 +53,13 @@ ThemeData nbTheme(NbColors c) {
     ),
     menuTheme: MenuThemeData(
       style: MenuStyle(
-        backgroundColor: WidgetStatePropertyAll(c.surface),
+        // invisible: the items sit in MenuGlass (widgets/menu_glass.dart), frosted like the dialogs
+        backgroundColor: const WidgetStatePropertyAll(Color(0x00000000)),
         surfaceTintColor: const WidgetStatePropertyAll(Color(0x00000000)),
-        shadowColor: WidgetStatePropertyAll(c.shadow),
-        elevation: const WidgetStatePropertyAll(8),
-        padding: const WidgetStatePropertyAll(EdgeInsets.all(NbSpace.x1)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: NbRadius.cardAll,
-            side: BorderSide(color: c.line2),
-          ),
-        ),
+        shadowColor: const WidgetStatePropertyAll(Color(0x00000000)),
+        elevation: const WidgetStatePropertyAll(0),
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+        shape: const WidgetStatePropertyAll(RoundedRectangleBorder()),
       ),
     ),
     // the action panel's rows (Ctrl+K, right-click): 32 px, a quiet fill on the one under the pointer or keys
