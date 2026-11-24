@@ -85,6 +85,10 @@ class FindController extends ChangeNotifier {
   FileResult? get current => results.isEmpty ? null : results[_selected.clamp(0, results.length - 1)];
   bool get busy => _busy;
 
+  /// A search is on its way (from the moment it is asked until its answer, a newer one or a cleared box). A
+  /// notifier of its own so the search box's ring repaints without rebuilding the results.
+  final ValueNotifier<bool> searching = ValueNotifier(false);
+
   /// Words, or a filter that narrows: results are shown instead of Home (0.7.0's rule).
   bool get showingResults => _text.trim().isNotEmpty || _filters.narrows;
 
@@ -155,6 +159,7 @@ class FindController extends ChangeNotifier {
       _selected = 0;
       _notice = '';
       _busy = false;
+      searching.value = false;
       notifyListeners();
       return;
     }
@@ -172,6 +177,7 @@ class FindController extends ChangeNotifier {
     final filters = _filters;
     if (!showingResults) return;
     _busy = true;
+    searching.value = true;
     // "busy" only changes the screen while there are no results yet (the skeleton): with results on screen a
     // keystroke rebuilds them once, when the answer comes, not twice
     if (_answer.results.isEmpty) notifyListeners();
@@ -191,6 +197,7 @@ class FindController extends ChangeNotifier {
     if (a.cancelled) {
       // the engine dropped it for a newer one on this channel: keep what is on screen, say nothing
       _busy = false;
+      searching.value = false;
       notifyListeners();
       return;
     }
@@ -209,6 +216,7 @@ class FindController extends ChangeNotifier {
     _selected = 0;
     _notice = notice.isNotEmpty ? notice : a.error;
     _busy = false;
+    searching.value = false;
     notifyListeners();
   }
 
@@ -378,6 +386,7 @@ class FindController extends ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     _sub.cancel();
+    searching.dispose();
     super.dispose();
   }
 }

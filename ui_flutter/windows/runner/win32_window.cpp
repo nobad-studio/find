@@ -29,7 +29,7 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
 // The main window's designed size range (logical px, client area): no maximize, no full screen.
-constexpr int kMinW = 720, kMinH = 500, kMaxW = 1280, kMaxH = 820;  // 0.9.0: smaller (maintainer); 0.8.5 was 860x600
+constexpr int kMinW = 960, kMinH = 500, kMaxW = 1280, kMaxH = 820;  // 1.2: 960 wide (was 720); 0.8.5 was 860x600
 constexpr const wchar_t kPlacementKey[] = L"Software\\NOBAD\\Find\\UIWindow";
 
 // Development runs next to a demo (NOBAD_FIND_UI_ALLOW_SECOND=1) neither read nor write the saved placement.

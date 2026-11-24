@@ -266,6 +266,11 @@ class FakeApi:
         from nobadfind import capability
         return capability.assess(CAPABILITY_SAMPLE, self.hardware(), {})
 
+    def storage_use(self):
+        """Fixed figures: nothing is read from disk."""
+        return {"index_mb": 412.5, "wal_mb": 3.2, "models": [{"id": "minilm-l6-v2", "mb": 23.0},
+                {"id": "siglip-base", "mb": 211.0}], "runtime_mb": 0.0, "tmp_mb": 0.0, "total_mb": 649.7}
+
     # model tiers: the real catalog, a fixed PC, nothing downloaded unless the transcript downloads it
     def _suggestions(self, pc, focus):
         """modelsuggest.for_pc on the fixed PC, with what the first scan counted (the re-index times)."""

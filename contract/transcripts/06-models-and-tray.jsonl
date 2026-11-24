@@ -65,3 +65,6 @@
 {"recv": {"jsonrpc": "2.0", "id": 305, "result": {"ok": true, "error": "", "needs_download": true, "needs_confirm": false}}}
 {"send": {"jsonrpc": "2.0", "id": 306, "method": "reset_suggested", "params": {"confirm": "yes"}}}
 {"recv": {"jsonrpc": "2.0", "id": 306, "error": {"code": -32602, "message": "'confirm' must be true or false"}}}
+{"note": "1.2.0: storage_use, what NOBAD Find keeps on disk (read only): the index and its -wal file, each downloaded model, the runtimes, the temporary folder."}
+{"send": {"jsonrpc": "2.0", "id": 401, "method": "storage_use", "params": {}}}
+{"recv": {"jsonrpc": "2.0", "id": 401, "result": {"index_mb": 412.5, "wal_mb": 3.2, "models": [{"id": "minilm-l6-v2", "mb": 23.0}, {"id": "siglip-base", "mb": 211.0}], "runtime_mb": 0.0, "tmp_mb": 0.0, "total_mb": 649.7}}}

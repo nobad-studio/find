@@ -9,6 +9,7 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -42,6 +43,7 @@ import '../../state/typed_filters.dart';
 import '../../widgets/controls.dart';
 import 'result_actions.dart';
 import 'result_tile.dart';
+import 'searching_ring.dart';
 import 'smart_search.dart';
 import 'status_line.dart';
 
@@ -337,6 +339,34 @@ class _SearchScreenState extends State<SearchScreen> {
     }));
   }
 
+  /// A second plain click on the same result within this time is a double-click.
+  static const _doubleClick = Duration(milliseconds: 450);
+  int _clickedId = -1;
+  Timer? _clickedFor;
+
+  /// A click on a result (1.2): it selects and previews in the detail pane (below the pane's width the details are
+  /// Details in the actions menu), it never opens. A double-click opens; Ctrl+click shows the
+  /// file in its folder (Enter, Ctrl+Enter and the pane's buttons do the same for the selected result). The click
+  /// takes effect at once: nothing waits to find out whether a second one follows.
+  void _clicked(int i, bool reveal) {
+    s.find.select(i);
+    focus.requestFocus();
+    _clickedFor?.cancel();
+    if (reveal) {
+      _clickedId = -1;
+      unawaited(_open(reveal: true));
+      return;
+    }
+    final id = s.find.results[i].id;
+    if (id == _clickedId) {
+      _clickedId = -1;
+      unawaited(_open());
+      return;
+    }
+    _clickedId = id;
+    _clickedFor = Timer(_doubleClick, () => _clickedId = -1);
+  }
+
   void _action(ResultAction a) {
     switch (a) {
       case ResultAction.open:
@@ -460,6 +490,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         link: _boxLink,
                         onWidth: (w) => _boxWidth = w,
                         dropdown: _dropdown,
+                        searching: s.find.searching,
                         overlay: (context) => _dropdownLayer(context),
                         filters: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -552,11 +583,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                                 scroll: scroll,
                                                 rowKey: rowKey,
                                                 cards: _cards,
-                                                onTap: (i, reveal) {
-                                                  s.find.select(i);
-                                                  _open(reveal: reveal);
-                                                  focus.requestFocus();
-                                                },
+                                                onTap: _clicked,
                                                 onSecondary: (i, pos) {
                                                   s.find.select(i);
                                                   _menuAt(pos);
@@ -652,6 +679,7 @@ class _SearchBox extends StatefulWidget {
     required this.onWidth,
     required this.dropdown,
     required this.overlay,
+    required this.searching,
   });
   final TextEditingController controller;
   final FocusNode focus;
@@ -662,6 +690,9 @@ class _SearchBox extends StatefulWidget {
   final ValueChanged<double> onWidth;
   final OverlayPortalController dropdown;
   final WidgetBuilder overlay;
+
+  /// A search is on its way (the ring shows after 150 ms of it).
+  final ValueListenable<bool> searching;
 
   @override
   State<_SearchBox> createState() => _SearchBoxState();
@@ -764,12 +795,22 @@ class _SearchBoxState extends State<_SearchBox> with SingleTickerProviderStateMi
                   height: 44,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(shape: BoxShape.circle, color: c.raised, border: Border.all(color: c.line)),
-                  child: NbIcon(NbGlyph.search, size: 18, color: on ? c.text : c.muted),
+                  child: SearchingRing(
+                    searching: widget.searching,
+                    color: c.text,
+                    size: 18,
+                    child: NbIcon(NbGlyph.search, size: 18, color: on ? c.text : c.muted),
+                  ),
                 ),
               )
             : Padding(
                 padding: const EdgeInsets.only(left: 12, right: 10),
-                child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
+                child: SearchingRing(
+                  searching: widget.searching,
+                  color: c.orange,
+                  size: 17,
+                  child: NbIcon(NbGlyph.search, size: 17, color: on ? c.orange : c.dim),
+                ),
               ),
         prefixIconConstraints: c.smoke
             ? const BoxConstraints(minWidth: 58, minHeight: 44)

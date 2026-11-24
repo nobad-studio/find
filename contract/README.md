@@ -31,7 +31,7 @@ new methods, new events, new keys in an answer. A change that breaks an old UI r
 - At most 8 connections. Requests run on a pool of 4 threads, so a slow call doesn't hold up a search; the calls
   that wait for the user (`pick_folder`, `wsearch_set`, `use_instead_of_windows_search`, `turbo_set`, `turbo_helper`) run on threads of their own
   and only one of each waits at a time, so search, status and quit always get an answer.
-- State reports (`status`, `status_full`, `hardware`, `capability_state`, `models`, `scope_info`, `turbo_state`,
+- State reports (`status`, `status_full`, `hardware`, `capability_state`, `storage_use`, `models`, `scope_info`, `turbo_state`,
   `wsearch_state`, `performance_state`; "reports", not "pure": a cold one may run the hardware scan, start a background
   count, or retry saving the forgotten list) run on a small pool of 2 threads of their own, so a slow one never makes a
   search wait. One client may have 2 running and 4 waiting there; the next gets the JSON-RPC error `-32603`
@@ -267,6 +267,11 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
   Settings -> Models "Your PC, now"; `device` is where it would run (`gpu` only with DirectML and that much free
   graphics memory now; an integrated GPU's is `shared`). `null` in `budget` = unknown right now, never counted
   against a model; `live` false before the governor's first reading. Not an event: ask again while the page is open.
+- **`storage_use`** `{}` → `{index_mb, wal_mb, models: [{id, mb}], runtime_mb, tmp_mb, total_mb}` (1.2.0): what NOBAD Find
+  keeps on this PC, measured from file sizes on disk (read only, MB with one decimal): the index and its `-wal` file,
+  each downloaded model's folder (only models with files on disk are listed), the llama.cpp runtimes together, the
+  temporary folder, and the sum. A state report (answered on the status lane). Settings -> Models and the Index page show
+  it, with "Free up" going to Settings -> Models.
 - **`model_use`** `{feature, id, confirm?: bool}` → `{ok, error, needs_download: bool, needs_confirm: bool}`: choose
   the model for a feature (and turn the feature on). A model above what is suggested for this PC (its `models` entry's
   `above_suggestion`) is chosen only with `confirm: true`, which the UI sends after the screen with its measured cost
@@ -498,7 +503,7 @@ lines, rewrites the `recv` lines), then review the diff.
 | `03-settings-and-system.jsonl` | get/set_settings (and a bad one; secret_app_files and browser_data with and without their consent words), browser_data_state, browser_clear, pick_folder, Windows Search, model downloads with and without consent, rescan, wipe and quit confirm words, the creative apps list (a path dropped) |
 | `04-indexing-page.jsonl` | status_full method and event, pause_for/resume with level events, bad pauses (a string, 0), learned_apps, reset_learned, hardware, forget |
 | `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
-| `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state |
+| `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state, storage_use |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
 | `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |

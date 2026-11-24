@@ -794,6 +794,49 @@ class Api:
         sample = getattr(self._governor, "sample", None) if self._governor is not None else None
         return capability.assess(sample, hw.scan(), dict(getattr(self, "_measured", None) or {}))
 
+    def storage_use(self):
+        """What NOBAD Find keeps on this PC, measured from file sizes on disk (read only, nothing is changed):
+        {"index_mb", "wal_mb", "models": [{id, mb}], "runtime_mb", "tmp_mb", "total_mb"}. The index and its -wal
+        file sit beside the store; models (only those with files on disk, the llama.cpp runtimes counted apart),
+        the temporary folder (<data>\tmp) and the rest are under the data folder."""
+        def size(path):
+            try:
+                if os.path.isfile(path):
+                    return os.path.getsize(path)
+            except OSError:
+                return 0
+            total = 0
+            for root, _dirs, files in os.walk(path):
+                for n in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, n))
+                    except OSError:
+                        pass
+            return total
+
+        def mb(n):
+            return round(n / 1048576, 1)
+
+        db = os.path.abspath(getattr(self._store, "db_path", "") or os.path.join(self._mdir(), "index.db"))
+        index, wal = size(db), size(db + "-wal")
+        tmp = size(os.path.join(os.path.dirname(db), "tmp"))
+        mine, runtime, seen = [], 0, set()
+        for m in models.CATALOG:
+            if m["builtin"]:
+                continue
+            d = os.path.realpath(models.model_dir(m["id"], self._mdir()))
+            if d in seen or not os.path.isdir(d):
+                continue
+            seen.add(d)
+            n = size(d)
+            if m["feature"] == "runtime":
+                runtime += n
+            elif n:
+                mine.append({"id": m["id"], "mb": mb(n)})
+        total = index + wal + tmp + runtime + sum(round(x["mb"] * 1048576) for x in mine)
+        return {"index_mb": mb(index), "wal_mb": mb(wal), "models": mine, "runtime_mb": mb(runtime),
+                "tmp_mb": mb(tmp), "total_mb": mb(total)}
+
     def get_settings(self):
         return self._settings.all()
 

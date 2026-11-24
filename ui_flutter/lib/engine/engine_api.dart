@@ -175,6 +175,9 @@ abstract class EngineApi {
   /// memory, load and battery. An older engine answers -32601.
   Future<CapabilityState> capabilityState();
 
+  /// What NOBAD Find keeps on disk (`storage_use`, 1.2.0 engines), measured by the engine; null from an older one.
+  Future<StorageUse?> storageUse();
+
   /// Use [id] for [feature] (it may need a download first). [confirm]: the user saw the measured cost of a model
   /// above the suggestion (without it the engine changes nothing and answers `needsConfirm`).
   Future<ModelUse> modelUse(String feature, String id, {bool confirm = false});

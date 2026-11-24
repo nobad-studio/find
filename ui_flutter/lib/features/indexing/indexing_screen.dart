@@ -23,6 +23,7 @@ import '../../widgets/motion.dart';
 import '../../widgets/panels.dart';
 import '../../widgets/resources_chart.dart';
 import '../consent/download_consent_dialog.dart';
+import '../settings/storage_use_card.dart';
 
 class IndexingScreen extends StatefulWidget {
   const IndexingScreen({super.key});
@@ -196,6 +197,7 @@ class _IndexingScreenState extends State<IndexingScreen> {
       _ProcessTable(r.processes),
       const SectionTitle('Models'),
       TileGrid(min: 250, children: [for (final m in d.models) _ModelCardView(m)]),
+      const StorageUseCard(freeUp: true),
       const SectionTitle('Recent decisions'),
       _Activity(s.status.activity),
       const SectionTitle('Index at a glance'),

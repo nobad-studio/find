@@ -42,6 +42,7 @@ const statusLane = {
   'status_full',
   'hardware',
   'capability_state',
+  'storage_use',
   'models',
   'scope_info',
   'turbo_state',
@@ -452,6 +453,7 @@ class EngineClient {
   // ---- 0.8 ----
   Future<ModelsInfo> models() async => ModelsInfo.fromJson(await call('models'));
   Future<CapabilityState> capabilityState() async => CapabilityState.fromJson(await call('capability_state'));
+  Future<StorageUse> storageUse() async => StorageUse.fromJson(await call('storage_use'));
   Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) async =>
       ModelUse.fromJson(await call('model_use', {'feature': feature, 'id': id, if (confirm) 'confirm': true}));
   Future<ResetSuggested> resetSuggested({bool confirm = false}) async =>

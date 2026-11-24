@@ -77,6 +77,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
       return c.resetLearned(p['exe'] as String?);
     case 'hardware':
       return c.hardware();
+    case 'storage_use':
+      return c.storageUse();
     case 'get_settings':
       return c.getSettings();
     case 'set_settings' when p['changes'] is Map:

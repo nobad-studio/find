@@ -858,6 +858,15 @@
         "$ref": "#/$defs/capability_state"
       }
     },
+    "storage_use": {
+      "description": "What NOBAD Find keeps on this PC, measured from file sizes on disk (read only): the index and its write-ahead file, each downloaded model's folder, the llama.cpp runtimes, the temporary folder and the sum. Models not on disk are not listed. Settings -> Models and the Index page show it.",
+      "params": {
+        "$ref": "#/$defs/no_params"
+      },
+      "result": {
+        "$ref": "#/$defs/storage_use"
+      }
+    },
     "model_use": {
       "description": "Choose the model for a feature (it turns the feature on). Not downloaded yet: it is chosen, needs_download is true and it is used once downloaded. A switched text model rebuilds the meaning vectors in the background (status_full phase rebuild); the old ones stay in use until then. A model above what is suggested for this PC (the models entry's above_suggestion: an upgrade, or one not recommended) is chosen only with confirm true, which the UI sends after the screen with its measured cost; without it ok is false, needs_confirm true and nothing changes.",
       "params": {
@@ -4527,6 +4536,28 @@
           "file_id": 7
         }
       ]
+    },
+    "storage_use": {
+      "type": "object",
+      "required": ["index_mb", "wal_mb", "models", "runtime_mb", "tmp_mb", "total_mb"],
+      "properties": {
+        "index_mb": {"type": "number", "minimum": 0},
+        "wal_mb": {"type": "number", "minimum": 0},
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "mb"],
+            "properties": {
+              "id": {"type": "string"},
+              "mb": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "runtime_mb": {"type": "number", "minimum": 0},
+        "tmp_mb": {"type": "number", "minimum": 0},
+        "total_mb": {"type": "number", "minimum": 0}
+      }
     },
     "capability_state": {
       "type": "object",

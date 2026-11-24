@@ -585,6 +585,7 @@ LANE_KNOWN_EFFECTS = {
     "scope_info": "may start a background count",
     "hardware": "first call may run the blocking hardware scan",
     "capability_state": "first call may run the blocking hardware scan",
+    "storage_use": "reads file sizes under the data folder",
     "models": "first call may run the blocking hardware scan",
     "performance_state": "first call may run the blocking hardware scan",
     "turbo_state": "reads the turbo service state",

@@ -205,8 +205,16 @@ class FakeEngine implements EngineApi {
   static const _ok = ActionResult(true);
 
   // ---------- search and results ----------
+  /// Tests: how long an answer takes (the searching ring shows after 150 ms of it).
+  Duration searchDelay = Duration.zero;
+
   @override
-  Future<SearchAnswer> search(String text, {SearchFilters filters = SearchFilters.none, String channel = 'main'}) =>
+  Future<SearchAnswer> search(String text, {SearchFilters filters = SearchFilters.none, String channel = 'main'}) async {
+    if (searchDelay > Duration.zero) await Future<void>.delayed(searchDelay);
+    return _search(text, filters, channel);
+  }
+
+  Future<SearchAnswer> _search(String text, SearchFilters filters, String channel) =>
       _answer('search', () {
         searches.add(text);
         channels.add(channel);
@@ -859,6 +867,17 @@ class FakeEngine implements EngineApi {
   /// The live capability (tests and the demo): 2.2 GB free on the 15.7 GB demo PC, so the bigger models are "not
   /// now", as the contract transcript shows.
   late CapabilityState capability = demoCapability(gpu: gpu);
+
+  /// What `storage_use` answers (null: an engine without it). The same figures as the contract transcript.
+  StorageUse? storage = const StorageUse(
+    indexMb: 412.5,
+    walMb: 3.2,
+    models: [StorageModel('minilm-l6-v2', 23), StorageModel('siglip-base', 211)],
+    totalMb: 649.7,
+  );
+
+  @override
+  Future<StorageUse?> storageUse() => _answer('storage_use', () => storage);
 
   @override
   Future<CapabilityState> capabilityState() => _new('capability_state', () => capability);

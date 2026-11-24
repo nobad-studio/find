@@ -444,6 +444,50 @@ class CapabilityBudget {
   }
 }
 
+/// One downloaded model's folder on disk (`storage_use` `models`).
+class StorageModel {
+  const StorageModel(this.id, this.mb);
+  final String id;
+  final double mb;
+}
+
+/// `storage_use` (1.2.0): what NOBAD Find keeps on this PC, measured by the engine from file sizes on disk, in MB.
+class StorageUse {
+  const StorageUse({
+    this.indexMb = 0,
+    this.walMb = 0,
+    this.models = const [],
+    this.runtimeMb = 0,
+    this.tmpMb = 0,
+    this.totalMb = 0,
+  });
+  final double indexMb;
+  final double walMb;
+  final List<StorageModel> models;
+  final double runtimeMb;
+  final double tmpMb;
+  final double totalMb;
+
+  /// The downloaded models together.
+  double get modelsMb => models.fold(0.0, (a, m) => a + m.mb);
+
+  static StorageUse fromJson(Object? v) {
+    final m = jMap(v);
+    return StorageUse(
+      indexMb: jNum(m['index_mb']),
+      walMb: jNum(m['wal_mb']),
+      models: jList(m['models'], (x) {
+        final e = jMap(x);
+        final id = jStr(e['id']);
+        return id.isEmpty ? null : StorageModel(id, jNum(e['mb']));
+      }),
+      runtimeMb: jNum(m['runtime_mb']),
+      tmpMb: jNum(m['tmp_mb']),
+      totalMb: jNum(m['total_mb']),
+    );
+  }
+}
+
 /// `capability_state` (2026-11-21): which models this PC can run RIGHT NOW, from free memory, commit, graphics
 /// memory, load and battery, not the installed memory alone. A model the engine didn't list is unknown (null).
 class CapabilityState {

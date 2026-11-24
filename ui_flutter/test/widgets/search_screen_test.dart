@@ -81,10 +81,12 @@ void main() {
     expect(find.text('Forgotten. Undo it in Settings → What to index → Never index.'), findsOneWidget);
   });
 
-  testWidgets('clicking a result opens it; a missing file says so', (tester) async {
+  testWidgets('double-clicking a result opens it; a missing file says so', (tester) async {
     final engine = FakeEngine()..openOk = false;
     await pumpApp(tester, engine);
     await type(tester, 'notes');
+    await tester.tap(find.text('tax notes.txt'));
+    await tester.pump(const Duration(milliseconds: 80));
     await tester.tap(find.text('tax notes.txt'));
     await tester.pump();
     expect(engine.opened, [2]);

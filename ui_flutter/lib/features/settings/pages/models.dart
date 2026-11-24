@@ -26,6 +26,7 @@ import '../../../widgets/panels.dart';
 import '../../consent/download_consent_dialog.dart';
 import '../../setup/setup_dialog.dart';
 import '../model_cost_dialog.dart';
+import '../storage_use_card.dart';
 import '../settings_parts.dart';
 
 class ModelsPage extends StatefulWidget {
@@ -91,6 +92,10 @@ class _Catalogue extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _PcAndTier(m),
+        StorageUseCard(
+          key: ValueKey(info.models.map((x) => '${x.id}:${x.state}').join(',')),
+          names: {for (final x in info.models) x.id: x.name},
+        ),
         const SettingsGroup(
           'Memory',
           icon: NbGlyph.memory,

@@ -169,6 +169,8 @@ class PipeEngine implements EngineApi {
   @override
   Future<CapabilityState> capabilityState() => _pipe.capabilityState();
   @override
+  Future<StorageUse?> storageUse() async => _pipe.serves('storage_use') ? _pipe.storageUse() : null;
+  @override
   Future<ModelUse> modelUse(String feature, String id, {bool confirm = false}) =>
       _pipe.modelUse(feature, id, confirm: confirm);
   @override

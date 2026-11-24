@@ -154,6 +154,11 @@ void main() {
           expect(cap.runsNow('multilingual-e5-base'), isFalse);
           expect(cap.why['multilingual-e5-base'], startsWith('Not now'));
           expect(cap.runsNow('no-such-model'), isNull);
+        case 'storage_use':
+          final u = StorageUse.fromJson(r);
+          expect(u.indexMb, greaterThan(0));
+          expect(u.models.map((m) => m.id), contains('minilm-l6-v2'));
+          expect(u.totalMb, closeTo(u.indexMb + u.walMb + u.modelsMb + u.runtimeMb + u.tmpMb, .2));
         case 'get_settings':
           final s = Settings.fromJson(r);
           expect(s.text('theme'), anyOf('dark', 'light'));
