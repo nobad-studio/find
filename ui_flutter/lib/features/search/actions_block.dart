@@ -16,8 +16,11 @@ import '../../widgets/icons.dart';
 import '../../widgets/pressable.dart';
 
 class ActionsBlock extends StatelessWidget {
-  const ActionsBlock(this.actions, {super.key});
+  const ActionsBlock(this.actions, {super.key, this.max = 3});
   final List<SearchAction> actions;
+
+  /// How many are shown (beside files: 3; the Settings & apps filter: all the engine sent).
+  final int max;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +33,7 @@ class ActionsBlock extends StatelessWidget {
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: [for (final (i, a) in actions.take(3).indexed) _ActionRow(a, first: i == 0)],
+        children: [for (final (i, a) in actions.take(max).indexed) _ActionRow(a, first: i == 0)],
       ),
     );
   }

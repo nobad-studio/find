@@ -101,7 +101,10 @@ Specific to this app:
   at 1, 5 and 30 minutes, then given up with a note. An unknown schema is skipped with a note, never guessed. The
   read runs in a text-reader worker (WORKERS job, low priority), never in the engine; rows go into the encrypted
   index (`store.browser_items`, FTS `browser_fts`). Browser profiles stay names only for the **file** walk: their
-  databases are read only through this feature.
+  databases are read only through this feature. Search (spec §4, `browsersearch.py`, only while it is on): results
+  of kind `browser` with a negative id, ranked through the name and text channels (never meaning or photo); `open`
+  takes only that id: an http(s) address in the default browser, a login's password manager through the launcher's
+  fixed `PASSWORD_PAGES` table and the browser's own installed program, a download's local file or folder.
 - **Everything indexed is untrusted:** file names, folder names and file contents go to the UI only through
   `esc()`; FTS queries only through `store.fts_quote`; nothing builds a shell string; files are never executed
   except by the user's explicit Open (by result id, never a path from the page). Names, folders, snippets, drive

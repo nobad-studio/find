@@ -210,6 +210,21 @@ void main() {
     }
   });
 
+  test('browser search (1.2.0): a browser result and the Settings & apps actions read as the engine sent them', () {
+    final lines = readTranscript('12-browser-search.jsonl');
+    Map<String, Object?> reply(int id) => (lines.firstWhere((l) => l['recv'] is Map && (l['recv'] as Map)['id'] == id)['recv']
+        as Map)['result'] as Map<String, Object?>;
+    final apps = SearchAnswer.fromJson(reply(1));
+    expect(apps.results, isEmpty);
+    expect(apps.actions.single.id, 'set:display');
+    final web = SearchAnswer.fromJson(reply(2)).results.single;
+    expect(web.id, isNegative);
+    expect(web.isBrowser, isTrue);
+    expect((web.browser!.browser, web.browser!.profile, web.browser!.kind), ('Edge', 'Work', 'history'));
+    expect(web.browser!.openLabel, 'Open page');
+    expect(web.dir, 'Edge (Work) · github.com');
+  });
+
   test('smart search (0.8.5): parts, the best guess and suggestions read as the engine sent them', () {
     final lines = readTranscript('07-smart-search.jsonl');
     final search = SearchAnswer.fromJson(((lines[2]['recv'] as Map)['result']));

@@ -268,7 +268,16 @@ class FindController extends ChangeNotifier {
   Future<bool> revealSelected() => _act((id) => engine.reveal(id), "Couldn't show it in its folder.");
 
   /// Windows' "Open with" for the selected file (Ctrl+Shift+Enter).
-  Future<bool> openWithSelected() => _act((id) => engine.openWith(id), "Couldn't show Open with.");
+  Future<bool> openWithSelected() {
+    if (current?.isBrowser ?? false) return _refuse('Open with is for files. This one opens in its browser.');
+    return _act((id) => engine.openWith(id), "Couldn't show Open with.");
+  }
+
+  /// 1.2.0: what a browser result can't do, said instead of asking the engine.
+  Future<bool> _refuse(String why) async {
+    _say(why);
+    return false;
+  }
 
   /// The selected file's name on the clipboard.
   Future<bool> copyNameSelected() async {
@@ -321,6 +330,7 @@ class FindController extends ChangeNotifier {
   Future<bool> forgetSelected(Future<bool> Function(String question) confirm) async {
     final r = current;
     if (r == null) return false;
+    if (r.isBrowser) return _refuse('Browser items leave the index with "Clear browser data" in Settings > Privacy.');
     if (!await confirm('Forget "${r.name}" and keep it out of the index from now on?')) return false;
     var res = const ActionResult(false);
     try {

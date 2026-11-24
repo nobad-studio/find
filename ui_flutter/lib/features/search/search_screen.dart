@@ -554,6 +554,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                       : s.find.showingResults &&
                                             !s.find.busy &&
                                             s.find.results.isEmpty &&
+                                            s.find.answer.actions.isEmpty &&
                                             s.find.askedFor.isNotEmpty
                                       ? _NoResults(
                                           key: const ValueKey('none'),
@@ -921,7 +922,9 @@ class _Meta extends StatelessWidget {
     } else if (f.askedFor.isNotEmpty || f.filters.narrows) {
       spans.add(
         TextSpan(
-          text: a.results.isEmpty
+          text: f.filters.isLauncher && a.actions.isNotEmpty
+              ? '${a.actions.length} ${a.actions.length == 1 ? 'setting or app' : 'settings and apps'} · ${a.ms} ms'
+              : a.results.isEmpty
               ? 'Nothing found. Try fewer or other words, or fewer filters.'
               : '${a.results.length}${a.more ? '+' : ''} ${a.results.length == 1 && !a.more ? 'result' : 'results'} · ${a.ms} ms',
         ),
@@ -982,7 +985,7 @@ class _Meta extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: NbSpace.maxContent),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(NbSpace.gutter, 0, NbSpace.gutter, 8),
-                child: ActionsBlock(acts),
+                child: ActionsBlock(acts, max: f.filters.isLauncher ? acts.length : 3),
               ),
             ),
           ),
@@ -1384,7 +1387,9 @@ class _EmptyCategory extends StatelessWidget {
             CategoryTiles(tiles: category.tiles, current: current, onTile: onTile),
             const SizedBox(height: NbSpace.x4),
             Text(
-              category == SearchCategory.all
+              current.isLauncher
+                  ? 'Type the name of a setting or an app.'
+                  : category == SearchCategory.all
                   ? 'Nothing matches these filters.'
                   : 'Nothing here yet in ${category.label}. Files show up as they are indexed.',
               style: NbType.text(13, c.muted, weight: FontWeight.w600),

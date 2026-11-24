@@ -108,6 +108,8 @@ class Api:
         listing = any(filters.get(k) for k in ("kind", "modified", "size", "folder")) or filters.get("sort") in SORTS - {""}
         if not text and not listing:
             return empty
+        if filters.get("kind") == "launcher":
+            return self._launcher_only(text)
         try:
             asks = {}
             # the settings and apps first (a few ms): "open windows update" + Enter waits for this answer, so a
@@ -120,7 +122,8 @@ class Api:
                        roots=self._indexer.roots(self._indexer.drive_list),
                        photo_text=None if quick else self._indexer.photo_text,
                        pindex=None if quick else self._indexer.pindex, cancelled=cancelled,
-                       romanized=self._romanized(), asks=asks, photo_next=None if quick else self._photo_next())
+                       romanized=self._romanized(), asks=asks, photo_next=None if quick else self._photo_next(),
+                       browser=self._browser_kinds())
             if not r.get("cancelled"):
                 needs = [] if quick else self._needs(asks, len(r.get("results") or ()))
                 if needs:
@@ -132,13 +135,31 @@ class Api:
             log(f"search failed: {type(e).__name__}", "warn")
             return {"results": [], "understood": [], "terms": [], "ms": 0, "error": "Search failed. Try other words."}
 
+    def _browser_kinds(self):
+        """The browser kinds search may show (browser spec §4): none while browser_data is off."""
+        from .browserdata import MODE_KINDS
+        return MODE_KINDS.get(self._settings.get("browser_data"), ())
+
+    LAUNCHER_LIMIT = 12             # the "Settings & apps" filter lists this many
+
+    def _launcher_only(self, text):
+        """The "Settings & apps" filter (browser spec decision 1): only the launcher's settings pages, Control Panel
+        items, tools and apps; never a file."""
+        t0 = time.perf_counter()
+        acts = self.actions_for(text, limit=self.LAUNCHER_LIMIT, launch=True)
+        r = {"results": [], "understood": ["settings & apps"], "terms": [], "notes": [], "more": False,
+             "parts": [], "best": None, "ms": round((time.perf_counter() - t0) * 1000)}
+        if acts:
+            r["actions"] = acts
+        return r
+
     # ---------- Windows settings and apps from the search box (0.9.1, launcher.py) ----------
-    def actions_for(self, text):
+    def actions_for(self, text, limit=4, launch=None):
         lch = getattr(self, "_launcher", None)
         if lch is None or not text:
             return []
         try:
-            return lch.actions(text)
+            return lch.actions(text, limit=limit, launch=launch)
         except Exception as e:
             log(f"actions failed: {type(e).__name__}", "warn")
             return []
@@ -284,9 +305,14 @@ class Api:
         return p if p and os.path.exists(p) else None
 
     def open(self, file_id):
+        if isinstance(file_id, int) and not isinstance(file_id, bool) and file_id < 0:
+            return self._browser_open(-file_id)          # a browser result (browsersearch: id -row)
         p = self._path(file_id)
         if not p:
             return {"ok": False, "error": "That file isn't there any more."}
+        return self._open_path(p)
+
+    def _open_path(self, p):
         try:
             winapi.open_outside_job(p)    # the default program, outside Find's job: it survives Quit
             return {"ok": True}
@@ -312,7 +338,50 @@ class Api:
             log(f"could not start the Open with picker (error {e.winerror or e.errno})", "warn")
             return {"ok": False, "error": "Windows couldn't show the Open with list."}
 
+    def _browser_row(self, bid):
+        """(browser, kind, url) of one browser item while browser data is read, else None."""
+        if not self._browser_kinds():
+            return None
+        rows = self._store.q("SELECT browser, kind, url FROM browser_items WHERE id = ?", (bid,))
+        return rows[0] if rows and rows[0][1] in self._browser_kinds() else None
+
+    def _browser_open(self, bid):
+        """Open a browser result by its id (browser spec §4): a page or bookmark in the default browser, a saved login
+        in its browser's password manager (the launcher's fixed table), a download's file or else its folder."""
+        from . import browsersearch
+        row = self._browser_row(bid)
+        if row is None:
+            return {"ok": False, "error": "That isn't in the index any more."}
+        browser, kind, url = row
+        if kind == "login":
+            from .launcher import password_action
+            aid = password_action(browser)
+            if aid is None or getattr(self, "_launcher", None) is None:
+                return {"ok": False, "error": f"NOBAD Find can't open {browser}'s password manager."}
+            return self._launcher.run(aid)
+        if kind == "download":
+            p = browsersearch.download_path(url)
+            if p and os.path.isfile(p):
+                return self._open_path(p)
+            if p and os.path.isdir(os.path.dirname(p)):
+                return {"ok": bool(open_folder(os.path.dirname(p)))}
+            return {"ok": False, "error": "That download isn't there any more."}
+        web = browsersearch.web_address(url)
+        if web is None:
+            return {"ok": False, "error": "That isn't a web address NOBAD Find opens."}
+        return self._open_path(web)                      # explorer.exe hands it to the default browser
+
     def reveal(self, file_id):
+        if isinstance(file_id, int) and not isinstance(file_id, bool) and file_id < 0:
+            from . import browsersearch
+            row = self._browser_row(-file_id)
+            p = browsersearch.download_path(row[2]) if row and row[1] == "download" else None
+            if p and os.path.isfile(p):
+                return {"ok": reveal_in_explorer(p)}
+            if p and os.path.isdir(os.path.dirname(p)):
+                return {"ok": bool(open_folder(os.path.dirname(p)))}
+            return {"ok": False, "error": "A web page has no folder." if row and row[1] != "download"
+                    else "That download isn't there any more."}
         p = self._path(file_id)
         if not p:
             return {"ok": False, "error": "That file isn't there any more."}

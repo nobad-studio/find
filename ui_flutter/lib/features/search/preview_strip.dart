@@ -64,15 +64,17 @@ class PreviewStrip extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            NbButton('Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
-            const SizedBox(width: 8),
-            NbButton(
-              'Show in folder',
-              small: true,
-              kind: NbButtonKind.ghost,
-              icon: NbGlyph.folder,
-              onPressed: onReveal,
-            ),
+            NbButton(r.browser?.openLabel ?? 'Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
+            if (r.browser?.hasFolder ?? true) ...[
+              const SizedBox(width: 8),
+              NbButton(
+                'Show in folder',
+                small: true,
+                kind: NbButtonKind.ghost,
+                icon: NbGlyph.folder,
+                onPressed: onReveal,
+              ),
+            ],
             const SizedBox(width: 4),
             Pressable(
               onTap: onClose,

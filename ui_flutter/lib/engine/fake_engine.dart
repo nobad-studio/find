@@ -221,6 +221,23 @@ class FakeEngine implements EngineApi {
         searchFilters.add(filters);
         final t = text.trim().toLowerCase();
         if (t.isEmpty && !filters.narrows && filters.sort.isEmpty) return SearchAnswer.empty;
+        // 1.2.0: Settings & apps: only the actions, never a file (the engine's Api._launcher_only)
+        if (filters.isLauncher) return SearchAnswer(ms: 1, actions: t.isEmpty ? const [] : searchActions);
+        // 1.2.0: the browsers' items, only while browser data is read (the engine's browsersearch.py)
+        final reading = jStr(_settings['browser_data']).isNotEmpty && _settings['browser_data'] != 'off';
+        bool browserFits(FileResult r) {
+          final b = r.browser!;
+          if (b.kind == 'login' && _settings['browser_data'] != 'history_logins') return false;
+          if (filters.isBrowser && filters.browser.isNotEmpty && b.kind != filters.browser) return false;
+          final words = t.split(RegExp(r'\s+')).where((w) => w.isNotEmpty && !_stop.contains(w));
+          final hay = '${r.name} ${b.url} ${b.host}'.toLowerCase();
+          return words.every(hay.contains);
+        }
+
+        final web = !reading || (!filters.isBrowser && t.isEmpty) || (filters.narrows && !filters.isBrowser)
+            ? const <FileResult>[]
+            : browserResults.where(browserFits).toList();
+        if (filters.isBrowser) return SearchAnswer(results: web, ms: 3);
         var rows = files.where((f) {
           if (filters.kind.isNotEmpty && f.kind != filters.kind) return false;
           if (filters.folder.isNotEmpty && !f.dir.toLowerCase().startsWith(filters.folder.toLowerCase())) {
@@ -243,7 +260,7 @@ class FakeEngine implements EngineApi {
             : (rows.length == 1 && t.isNotEmpty ? (rows.first, 'The only match') : null);
         if (guess != null) rows = [guess.$1, ...rows.where((r) => r.id != guess.$1.id)];
         return SearchAnswer(
-          results: rows,
+          results: [...rows, ...web],
           ms: 4,
           parts: parts,
           best: guess == null ? null : BestGuess(guess.$1.id, guess.$2),
@@ -260,6 +277,10 @@ class FakeEngine implements EngineApi {
           actions: searchActions,
         );
       });
+
+  /// 1.2.0: the browsers' items searches may show while browser_data is on (kind browser, negative ids); tests set
+  /// them.
+  List<FileResult> browserResults = const [];
 
   /// What every search offers to open (0.9.1 `actions`); tests set it.
   List<SearchAction> searchActions = const [];

@@ -46,6 +46,8 @@ Future<Object?> make(EngineClient c, String m, Map<String, Object?> p) {
           size: s('size'),
           folder: s('folder'),
           sort: s('sort'),
+          browser: s('browser'),
+          visited: s('visited'),
         ),
       );
     case 'open' when id is int:

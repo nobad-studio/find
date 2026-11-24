@@ -188,7 +188,7 @@ class ResultTile extends StatelessWidget {
                     child: AnimatedOpacity(
                       opacity: lit ? 1 : 0,
                       duration: NbMotion.of(context, NbMotion.fast),
-                      child: InlineActions(compact: true, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos)),
+                      child: InlineActions(compact: true, result: r, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos)),
                     ),
                   ),
               ],
@@ -327,7 +327,7 @@ class ResultCard extends StatelessWidget {
           TailText(r.dir, textAlign: TextAlign.left, style: NbType.data(NbSize.micro + .5, c.dim, height: 1.4)),
           const SizedBox(height: 6),
           if (lit && onAction != null)
-            InlineActions(compact: true, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos))
+            InlineActions(compact: true, result: r, onAction: onAction!, onMore: (pos) => onSecondary?.call(pos))
           else
             Text(
               [r.ago, humanSize(r.size)].where((s) => s.isNotEmpty).join('   '),
@@ -437,24 +437,28 @@ class DetailPane extends StatelessWidget {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          NbButton('Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
-                          if (onOpenWith != null)
+                          // 1.2.0: a browser result opens through the engine by its id (a page, a password
+                          // manager, a download); it has no Open with or Forget, and only a download has a folder
+                          NbButton(r.browser?.openLabel ?? 'Open', small: true, icon: NbGlyph.external, onPressed: onOpen),
+                          if (onOpenWith != null && !r.isBrowser)
                             NbButton('Open with…', small: true, kind: NbButtonKind.ghost, onPressed: onOpenWith),
+                          if (r.browser?.hasFolder ?? true)
+                            NbButton(
+                              'Show in folder',
+                              small: true,
+                              kind: NbButtonKind.ghost,
+                              icon: NbGlyph.folder,
+                              onPressed: onReveal,
+                            ),
                           NbButton(
-                            'Show in folder',
-                            small: true,
-                            kind: NbButtonKind.ghost,
-                            icon: NbGlyph.folder,
-                            onPressed: onReveal,
-                          ),
-                          NbButton(
-                            'Copy path',
+                            r.isBrowser && !r.browser!.hasFolder ? 'Copy address' : 'Copy path',
                             small: true,
                             kind: NbButtonKind.ghost,
                             icon: NbGlyph.copy,
                             onPressed: onCopy,
                           ),
-                          NbButton('Forget…', small: true, kind: NbButtonKind.quiet, onPressed: onForget),
+                          if (!r.isBrowser)
+                            NbButton('Forget…', small: true, kind: NbButtonKind.quiet, onPressed: onForget),
                         ],
                       ),
                       if (talk != null && r.kind == 'image') ...[

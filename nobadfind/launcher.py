@@ -129,6 +129,30 @@ SETTINGS = [
     ("snipping-tool", "Snipping Tool", "ms-screenclip:", "snipping tool screenshot snip screen capture"),
 ]
 SETTINGS_BY_ID = {"set:" + x[0]: x for x in SETTINGS}
+
+# 1.2.0 (browser spec §2): a saved-login result opens its browser's own password manager, which asks for the
+# Windows PIN itself. browser (browserdata's names) -> (its program, the page). Run only as "pw:<browser>" from this
+# table, with the browser's own installed program (_browser_exe); never a page or a program from the window.
+# Brave, Vivaldi and Opera are Chromium browsers and take Chrome's page address.
+PASSWORD_PAGES = {"Edge": ("msedge.exe", "edge://password-manager"),
+                  "Chrome": ("chrome.exe", "chrome://password-manager/passwords"),
+                  "Brave": ("brave.exe", "chrome://password-manager/passwords"),
+                  "Vivaldi": ("vivaldi.exe", "chrome://password-manager/passwords"),
+                  "Opera": ("opera.exe", "chrome://password-manager/passwords"),
+                  "Firefox": ("firefox.exe", "about:logins")}
+_PASSWORD_IDS = {"pw:" + b.lower(): b for b in PASSWORD_PAGES}
+# where a browser installs for one user only (under %LOCALAPPDATA%), besides Program Files
+_USER_INSTALLS = {"chrome.exe": ("Google", "Chrome", "Application"),
+                  "brave.exe": ("BraveSoftware", "Brave-Browser", "Application"),
+                  "vivaldi.exe": ("Vivaldi", "Application"), "opera.exe": ("Programs", "Opera"),
+                  "msedge.exe": ("Microsoft", "Edge", "Application"), "firefox.exe": ("Mozilla Firefox",)}
+
+
+def password_action(browser):
+    """The action id that opens browser's password manager ("pw:edge"), or None for a browser not in the table."""
+    return "pw:" + browser.lower() if browser in PASSWORD_PAGES else None
+
+
 _TOOLS = {"taskmgr.exe", "devmgmt.msc", "diskmgmt.msc", "control.exe", "services.msc", "eventvwr.msc",
           "msinfo32.exe", "resmon.exe", "ncpa.cpl", "mmsys.cpl", "appwiz.cpl", "sysdm.cpl", "powercfg.cpl",
           "firewall.cpl", "cmd.exe", "powershell.exe", "explorer.exe"}
@@ -390,13 +414,14 @@ class Launcher:
         """wants_launch with typos corrected: "opn windws update" asks to open something."""
         return _wants(self._words(text))
 
-    def actions(self, text, limit=4):
-        """The best settings pages and apps for the question, best first; [] when nothing fits well."""
+    def actions(self, text, limit=4, launch=None):
+        """The best settings pages and apps for the question, best first; [] when nothing fits well.
+        launch=True: read it as asking to open one (the "Settings & apps" filter), whatever its words."""
         qw = self._words(text)
         w = [x for x in qw if x not in VERBS] or [x for x in qw if x not in ("open", "launch")]
         if not w or len(" ".join(w)) < 2:
             return []
-        launch = _wants(qw)
+        launch = _wants(qw) if launch is None else bool(launch)
         # 0.9.5: the question minus its launch word (and a trailing "app" / "page") naming an entry exactly wins:
         # "open windows update" is Windows Update, not Update history ("windows" alone is a filler word above)
         full = [x for x in qw if x not in ("open", "launch", "start", "run", "go", "to", "please", "the", "my")]
@@ -486,6 +511,13 @@ class Launcher:
                     return {"ok": False, "error": "That app can't be opened from here any more."}
                 return self._start([a["exe"]], a["name"], cwd=ntpath.dirname(a["exe"]))
             return self._start([_exe("explorer.exe"), "shell:AppsFolder\\" + a["app_id"]], a["name"])
+        if action_id in _PASSWORD_IDS:
+            browser = _PASSWORD_IDS[action_id]
+            prog, page = PASSWORD_PAGES[browser]
+            exe = _browser_exe(prog)
+            if exe is None:
+                return {"ok": False, "error": f"{browser} isn't installed where NOBAD Find can open it."}
+            return self._start([exe, page], f"{browser}'s password manager")
         return {"ok": False, "error": "That isn't something NOBAD Find can open."}
 
     def _start(self, argv, what, cwd=None):
@@ -649,6 +681,43 @@ def _safe_exe(exe, folder):
     if not (_inside(exe, folder or "") or any(_inside(exe, r) for r in _program_roots())):
         return False
     return bool(_is_file(exe))
+
+
+def _app_path(prog):
+    """The App Paths entry of one program (this user's first, then the PC's), or None. Read only."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, _APP_PATHS + "\\" + prog) as k:
+                v, kind = winreg.QueryValueEx(k, "")
+        except OSError:
+            continue
+        if isinstance(v, str) and v.strip():
+            return _expand_value(v, kind).strip().strip('"')
+    return None
+
+
+def _browser_exe(prog):
+    """A browser's own program (prog: its fixed name from PASSWORD_PAGES) by App Paths or its usual folder: an
+    existing local .exe of exactly that name inside Program Files or the browser's per-user install folder."""
+    local = os.environ.get("LOCALAPPDATA", "")
+    where = _USER_INSTALLS.get(prog, ())
+    homes = list(_program_roots()) + ([ntpath.join(local, *where)] if local and where else [])
+    cands = [_app_path(prog)] + [ntpath.join(r, *where, prog) for r in _program_roots() if where]
+    if local and where:
+        cands.append(ntpath.join(local, *where, prog))
+    for c in cands:
+        if not isinstance(c, str) or "\x00" in c or len(c) > 520 or not _LOCAL_ABS.match(c):
+            continue                                    # also never \\server\share: not even looked up
+        c = ntpath.normpath(c)
+        if ntpath.basename(c).lower() != prog or not any(_inside(c, h) for h in homes):
+            continue
+        if _is_file(c):
+            return c
+    return None
 
 
 _NOT_APP_RELEASE = {"update", "hotfix", "security update", "update rollup", "service pack"}

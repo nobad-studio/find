@@ -4,13 +4,16 @@ forget, to_main.
 Files are always named by result id, never by a path from the UI: the path comes from the index (Api._path)."""
 import re
 
+from ...browsersearch import FILTER_BROWSER, visited_ok
 from ...search import FILTER_DAYS, FILTER_KINDS, FILTER_SIZES, SORTS
 from ..protocol import INVALID_PARAMS, RpcError, int_param, ok, str_param
 
 CHANNEL = re.compile(r"^[a-z][a-z0-9_]{0,15}$")     # which search of a UI: main, home, bar...
 MAX_TEXT = 2000                     # characters of typed text (search keeps the first 500)
-FILTERS = {"kind": {""} | FILTER_KINDS, "modified": {""} | set(FILTER_DAYS), "size": {""} | set(FILTER_SIZES),
-           "sort": set(SORTS), "folder": None}                 # None: any string up to MAX_TEXT
+# 1.2.0: kind "launcher" (Settings & apps) and "browser"; "browser" one browser kind, "visited" History's dates
+FILTERS = {"kind": {"", "secret", "launcher", "browser"} | FILTER_KINDS, "modified": {""} | set(FILTER_DAYS),
+           "size": {""} | set(FILTER_SIZES), "sort": set(SORTS), "folder": None,   # None: any string up to MAX_TEXT
+           "browser": FILTER_BROWSER, "visited": visited_ok}                     # a function: checks the value
 
 
 def _text(params, key):
@@ -28,7 +31,11 @@ def _filters(params):
     for k, v in f.items():
         if k not in FILTERS or not isinstance(v, str) or len(v) > MAX_TEXT:
             raise RpcError(INVALID_PARAMS, f"'filters' takes only {', '.join(FILTERS)}, each a string")
-        if FILTERS[k] is not None and v not in FILTERS[k]:
+        if callable(FILTERS[k]):
+            if not FILTERS[k](v):
+                raise RpcError(INVALID_PARAMS, f"'filters.{k}' must be \"\", today, yesterday, week, month or "
+                                               "YYYY-MM-DD..YYYY-MM-DD")
+        elif FILTERS[k] is not None and v not in FILTERS[k]:
             words = ", ".join(w for w in sorted(FILTERS[k]) if w)
             raise RpcError(INVALID_PARAMS, f"'filters.{k}' must be \"\" (no filter) or one of {words}")
     return f

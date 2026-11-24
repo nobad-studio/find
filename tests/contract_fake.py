@@ -12,6 +12,13 @@ UPDATE_NOTES = "https://github.com/nobad-studio/find/releases/tag/find-v0.9.0"
 RESULT = {"id": 7, "path": "C:\\Users\\me\\Documents\\tax 2025.pdf", "name": "tax 2025.pdf",
           "dir": "C:\\Users\\me\\Documents", "kind": "pdf", "size": 48213, "mtime": 1763400000.0,
           "ago": "2 days ago", "why": ["name matches"], "snippet": "", "weak": False}
+# 1.2.0: one browser result (browsersearch.result): a negative id, never a file's
+BROWSER_RESULT = {"id": -3, "path": "https://github.com/pulls", "name": "GitHub: pull requests",
+                  "dir": "Edge (Work) · github.com", "kind": "browser", "size": None, "mtime": 1763300000.0,
+                  "ago": "3 days ago", "why": ["title matches", "visited 3 days ago"], "snippet": "", "weak": False,
+                  "browser": {"browser": "Edge", "profile": "Work", "kind": "history", "title": "GitHub: pull requests",
+                              "url": "https://github.com/pulls", "host": "github.com", "at": 1763300000.0,
+                              "visits": 9, "folder": ""}}
 
 
 class FakeGov:
@@ -60,6 +67,16 @@ class FakeApi:
         self._note("search", text, filters)
         if not text.strip() and not filters:
             return {"results": [], "understood": [], "terms": [], "notes": [], "ms": 0}
+        if (filters or {}).get("kind") == "launcher":          # Settings & apps: actions only, never a file
+            return {"results": [], "understood": ["settings & apps"], "terms": [], "notes": [], "ms": 1,
+                    "parts": [], "best": None,
+                    "actions": [{"id": "set:display", "kind": "setting", "title": "Display",
+                                 "subtitle": "Windows Settings"}]}
+        if (filters or {}).get("kind") == "browser":
+            return {"results": [dict(BROWSER_RESULT, browser=dict(BROWSER_RESULT["browser"]))],
+                    "understood": ["browser history", "visited in the last 7 days"], "terms": [], "notes": [],
+                    "more": False, "ms": 2, "parts": [{"kind": "kind", "label": "Browser history", "without": ""}],
+                    "best": None}
         return {"results": [dict(RESULT)], "understood": ["pdf"], "terms": ["tax"], "notes": [], "more": False,
                 "ms": 4, "parts": [{"kind": "kind", "label": "PDFs", "without": "tax"},
                                    {"kind": "words", "label": "tax", "without": "pdf"}],
@@ -113,7 +130,7 @@ class FakeApi:
 
     def open(self, file_id):
         self._note("open", file_id)
-        return {"ok": True} if file_id == 7 else {"ok": False, "error": "That file isn't there any more."}
+        return {"ok": True} if file_id in (7, BROWSER_RESULT["id"]) else {"ok": False, "error": "That file isn't there any more."}
 
     def open_with(self, file_id):
         self._note("open_with", file_id)
@@ -367,6 +384,8 @@ class FakeApi:
         """Like Api.run_action: ids from the launcher's table only (nothing is opened here)."""
         from nobadfind import launcher
         if action_id.startswith("set:") and any("set:" + x[0] == action_id for x in launcher.SETTINGS):
+            return {"ok": True, "error": ""}
+        if action_id in {launcher.password_action(b) for b in launcher.PASSWORD_PAGES}:
             return {"ok": True, "error": ""}
         return {"ok": False, "error": "That isn't something NOBAD Find can open."}
 

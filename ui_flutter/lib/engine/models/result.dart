@@ -35,6 +35,7 @@ class FileResult {
     this.weak = false,
     this.ext = '',
     this.disguised = false,
+    this.browser,
     String? rawName,
     String? rawDir,
   }) : rawName = rawName ?? name,
@@ -70,6 +71,10 @@ class FileResult {
   final List<String> why;
   final bool weak;
 
+  /// 1.2.0: one of the browsers' items (kind `browser`, a negative id), or null for a file.
+  final BrowserItem? browser;
+  bool get isBrowser => browser != null;
+
   static const thumbKinds = {'image', 'video', 'pdf'};
   bool get hasThumb => thumbKinds.contains(kind);
 
@@ -95,6 +100,67 @@ class FileResult {
       snippet: _shown(json['snippet']),
       why: [for (final w in _strs(json['why'])) visibleControls(w)],
       weak: json['weak'] == true,
+      browser: _str(json['kind']) == 'browser' ? BrowserItem.fromJson(json['browser']) : null,
+    );
+  }
+}
+
+/// 1.2.0 (browser spec §4): what a browser result is, as the engine read it (contract `Result.browser`). Untrusted
+/// text, drawn as plain text. Never a password: a login is its site and user name.
+class BrowserItem {
+  const BrowserItem({
+    required this.browser,
+    this.profile = '',
+    required this.kind,
+    this.title = '',
+    this.url = '',
+    this.host = '',
+    this.at,
+    this.visits = 0,
+    this.folder = '',
+  });
+  final String browser;
+  final String profile;
+
+  /// history | bookmark | login | download.
+  final String kind;
+
+  /// The page title; a login's user name; a download's file name.
+  final String title;
+
+  /// The address; a download's file path. Never opened by the window: the engine opens the result by its id.
+  final String url;
+  final String host;
+  final double? at;
+  final int visits;
+  final String folder;
+
+  static const kinds = {'history', 'bookmark', 'login', 'download'};
+
+  /// What Open does with it, for the button.
+  String get openLabel => switch (kind) {
+    'login' => 'Password manager',
+    'download' => 'Open file',
+    _ => 'Open page',
+  };
+
+  /// Only a download has a folder to show.
+  bool get hasFolder => kind == 'download';
+
+  static BrowserItem fromJson(Object? json) {
+    final m = json is Map ? json : const {};
+    final k = _str(m['kind']);
+    final at = m['at'];
+    return BrowserItem(
+      browser: _shown(m['browser']),
+      profile: _shown(m['profile']),
+      kind: kinds.contains(k) ? k : 'history',
+      title: _shown(m['title']),
+      url: _str(m['url']),
+      host: _shown(m['host']),
+      at: at is num && at.isFinite ? at.toDouble() : null,
+      visits: _int(m['visits']) ?? 0,
+      folder: _shown(m['folder']),
     );
   }
 }
@@ -370,6 +436,7 @@ const kindTags = {
   'app': 'APP',
   'ebook': 'BOOK',
   'folder': 'DIR',
+  'browser': 'WEB',
   'other': 'FILE',
 };
 
@@ -387,12 +454,30 @@ String disguisedNote(FileResult r) {
 /// The filter bar (kind, date, size, folder, order), combined by the engine with whatever the words say.
 /// Values are the 0.7.0 page's option values; '' means "any".
 class SearchFilters {
-  const SearchFilters({this.kind = '', this.modified = '', this.size = '', this.folder = '', this.sort = ''});
+  const SearchFilters({
+    this.kind = '',
+    this.modified = '',
+    this.size = '',
+    this.folder = '',
+    this.sort = '',
+    this.browser = '',
+    this.visited = '',
+  });
   final String kind;
   final String modified;
   final String size;
   final String folder;
   final String sort;
+
+  /// 1.2.0, with [kind] `browser`: one kind of browser item ('' = all).
+  final String browser;
+
+  /// 1.2.0, with [browser] `history` only: today | yesterday | week | month | `YYYY-MM-DD..YYYY-MM-DD`.
+  final String visited;
+
+  /// The Browser filter (only browser items) and Settings & apps (only the launcher's actions, no files).
+  bool get isBrowser => kind == 'browser';
+  bool get isLauncher => kind == 'launcher';
 
   static const none = SearchFilters();
 
@@ -400,19 +485,47 @@ class SearchFilters {
   bool get narrows => kind.isNotEmpty || modified.isNotEmpty || size.isNotEmpty || folder.isNotEmpty;
   bool get isEmpty => !narrows && sort.isEmpty;
 
-  SearchFilters copyWith({String? kind, String? modified, String? size, String? folder, String? sort}) => SearchFilters(
+  SearchFilters copyWith({
+    String? kind,
+    String? modified,
+    String? size,
+    String? folder,
+    String? sort,
+    String? browser,
+    String? visited,
+  }) => SearchFilters(
     kind: kind ?? this.kind,
     modified: modified ?? this.modified,
     size: size ?? this.size,
     folder: folder ?? this.folder,
     sort: sort ?? this.sort,
+    browser: browser ?? this.browser,
+    visited: visited ?? this.visited,
   );
 
-  /// The `filters` object of the `search` call (the same keys as 0.7.0's page sent).
+  /// Another kind from the Kind menu: the Browser filter and Settings & apps drop the file-only filters (date,
+  /// size, folder); the browser's own choices only stay with the Browser filter.
+  SearchFilters withKind(String k) {
+    final special = k == 'browser' || k == 'launcher';
+    return SearchFilters(
+      kind: k,
+      modified: special ? '' : modified,
+      size: special ? '' : size,
+      folder: special ? '' : folder,
+      sort: k == 'launcher' ? '' : sort,
+      browser: k == 'browser' ? browser : '',
+      visited: k == 'browser' ? visited : '',
+    );
+  }
+
+  /// The `filters` object of the `search` call (the same keys as 0.7.0's page sent; 1.2.0's browser keys only
+  /// with the Browser filter, so an older engine never sees them otherwise).
   Map<String, Object?> toJson() => {
     'kind': kind, 'modified': modified, 'size': size,
     'folder': folder.length > 2000 ? '' : folder, // the engine refuses longer (contract: at most 2000)
     'sort': sort,
+    if (kind == 'browser' && browser.isNotEmpty) 'browser': browser,
+    if (kind == 'browser' && browser == 'history' && visited.isNotEmpty) 'visited': visited,
   };
 
   @override
@@ -422,10 +535,12 @@ class SearchFilters {
       other.modified == modified &&
       other.size == size &&
       other.folder == folder &&
-      other.sort == sort;
+      other.sort == sort &&
+      other.browser == browser &&
+      other.visited == visited;
 
   @override
-  int get hashCode => Object.hash(kind, modified, size, folder, sort);
+  int get hashCode => Object.hash(kind, modified, size, folder, sort, browser, visited);
 }
 
 /// The filter bar's choices, with the 0.7.0 labels.
@@ -450,6 +565,30 @@ abstract final class FilterChoices {
   /// 0.9.5: key files, password stores, wallets, by name only; offered while Settings > What to index has
   /// "Keys and passwords" on (the engine's `secret` filter, search.secret_sql).
   static const secret = ('secret', 'Keys & passwords (names only)');
+
+  /// 1.2.0 (browser spec §4): only Windows settings pages, Control Panel items, tools and apps; no files.
+  static const launcher = ('launcher', 'Settings & apps');
+
+  /// 1.2.0: only the browsers' items, offered while Settings > Privacy reads browser data.
+  static const browser = ('browser', 'Browser');
+  static const browserKinds = [
+    ('', 'Everything'),
+    ('history', 'History'),
+    ('bookmark', 'Bookmarks'),
+    ('login', 'Saved logins'),
+    ('download', 'Downloads'),
+  ];
+
+  /// When a History page was visited; [pick] opens the date dialog (the filter then holds the picked days).
+  static const pick = 'pick';
+  static const visited = [
+    ('', 'Any time'),
+    ('today', 'Today'),
+    ('yesterday', 'Yesterday'),
+    ('week', 'Last 7 days'),
+    ('month', 'Last 30 days'),
+    (pick, 'Pick dates…'),
+  ];
   static const modified = [
     ('', 'Any time'),
     ('today', 'Today'),

@@ -70,7 +70,7 @@
       }
     },
     "search": {
-      "description": "Search the index. Empty text with no filter gives no results. filters is an object or left out (null is refused); its values must be the listed words.",
+      "description": "Search the index. Empty text with no filter gives no results. filters is an object or left out (null is refused); its values must be the listed words. 1.2.0: with browser_data on, browser items come as results of kind \"browser\" (the question's \"history\", \"visited\", \"bookmark\", \"saved login\", \"password for\" ask for them only; read as words when none match).",
       "params": {
         "type": "object",
         "properties": {
@@ -102,6 +102,28 @@
           },
           {
             "text": ""
+          },
+          {
+            "text": "display",
+            "filters": {
+              "kind": "launcher"
+            }
+          },
+          {
+            "text": "",
+            "filters": {
+              "kind": "browser",
+              "browser": "history",
+              "visited": "week"
+            }
+          },
+          {
+            "text": "github",
+            "filters": {
+              "kind": "browser",
+              "browser": "history",
+              "visited": "2026-11-01..2026-11-20"
+            }
           }
         ]
       },
@@ -311,7 +333,7 @@
       }
     },
     "open": {
-      "description": "Open a result with its default program (outside NOBAD Find's process group).",
+      "description": "Open a result with its default program (outside NOBAD Find's process group). 1.2.0, a browser result (negative id): a page or bookmark opens its http(s) address in the default browser, a saved login its browser's password manager (the launcher's fixed table, run_action \"pw:<browser>\"), a download its file or else its folder.",
       "params": {
         "$ref": "#/$defs/id_params"
       },
@@ -320,7 +342,7 @@
       }
     },
     "reveal": {
-      "description": "Show a result selected in File Explorer.",
+      "description": "Show a result selected in File Explorer. 1.2.0, a browser result: only a download (its file, or else its folder); a web page has no folder (ok false).",
       "params": {
         "$ref": "#/$defs/id_params"
       },
@@ -1147,7 +1169,7 @@
       }
     },
     "run_action": {
-      "description": "Open a Windows Settings page, a Windows tool or an app by the id a search answer gave. Never a path or a command.",
+      "description": "Open a Windows Settings page, a Windows tool or an app by the id a search answer gave. Never a path or a command. 1.2.0: also \"pw:edge\", \"pw:chrome\", ... (a browser's own password manager page, opened with that browser's installed program).",
       "params": {
         "type": "object",
         "properties": {
@@ -1691,8 +1713,11 @@
             "ebook",
             "app",
             "folder",
-            "secret"
-          ]
+            "secret",
+            "launcher",
+            "browser"
+          ],
+          "description": "A file kind; \"secret\" Keys & passwords (names only); 1.2.0: \"launcher\" Settings & apps (only the launcher's settings pages, tools and apps in `actions`, never a file), \"browser\" only browser items (while the setting browser_data is on; else nothing)."
         },
         "modified": {
           "enum": [
@@ -1724,6 +1749,34 @@
             "largest",
             "name"
           ]
+        },
+        "browser": {
+          "enum": [
+            "",
+            "history",
+            "bookmark",
+            "login",
+            "download"
+          ],
+          "description": "1.2.0, with kind \"browser\": one kind of browser item (\"login\" only while browser_data is history_logins)."
+        },
+        "visited": {
+          "oneOf": [
+            {
+              "enum": [
+                "",
+                "today",
+                "yesterday",
+                "week",
+                "month"
+              ]
+            },
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])\\.\\.\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"
+            }
+          ],
+          "description": "1.2.0, with kind \"browser\" and browser \"history\" only: when it was visited (local days; \"week\" / \"month\" = the last 7 / 30 days), or picked days \"YYYY-MM-DD..YYYY-MM-DD\", both included."
         }
       },
       "additionalProperties": false
@@ -1824,7 +1877,8 @@
       "type": "object",
       "properties": {
         "id": {
-          "type": "integer"
+          "type": "integer",
+          "description": "The result id for open / reveal / ...: a file's id, or for kind \"browser\" (1.2.0) a negative number that is only ever a browser item's."
         },
         "path": {
           "type": "string"
@@ -1836,7 +1890,8 @@
           "type": "string"
         },
         "kind": {
-          "type": "string"
+          "type": "string",
+          "description": "A file kind (pdf, image, ...), or \"browser\" (1.2.0): one of the browsers' items."
         },
         "size": {
           "type": [
@@ -1868,6 +1923,66 @@
         "weak": {
           "type": "boolean",
           "description": "Only a loose match: show it as less sure."
+        },
+        "browser": {
+          "type": "object",
+          "description": "1.2.0, only with kind \"browser\": the browser item as it was read (untrusted text, drawn as plain text). Never a password: a login is its site and user name only.",
+          "properties": {
+            "browser": {
+              "type": "string",
+              "description": "Chrome, Edge, Brave, Vivaldi, Opera or Firefox."
+            },
+            "profile": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "history",
+                "bookmark",
+                "login",
+                "download"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "description": "The page title; a login's user name; a download's file name."
+            },
+            "url": {
+              "type": "string",
+              "description": "The address; a download's file path."
+            },
+            "host": {
+              "type": "string",
+              "description": "The site (a download: the site it came from)."
+            },
+            "at": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Last visit / added / downloaded / last used, seconds since 1970."
+            },
+            "visits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "folder": {
+              "type": "string",
+              "description": "A bookmark's folder."
+            }
+          },
+          "required": [
+            "browser",
+            "profile",
+            "kind",
+            "title",
+            "url",
+            "host",
+            "at",
+            "visits",
+            "folder"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -2455,11 +2570,19 @@
         },
         "totals_at": {
           "description": "1.2.0: epoch seconds of the last successful count of the index totals, or null if none has succeeded yet. Optional (older engines send none).",
-          "type": ["number", "null"]
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "totals_state": {
           "description": "1.2.0: counting (the first count is running, nothing yet), ready, refreshing (a newer count is running; the old snapshot is shown) or failed (the last attempt failed; the previous snapshot, if any, is still shown).",
-          "enum": ["counting", "ready", "refreshing", "failed"]
+          "enum": [
+            "counting",
+            "ready",
+            "refreshing",
+            "failed"
+          ]
         },
         "totals_error": {
           "description": "1.2.0: a short plain reason when totals_state is failed, else an empty string.",
@@ -2467,11 +2590,19 @@
         },
         "counts_at": {
           "description": "1.2.0: epoch seconds of the last successful count of the phase counts (phases[].total / done), or null if none has succeeded yet. Optional (older engines send none).",
-          "type": ["number", "null"]
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "counts_state": {
           "description": "1.2.0: counting (the first count is running, nothing yet), ready, refreshing (a newer count is running; the old snapshot is shown) or failed (the last attempt failed; the previous snapshot, if any, is still shown).",
-          "enum": ["counting", "ready", "refreshing", "failed"]
+          "enum": [
+            "counting",
+            "ready",
+            "refreshing",
+            "failed"
+          ]
         },
         "counts_error": {
           "description": "1.2.0: a short plain reason when counts_state is failed, else an empty string.",
@@ -4539,24 +4670,54 @@
     },
     "storage_use": {
       "type": "object",
-      "required": ["index_mb", "wal_mb", "models", "runtime_mb", "tmp_mb", "total_mb"],
+      "required": [
+        "index_mb",
+        "wal_mb",
+        "models",
+        "runtime_mb",
+        "tmp_mb",
+        "total_mb"
+      ],
       "properties": {
-        "index_mb": {"type": "number", "minimum": 0},
-        "wal_mb": {"type": "number", "minimum": 0},
+        "index_mb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "wal_mb": {
+          "type": "number",
+          "minimum": 0
+        },
         "models": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["id", "mb"],
+            "required": [
+              "id",
+              "mb"
+            ],
             "properties": {
-              "id": {"type": "string"},
-              "mb": {"type": "number", "minimum": 0}
+              "id": {
+                "type": "string"
+              },
+              "mb": {
+                "type": "number",
+                "minimum": 0
+              }
             }
           }
         },
-        "runtime_mb": {"type": "number", "minimum": 0},
-        "tmp_mb": {"type": "number", "minimum": 0},
-        "total_mb": {"type": "number", "minimum": 0}
+        "runtime_mb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tmp_mb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total_mb": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     },
     "capability_state": {

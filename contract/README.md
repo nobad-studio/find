@@ -72,12 +72,28 @@ be `""` when not). Files are always named by a result **`id`** from `search`, ne
   is how the question was read (show as chips), `terms` the words to highlight, `notes` sentences for the user,
   `more` = there were more matches than shown, `error` = `""` or a sentence when the search failed.
   - `Filters` (all optional, `""` = off): `kind` (`pdf document spreadsheet slides text code email image video audio
-    archive ebook app folder secret`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
+    archive ebook app folder secret launcher browser`; 0.9.5 `secret` = key files and password stores, names only), `modified` (`today week month year`), `size` (`small medium large`), `folder`
     (`here`, a known folder word, or a folder path already in the index; ≤ 2000), `sort` (`newest oldest largest
     name`). Any other key or word is refused (`-32602`).
+    1.2.0 (browser spec §4): `kind: "launcher"` is **Settings & apps**: no files at all (`results: []`), only the
+    launcher's settings pages, Control Panel items, tools and apps in `actions` (up to 12, read as asking to open
+    one). `kind: "browser"` shows only browser items (nothing while the setting `browser_data` is off), with
+    `browser` (`history bookmark login download`, `""` = all) and, for `browser: "history"` only, `visited`
+    (`today yesterday week month`, or picked local days `YYYY-MM-DD..YYYY-MM-DD`, both included; ignored for the
+    other kinds).
   - `Result`: `{id: int, path, name, dir, kind: string, size: int|null, mtime: number|null (seconds since 1970),
-    ago: string, why: [string], snippet: string, weak: bool}`. `weak` = a loose match, show it as less sure.
-    Every string is untrusted text from the user's disk: show it as plain text, never as markup.
+    ago: string, why: [string], snippet: string, weak: bool, browser?: BrowserItem}`. `weak` = a loose match, show
+    it as less sure. Every string is untrusted text from the user's disk: show it as plain text, never as markup.
+  - 1.2.0, browser results (only while `browser_data` is on): `kind: "browser"`, a **negative** `id` (never a file's),
+    `name` the title (a login: its site), `dir` a line the engine built ("Edge (Work) · github.com"), `path` the
+    address (a download: its file path), `mtime` the last visit / added / downloaded / last used time, and
+    `browser: {browser, profile, kind: history|bookmark|login|download, title, url, host, at, visits, folder}` (a
+    login's `title` is its user name; never a password). They are ranked with the files through the name and text
+    channels; the meaning and photo channels never apply to them. The question's words "history", "visited",
+    "bookmark(s)", "saved login(s)" and "password for" ask for browser kinds only (soft: read as words when nothing
+    matches, with a note). `open` by that id: history and bookmarks open their http(s) address in the default
+    browser, a login its browser's password manager (the launcher's `pw:<browser>` action), a download its file or
+    else its folder; `reveal`: a download only. Other file methods answer `ok: false` for them.
   - `Part` (0.8.5, smart search): `{kind, label, without}`, how the question was understood, in display order
     (where, what kind, when, size, order, then what it's about): `kind` is `folder drive kind time size sort meaning
     words` (`meaning`: what it's about, searched by meaning with a model; `words`: the same by words only). `label`
@@ -285,7 +301,7 @@ local toast (`notify_toasts`, from `notify_level` up, not while a game, a call o
 - **`model_download`** `{id, consent}` → `Ok`: download a model, only with `consent: "DOWNLOAD"` (the consent dialog's
   button; anything else is `ok: false`). Pinned revision, exact size and SHA-256 are checked before a file is used.
   Progress comes as `download` events with `id` = the model id.
-- **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command. `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
+- **`run_action`** `{id}` → `Ok`: open what a search answer's `actions` offered: a Windows Settings page (ms-settings:), a Windows tool (Task Manager, Device Manager, ...) or an app from Windows' Start list. Only ids from the engine's own table and app list, never a path or a command (1.2.0: also `pw:edge`, `pw:chrome`, `pw:brave`, `pw:vivaldi`, `pw:opera`, `pw:firefox`: that browser's password manager page, opened with its own installed program). `search` answers carry `actions: [{id, kind: setting|tool|app, title, subtitle}]` when the question fits one ("open bluetooth", "chrome").
 - **`update_state`** `{}` → `UpdateState` `{state, current, latest, size, got, bps, notes_url, error, auto, checked_at}`: in-app updates (0.9.0). `state` is idle, checking, uptodate, available, downloading, verifying, ready, installing or error. While `downloading`, `got` of `size` bytes have arrived and `bps` is the speed measured over the last few seconds (0 until known); `verifying`: every byte is in and its size and SHA-256 are being checked (again right before the installer runs).
 - **`update_check`** `{}` → `Ok`: look for a newer release of nobad-studio/find now, in the background (also once a day while the `update_check` setting is on). The `update` event says how it went.
 - **`update_install`** `{consent: "INSTALL"}` → `Ok`: download the newer installer over HTTPS, check its exact size and its SHA-256 against the release's .sha256 file and GitHub's digest, then run it silently outside NOBAD Find's job (it closes NOBAD Find, installs over it and starts it again). Any other consent word: ok false, nothing happens.
@@ -505,6 +521,7 @@ lines, rewrites the `recv` lines), then review the diff.
 | `05-scope-and-turbo.jsonl` | scope_info before and after a scope change, turbo_state, turbo_set declined at the prompt (and a bad one), turbo events (running, helper ended), turbo_set off (the helper kept: removal declined), the helper needing an update, turbo_helper update declined (and a bad one), turbo_helper remove |
 | `06-models-and-tray.jsonl` | models (method and event), model_language, model_use (and a model for the wrong feature), model_download without and with consent and its download events, model_remove (downloaded, built-in, a bad id), auto_configure, open_with, show settings / index (the tray), capability_state, storage_use |
 | `07-smart-search.jsonl` | search with parts and a best guess, suggest (empty, typed, the bar's), history_add (kept, too short, with the setting off), history_forget (kept, never typed), history_clear |
+| `12-browser-search.jsonl` | 1.2.0: the Settings & apps filter (actions only), the Browser filter with History and its dates (a word and a picked range), a browser result opened by its negative id, a login's password manager by `run_action`, bad browser filter values (refused) |
 | `08-talk-about-a-photo.jsonl` | vision_state, describe / ask (text read from the photo, `more`, a deeper model needing a download) / compare / cancel / keep, the vision events (loading, answering with the whole text so far, done, cancelled by the engine, error), refusals and bad params |
 | `10-performance.jsonl` | performance_state, set_settings with the goal and with an older UI's power (mirrored both ways), fast leaving the manual workers unused, a forced backend that isn't installed, reset_safe_defaults (and the state after it) |
 | `11-first-run-setup.jsonl` | setup_offer after the first scan, setup_accept with a wrong consent word, a bad list and a model the offer doesn't list, then a photo and a talk model (with its runtime) and their download events (one failing), the offer after it, setup_later with remind false (Details) and a bad remind, then setup_later and its reminder notification |

@@ -180,6 +180,11 @@ def parts(q, meaning_on=False):
             add("kind", f"{language_label(x)} code", [p for p in by.get("lang", []) if p.split()[0] == x])
     for e in sorted(q.exts):
         add("kind", e, [e])
+    if getattr(q, "browser", None):                 # 1.2.0: "history", "bookmarks", the Browser filter
+        from .browsersearch import KINDS, LABELS
+        for k in KINDS:
+            if k in q.browser:
+                add("kind", LABELS[k], by.get("browser:" + k, []))
     if q.when:
         add("time", q.when[0].upper() + q.when[1:], by.get("time", []))
     if q.size_label:
