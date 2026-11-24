@@ -1,6 +1,6 @@
 # NOBAD Find changelog
 
-## 1.2.0 · (in development)
+## 1.2.0 · 2026-11-24
 
 ### Staying out of your way
 - NOBAD Find now reacts to more of what Windows is doing, not only to free memory. When Windows is close to the
