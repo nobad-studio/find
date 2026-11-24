@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -82,6 +83,10 @@ class _BarWindowState extends State<BarWindow> {
       if (e is QuittingEvent) widget.window.close();
     });
     widget.demo?.run(widget.engine, box, find, 'bar', after: hide);
+    // design work with the fake engine: NOBAD_FIND_FAKE_SHOW_BAR=1 shows the bar at start (no hotkey there)
+    if (Platform.environment['NOBAD_FIND_FAKE_SHOW_BAR'] == '1') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => show());
+    }
     _life; // start listening
   }
 
@@ -428,7 +433,8 @@ class _BarWindowState extends State<BarWindow> {
     return Glass(
       level: GlassLevel.panel,
       radius: NbRadius.card,
-      fill: c.glass ? c.canvas : c.surface, // 0.9.5: the main window's see-through tint, not the denser panel
+      // 0.9.5: the main window's see-through tint, not the denser panel; Nocturne: its smoked glass
+      fill: c.smoke ? c.panel : (c.glass ? c.canvas : c.surface),
       child: MenuAnchor(
         controller: _menu,
         menuChildren: MenuGlass.wrap(_menuItems),
@@ -690,7 +696,10 @@ class _FieldState extends State<_Field> {
             curve: NbMotion.curve,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [c.orange, c.orangeA(0)], stops: const [0, .85]),
+                gradient: LinearGradient(
+                  colors: [c.action, c.action.withValues(alpha: 0)],
+                  stops: const [0, .85],
+                ),
               ),
             ),
           ),
@@ -768,8 +777,10 @@ class _RowState extends State<_Row> {
                     child: Container(
                       margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: ShapeDecoration(
-                        color: c.orangeA(c.isDark ? .16 : .12),
-                        shape: RoundedSuperellipseBorder(borderRadius: BorderRadius.circular(NbRadius.card)),
+                        color: c.smoke ? c.pick : c.orangeA(c.isDark ? .16 : .12),
+                        shape: RoundedSuperellipseBorder(
+                          borderRadius: BorderRadius.circular(NbRadius.card * (c.smoke ? 1.45 : 1)),
+                        ),
                       ),
                     ),
                   ),
@@ -780,7 +791,7 @@ class _RowState extends State<_Row> {
                   bottom: 9,
                   width: 3,
                   child: AnimatedScale(
-                    scale: widget.selected ? 1 : 0,
+                    scale: widget.selected && !c.smoke ? 1 : 0, // Nocturne: the lift alone
                     duration: NbMotion.of(context, const Duration(milliseconds: 150)),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
@@ -798,7 +809,7 @@ class _RowState extends State<_Row> {
                         width: 40,
                         child: Text(
                           kindTag(widget.result.kind),
-                          style: NbType.data(9.5, c.orange, weight: FontWeight.w700),
+                          style: NbType.data(9.5, c.smoke ? c.muted : c.orange, weight: FontWeight.w700),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -818,10 +829,10 @@ class _RowState extends State<_Row> {
                           message: widget.guess!,
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                            decoration: BoxDecoration(color: c.orange, borderRadius: NbRadius.pillAll),
+                            decoration: BoxDecoration(color: c.action, borderRadius: NbRadius.pillAll),
                             child: Text(
                               'Best guess',
-                              style: NbType.text(NbSize.micro - 1, c.onOrange, weight: FontWeight.w700, height: 1.3),
+                              style: NbType.text(NbSize.micro - 1, c.onAction, weight: FontWeight.w700, height: 1.3),
                             ),
                           ),
                         ),
@@ -949,7 +960,7 @@ class _ActionLine extends StatelessWidget {
         color: p.lit ? c.cardHover : null,
         child: Row(
           children: [
-            NbIcon(glyph, size: 15, color: c.orange),
+            NbIcon(glyph, size: 15, color: c.smoke ? c.text : c.orange),
             const SizedBox(width: 12),
             Flexible(
               child: Text(
@@ -966,7 +977,7 @@ class _ActionLine extends StatelessWidget {
               ),
             ] else
               const Spacer(),
-            Text('Open', style: NbType.text(12, c.orange, weight: FontWeight.w600)),
+            Text('Open', style: NbType.text(12, c.smoke ? c.text : c.orange, weight: FontWeight.w600)),
           ],
         ),
       ),
